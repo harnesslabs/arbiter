@@ -50,7 +50,7 @@ thiserror.workspace = true
 tracing.workspace = true
 
 # File types
-polars = { version = "0.38.3", features = ["parquet", "csv", "json"] }
+polars = { version = "0.41.3", features = ["parquet", "csv", "json"] }
 
 # Dependencies for the test build and development
 [dev-dependencies]
