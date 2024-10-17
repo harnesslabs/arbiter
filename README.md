@@ -5,7 +5,7 @@
 ![Github Actions](https://github.com/primitivefinance/arbiter/workflows/test/badge.svg)
 ![Visitors badge](https://visitor-badge.laobi.icu/badge?page_id=arbiter)
 ![Telegram badge](https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Farbiter_rs)
-[![Twitter Badge](https://badgen.net/badge/icon/twitter?icon=twitter&label)](https://twitter.com/primitivefi)
+[![Twitter Badge](https://badgen.net/badge/icon/twitter?icon=twitter&label)]([https://twitter.com/primitivefi](https://x.com/anthiasxyz))
 
 ## Overview
 **Arbiter** is a blazing-fast Ethereum sandbox that lets developers orchestrate event-driven simulations.
