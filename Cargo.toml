@@ -61,7 +61,7 @@ proc-macro2 = { version = "1.0.79" }
 
 tracing = "0.1.40"
 thiserror = { version = "1.0.59" }
-anyhow = "1.0.83"
+anyhow = "1.0.90"
 
 # Dependencies for the release build of Arbiter bin
 [dependencies]
