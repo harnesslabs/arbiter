@@ -1,6 +1,6 @@
 [package]
 name = "arbiter-core"
-version = "0.11.0"
+version = "0.11.1"
 edition = "2021"
 authors = [
     "Waylon Jepsen <waylonjepsen1@gmail.com>",

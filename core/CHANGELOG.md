@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1](https://github.com/anthias-labs/arbiter/compare/arbiter-core-v0.11.0...arbiter-core-v0.11.1) - 2024-10-20
+
+### Added
+- fmt
+- rebrand, workflows
+
+### Other
+- *(deps)* bump hashbrown from 0.14.3 to 0.14.5 ([#963](https://github.com/anthias-labs/arbiter/pull/963))
+
 ## [0.11.0](https://github.com/anthias-labs/arbiter/compare/arbiter-core-v0.10.3...arbiter-core-v0.11.0) - 2024-04-26
 
 ### Added

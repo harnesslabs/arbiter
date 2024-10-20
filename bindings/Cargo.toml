@@ -1,6 +1,6 @@
 [package]
 name = "arbiter-bindings"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 description = "Rust bindings for common solidity smart contracts"
 license = "Apache-2.0"

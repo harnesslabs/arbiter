@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/anthias-labs/arbiter/compare/arbiter-macros-v0.1.4...arbiter-macros-v0.1.5) - 2024-10-20
+
+### Added
+- rebrand, workflows
+
 ## [0.1.4](https://github.com/anthias-labs/arbiter/compare/arbiter-macros-v0.1.3...arbiter-macros-v0.1.4) - 2024-04-26
 
 ### Other
