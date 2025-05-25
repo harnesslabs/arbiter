@@ -3,13 +3,12 @@
 
 use std::pin::Pin;
 
-use anyhow::Result;
-use arbiter_core::middleware::ArbiterMiddleware;
 use futures_util::{Stream, StreamExt};
 use tokio::task::JoinHandle;
 use tracing::error;
 
 use super::*;
+use crate::database::{Database, TransactionLayer};
 
 /// A type alias for a pinned, boxed stream of events.
 ///
@@ -24,9 +23,9 @@ pub type EventStream<E> = Pin<Box<dyn Stream<Item = E> + Send + Sync>>;
 
 /// The instructions that can be sent to a [`StateMachine`].
 #[derive(Clone, Debug)]
-pub enum MachineInstruction {
+pub enum MachineInstruction<T: TransactionLayer<DB>, DB: Database> {
   /// Used to make a [`StateMachine`] start up.
-  Start(Arc<ArbiterMiddleware>, Messager),
+  Start(T, Messager),
 
   /// Used to make a [`StateMachine`] process events.
   /// This will offload the process into a task that can be halted by sending
@@ -71,14 +70,14 @@ pub enum State {
 /// The [`Behavior`] trait is the lowest level functionality that will be used
 /// by a [`StateMachine`]. This constitutes what each state transition will do.
 #[async_trait::async_trait]
-pub trait Behavior<E: Send + 'static>:
+pub trait Behavior<E: Send + 'static, DB: Database>:
   Serialize + DeserializeOwned + Send + Sync + Debug + 'static {
   /// Used to start the agent.
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
   async fn startup(
     &mut self,
-    client: Arc<ArbiterMiddleware>,
+    transaction_layer: TransactionLayer<DB>,
     messager: Messager,
   ) -> Result<Option<EventStream<E>>>;
 
@@ -158,9 +157,9 @@ pub trait StateMachine: Send + Sync + Debug + 'static {
 ///
 /// - `behavior`: An optional behavior that the engine is currently managing. This is where the
 ///   engine's logic is primarily executed in response to events.
-pub struct Engine<B, E>
+pub struct Engine<B, E, DB>
 where
-  B: Behavior<E>,
+  B: Behavior<E, DB>,
   E: Send + 'static, {
   /// The behavior the `Engine` runs.
   behavior: Option<B>,
@@ -174,9 +173,9 @@ where
   event_stream: Option<EventStream<E>>,
 }
 
-impl<B, E> Debug for Engine<B, E>
+impl<B, E, DB> Debug for Engine<B, E, DB>
 where
-  B: Behavior<E>,
+  B: Behavior<E, DB>,
   E: DeserializeOwned + Send + Sync + 'static,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -184,10 +183,11 @@ where
   }
 }
 
-impl<B, E> Engine<B, E>
+impl<B, E, DB> Engine<B, E, DB>
 where
-  B: Behavior<E> + Debug,
+  B: Behavior<E, DB> + Debug,
   E: DeserializeOwned + Send + Sync + 'static,
+  DB: Database,
 {
   /// Creates a new [`Engine`] with the given [`Behavior`] and [`Receiver`].
   pub fn new(behavior: B) -> Self {
@@ -196,10 +196,11 @@ where
 }
 
 #[async_trait::async_trait]
-impl<B, E> StateMachine for Engine<B, E>
+impl<B, E, DB> StateMachine for Engine<B, E, DB>
 where
-  B: Behavior<E> + Debug + Serialize + DeserializeOwned,
+  B: Behavior<E, DB> + Debug + Serialize + DeserializeOwned,
   E: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
+  DB: Database,
 {
   async fn execute(&mut self, instruction: MachineInstruction) -> Result<()> {
     // NOTE: The unwraps here are safe because the `Behavior` in an engine is only

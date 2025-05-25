@@ -6,7 +6,7 @@ use super::*;
 
 /// Errors that can occur in the arbiter engine.
 #[derive(Debug, Error)]
-pub enum ArbiterEngineError {
+pub enum EngineError {
   /// Error occurred with the [`Messager`].
   #[error("MessagerError: {0}")]
   MessagerError(String),
@@ -30,20 +30,4 @@ pub enum ArbiterEngineError {
   /// Error occurred in sending a message.
   #[error(transparent)]
   SendError(#[from] tokio::sync::broadcast::error::SendError<crate::messager::Message>),
-
-  /// Error occurred in deserializing json.
-  #[error(transparent)]
-  SerdeJsonError(#[from] serde_json::Error),
-
-  /// Error occurred in reading in a file.
-  #[error(transparent)]
-  IoError(#[from] std::io::Error),
-
-  /// Error occurred in deserializing toml.
-  #[error(transparent)]
-  TomlError(#[from] toml::de::Error),
-
-  /// Error occurred within [`arbiter_core`].
-  #[error(transparent)]
-  ArbiterCoreError(#[from] arbiter_core::errors::ArbiterCoreError),
 }

@@ -1,0 +1,33 @@
+[package]
+authors = ["Colin Roberts <colin@autoparallel.xyz>"]
+edition = "2021"
+name = "engine"
+version = "0.1.0"
+
+[dependencies]
+# Local
+macros = { workspace = true }
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+# TODO: This is just for testing really, we can use any serailization eventually.
+serde_json = { version = "1.0" }
+
+# Async
+async-stream.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+tokio = { workspace = true, features = ["macros", "full"] }
+tokio-stream = "0.1.15"
+
+# Concurrency
+crossbeam-channel.workspace = true
+
+# Error and logging
+thiserror.workspace = true
+tracing.workspace = true
+
+
+[dev-dependencies]
+tracing-test = { workspace = true }

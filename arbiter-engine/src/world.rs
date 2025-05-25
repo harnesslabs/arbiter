@@ -1,8 +1,9 @@
 //! The world module contains the core world abstraction for the Arbiter Engine.
 
-use std::collections::VecDeque;
+// TODO: I think the DB needs to have a transaction layer associated to it actually.
 
-use arbiter_core::{database::ArbiterDB, environment::Environment, middleware::ArbiterMiddleware};
+use std::{collections::VecDeque, fs::File, io::Read};
+
 use futures_util::future::join_all;
 use serde::de::DeserializeOwned;
 use tokio::spawn;
@@ -10,6 +11,7 @@ use tokio::spawn;
 use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
+  database::Database,
   machine::{CreateStateMachine, MachineInstruction},
 };
 
@@ -24,22 +26,21 @@ use crate::{
 /// connected to the world via a client ([`Arc<RevmMiddleware>`]) and a messager
 /// ([`Messager`]).
 #[derive(Debug)]
-pub struct World {
+pub struct World<DB: Database> {
   /// The identifier of the world.
   pub id: String,
 
   /// The agents in the world.
-  pub agents: Option<HashMap<String, Agent>>,
+  pub agents: Option<HashMap<String, Agent<DB>>>,
 
   /// The environment for the world.
-  pub environment: Option<Environment>,
+  pub environment: Option<DB>,
 
   /// The messaging layer for the world.
   pub messager: Messager,
 }
 
-use std::{fs::File, io::Read};
-impl World {
+impl<DB: Database> World<DB> {
   /// Creates a new [`World`] with the given identifier and provider.
   pub fn new(id: &str) -> Self {
     Self {

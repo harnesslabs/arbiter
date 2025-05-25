@@ -2,11 +2,11 @@
 
 use std::{fmt::Debug, sync::Arc};
 
-use arbiter_core::middleware::ArbiterMiddleware;
 use serde::{de::DeserializeOwned, Serialize};
 
 use super::*;
 use crate::{
+  database::{Database, TransactionLayer},
   machine::{Behavior, Engine, StateMachine},
   messager::Messager,
 };
@@ -22,7 +22,7 @@ use crate::{
 /// will return a stream of events that then let the [`Behavior`] move into the
 /// `State::Processing` stage.
 #[derive(Debug)]
-pub struct Agent {
+pub struct Agent<T: TransactionLayer<DB>, DB: Database> {
   /// Identifier for this agent.
   /// Used for routing messages.
   pub id: String,
@@ -32,14 +32,14 @@ pub struct Agent {
   pub messager: Messager,
 
   /// The client the agent uses to interact with the blockchain.
-  pub client: Arc<ArbiterMiddleware>,
+  pub client: T,
 
   /// The engines/behaviors that the agent uses to sync, startup, and process
   /// events.
   pub(crate) behavior_engines: Vec<Box<dyn StateMachine>>,
 }
 
-impl Agent {
+impl<T: TransactionLayer<DB>, DB: Database> Agent<T, DB> {
   /// Creates a new [`AgentBuilder`] instance with a specified identifier.
   ///
   /// This method initializes an [`AgentBuilder`] with the provided `id` and
