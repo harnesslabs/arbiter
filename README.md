@@ -1,14 +1,26 @@
 <img width="529" alt="arbiter" src="https://user-images.githubusercontent.com/20118821/236929861-2a1fe071-0053-453c-ac86-224b32febcd6.png">
 
-> Expanding the EVM tooling ecosystem.
+> A Rust-based multi-agent framework.
 
-![Github Actions](https://github.com/anthias-labs/arbiter/workflows/test/badge.svg)
 ![Visitors badge](https://visitor-badge.laobi.icu/badge?page_id=arbiter)
-![Telegram badge](https://img.shields.io/endpoint?color=neon&logo=telegram&label=chat&style=flat-square&url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Farbiter_rs)
-[![Twitter Badge](https://badgen.net/badge/icon/twitter?icon=twitter&label)](https://x.com/anthiasxyz)
+[![Twitter Badge](https://badgen.net/badge/icon/twitter?icon=twitter&label)](https://x.com/harnesslabs)
 
 ## Overview
-> **Arbiter** is a blazing-fast Ethereum sandbox that lets developers orchestrate event-driven simulations.
+> **Arbiter** is a multi-agent framework that lets developers orchestrate event-driven simulations.
+
+
+---
+
+## NOTE
+Arbiter is under active development to enter into a new phase.
+We are currently working on the following:
+- [ ] `arbiter`: crate should be a lib to re-export our sub crates. The bin never caught on anyway.
+- [ ] `arbiter-core` becomes `arbiter-ethereum` or `arbiter-evm`.
+- [ ] `arbiter-engine` overhauled to handle more generic agent setups. Maintains the structure of being the actual underlying move forward / event handling mechanism.
+- [ ] `arbiter-core` should then house abstractions for different types of environments and other DES type items to be used with the engine.
+
+---
+## Below is the original README.md for Arbiter
 
 Arbiter allows for fine-grained control over a (Rust) Ethereum Virtual Machine (EVM) to provide stateful Ethereum smart-contract interactions and the creation of behaviors that can be coalesced into complex scenarios or automation. As such, Arbiter enables robust and granular simulation to be conducted.
 We use an [`ethers-rs`](https://github.com/gakonst/ethers-rs) middleware on top of [revm](https://github.com/bluealloy/revm), which is used in ETH clients such as [`reth`](https://github.com/paradigmxyz/reth) as well as [`foundry`](https://github.com/foundry-rs/foundry).
