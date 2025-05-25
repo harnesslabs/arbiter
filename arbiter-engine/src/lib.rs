@@ -15,8 +15,8 @@ use tracing::{debug, info, trace, warn};
 use crate::messager::Messager;
 
 pub mod agent;
-pub mod database;
-pub mod errors;
+pub mod environment;
+pub mod error;
 pub mod machine;
 pub mod messager;
 // pub mod universe; // TODO: Unneeded for now really

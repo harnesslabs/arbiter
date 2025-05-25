@@ -8,7 +8,10 @@ use tokio::task::JoinHandle;
 use tracing::error;
 
 use super::*;
-use crate::database::{Database, TransactionLayer};
+use crate::{
+  environment::{Environment, Middleware},
+  error::ArbiterEngineError,
+};
 
 /// A type alias for a pinned, boxed stream of events.
 ///
@@ -22,10 +25,10 @@ use crate::database::{Database, TransactionLayer};
 pub type EventStream<E> = Pin<Box<dyn Stream<Item = E> + Send + Sync>>;
 
 /// The instructions that can be sent to a [`StateMachine`].
-#[derive(Clone, Debug)]
-pub enum MachineInstruction<T: TransactionLayer<DB>, DB: Database> {
+#[derive(Debug)]
+pub enum MachineInstruction {
   /// Used to make a [`StateMachine`] start up.
-  Start(T, Messager),
+  Start(Middleware, Messager),
 
   /// Used to make a [`StateMachine`] process events.
   /// This will offload the process into a task that can be halted by sending
@@ -70,21 +73,23 @@ pub enum State {
 /// The [`Behavior`] trait is the lowest level functionality that will be used
 /// by a [`StateMachine`]. This constitutes what each state transition will do.
 #[async_trait::async_trait]
-pub trait Behavior<E: Send + 'static, DB: Database>:
+pub trait Behavior<E: Send + 'static>:
   Serialize + DeserializeOwned + Send + Sync + Debug + 'static {
   /// Used to start the agent.
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
   async fn startup(
     &mut self,
-    transaction_layer: TransactionLayer<DB>,
+    transaction_layer: Middleware,
     messager: Messager,
-  ) -> Result<Option<EventStream<E>>>;
+  ) -> Result<Option<EventStream<E>>, ArbiterEngineError>;
 
   /// Used to process events.
   /// This is where the agent can engage in its specific processing
   /// of events that can lead to actions being taken.
-  async fn process(&mut self, _event: E) -> Result<ControlFlow> { Ok(ControlFlow::Halt) }
+  async fn process(&mut self, _event: E) -> Result<ControlFlow, ArbiterEngineError> {
+    Ok(ControlFlow::Halt)
+  }
 }
 /// A trait for creating a state machine.
 ///
@@ -140,7 +145,7 @@ pub trait StateMachine: Send + Sync + Debug + 'static {
   /// This method does not return a value, but it may result in state changes
   /// within the implementing type or the generation of further instructions
   /// or events.
-  async fn execute(&mut self, _instruction: MachineInstruction) -> Result<()>;
+  async fn execute(&mut self, _instruction: MachineInstruction) -> Result<(), ArbiterEngineError>;
 }
 
 /// The `Engine` struct represents the core logic unit of a state machine-based
@@ -157,9 +162,9 @@ pub trait StateMachine: Send + Sync + Debug + 'static {
 ///
 /// - `behavior`: An optional behavior that the engine is currently managing. This is where the
 ///   engine's logic is primarily executed in response to events.
-pub struct Engine<B, E, DB>
+pub struct Engine<B, E>
 where
-  B: Behavior<E, DB>,
+  B: Behavior<E>,
   E: Send + 'static, {
   /// The behavior the `Engine` runs.
   behavior: Option<B>,
@@ -173,9 +178,9 @@ where
   event_stream: Option<EventStream<E>>,
 }
 
-impl<B, E, DB> Debug for Engine<B, E, DB>
+impl<B, E> Debug for Engine<B, E>
 where
-  B: Behavior<E, DB>,
+  B: Behavior<E>,
   E: DeserializeOwned + Send + Sync + 'static,
 {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -183,11 +188,10 @@ where
   }
 }
 
-impl<B, E, DB> Engine<B, E, DB>
+impl<B, E> Engine<B, E>
 where
-  B: Behavior<E, DB> + Debug,
+  B: Behavior<E> + Debug,
   E: DeserializeOwned + Send + Sync + 'static,
-  DB: Database,
 {
   /// Creates a new [`Engine`] with the given [`Behavior`] and [`Receiver`].
   pub fn new(behavior: B) -> Self {
@@ -196,13 +200,12 @@ where
 }
 
 #[async_trait::async_trait]
-impl<B, E, DB> StateMachine for Engine<B, E, DB>
+impl<B, E> StateMachine for Engine<B, E>
 where
-  B: Behavior<E, DB> + Debug + Serialize + DeserializeOwned,
+  B: Behavior<E> + Debug + Serialize + DeserializeOwned,
   E: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
-  DB: Database,
 {
-  async fn execute(&mut self, instruction: MachineInstruction) -> Result<()> {
+  async fn execute(&mut self, instruction: MachineInstruction) -> Result<(), ArbiterEngineError> {
     // NOTE: The unwraps here are safe because the `Behavior` in an engine is only
     // accessed here and it is private.
     let id: Option<String>;
@@ -212,7 +215,7 @@ where
         let id_clone = id.clone();
         self.state = State::Starting;
         let mut behavior = self.behavior.take().unwrap();
-        let behavior_task: JoinHandle<Result<(Option<EventStream<E>>, B)>> =
+        let behavior_task: JoinHandle<Result<(Option<EventStream<E>>, B), ArbiterEngineError>> =
           tokio::spawn(async move {
             let stream = match behavior.startup(client, messager).await {
               Ok(stream) => stream,
@@ -248,7 +251,7 @@ where
         trace!("Behavior is starting up.");
         let mut behavior = self.behavior.take().unwrap();
         let mut stream = self.event_stream.take().unwrap();
-        let behavior_task: JoinHandle<Result<B>> = tokio::spawn(async move {
+        let behavior_task: JoinHandle<Result<B, ArbiterEngineError>> = tokio::spawn(async move {
           while let Some(event) = stream.next().await {
             match behavior.process(event).await? {
               ControlFlow::Halt => {

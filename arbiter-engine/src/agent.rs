@@ -1,12 +1,12 @@
 //! The agent module contains the core agent abstraction for the Arbiter Engine.
 
-use std::{fmt::Debug, sync::Arc};
+use std::fmt::Debug;
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::*;
 use crate::{
-  database::{Database, TransactionLayer},
+  environment::Middleware,
+  error::ArbiterEngineError,
   machine::{Behavior, Engine, StateMachine},
   messager::Messager,
 };
@@ -22,24 +22,17 @@ use crate::{
 /// will return a stream of events that then let the [`Behavior`] move into the
 /// `State::Processing` stage.
 #[derive(Debug)]
-pub struct Agent<T: TransactionLayer<DB>, DB: Database> {
-  /// Identifier for this agent.
-  /// Used for routing messages.
+pub struct Agent {
   pub id: String,
 
-  /// The messager the agent uses to send and receive messages from other
-  /// agents.
   pub messager: Messager,
 
-  /// The client the agent uses to interact with the blockchain.
-  pub client: T,
+  pub middleware: Middleware,
 
-  /// The engines/behaviors that the agent uses to sync, startup, and process
-  /// events.
   pub(crate) behavior_engines: Vec<Box<dyn StateMachine>>,
 }
 
-impl<T: TransactionLayer<DB>, DB: Database> Agent<T, DB> {
+impl Agent {
   /// Creates a new [`AgentBuilder`] instance with a specified identifier.
   ///
   /// This method initializes an [`AgentBuilder`] with the provided `id` and
@@ -148,11 +141,11 @@ impl AgentBuilder {
   /// ```
   pub fn build(
     self,
-    client: Arc<ArbiterMiddleware>,
+    middleware: Middleware,
     messager: Messager,
   ) -> Result<Agent, ArbiterEngineError> {
     match self.behavior_engines {
-      Some(engines) => Ok(Agent { id: self.id, messager, client, behavior_engines: engines }),
+      Some(engines) => Ok(Agent { id: self.id, messager, middleware, behavior_engines: engines }),
       None => Err(ArbiterEngineError::AgentBuildError("Missing behavior engines".to_owned())),
     }
   }

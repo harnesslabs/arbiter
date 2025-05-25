@@ -1,7 +1,7 @@
 [package]
 authors = ["Colin Roberts <colin@autoparallel.xyz>"]
 edition = "2021"
-name = "engine"
+name = "arbiter-engine"
 version = "0.1.0"
 
 [dependencies]
@@ -12,6 +12,7 @@ arbiter-macros = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # TODO: This is just for testing really, we can use any serailization eventually.
 serde_json = { version = "1.0" }
+toml = "0.8"
 
 # Async
 async-stream.workspace = true
@@ -31,3 +32,4 @@ tracing.workspace = true
 
 [dev-dependencies]
 tracing-test = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

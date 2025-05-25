@@ -3,7 +3,7 @@
 use tokio::sync::broadcast::{channel, Receiver, Sender};
 
 use super::*;
-use crate::{errors::EngineError, machine::EventStream};
+use crate::{error::ArbiterEngineError, machine::EventStream};
 
 /// A message that can be sent between agents.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -70,11 +70,11 @@ impl Messager {
 
   /// utility function for getting the next value from the broadcast_receiver
   /// without streaming
-  pub async fn get_next(&mut self) -> Result<Message, EngineError> {
+  pub async fn get_next(&mut self) -> Result<Message, ArbiterEngineError> {
     let mut receiver = match self.broadcast_receiver.take() {
       Some(receiver) => receiver,
       None =>
-        return Err(EngineError::MessagerError(
+        return Err(ArbiterEngineError::MessagerError(
           "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
         )),
     };
@@ -98,11 +98,11 @@ impl Messager {
 
   /// Returns a stream of messages that are either sent to [`To::All`] or to
   /// the agent via [`To::Agent(id)`].
-  pub fn stream(mut self) -> Result<EventStream<Message>, EngineError> {
+  pub fn stream(mut self) -> Result<EventStream<Message>, ArbiterEngineError> {
     let mut receiver = match self.broadcast_receiver.take() {
       Some(receiver) => receiver,
       None =>
-        return Err(EngineError::MessagerError(
+        return Err(ArbiterEngineError::MessagerError(
           "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
         )),
     };
@@ -141,14 +141,20 @@ impl Messager {
   /// - `to`: The recipient of the message. Can be an individual agent's ID or a broadcast to all
   ///   agents.
   /// - `data`: The data to be sent in the message. This data is serialized into JSON format.
-  pub async fn send<S: Serialize>(&self, to: To, data: S) -> Result<(), EngineError> {
+  pub async fn send<S: Serialize>(&self, to: To, data: S) -> Result<(), ArbiterEngineError> {
     trace!("Sending message via messager.");
     if let Some(id) = &self.id {
-      let message = Message { from: id.clone(), to, data: serde_json::to_string(&data)? };
+      let message = Message {
+        from: id.clone(),
+        to,
+        data: serde_json::to_string(&data).map_err(|e| {
+          ArbiterEngineError::MessagerError(format!("Failed to serialize data: {}", e))
+        })?,
+      };
       self.broadcast_sender.send(message)?;
       Ok(())
     } else {
-      Err(EngineError::MessagerError(
+      Err(ArbiterEngineError::MessagerError(
         "Messager has no ID! You must have an ID to send messages!".to_owned(),
       ))
     }

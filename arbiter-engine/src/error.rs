@@ -23,6 +23,10 @@ pub enum ArbiterEngineError {
   #[error("UniverseError: {0}")]
   UniverseError(String),
 
+  /// Error occurred with the database.
+  #[error("DatabaseError: {0}")]
+  DatabaseError(String),
+
   /// Error occurred in joining a task.
   #[error(transparent)]
   JoinError(#[from] tokio::task::JoinError),

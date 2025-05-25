@@ -173,6 +173,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbiter-engine"
+version = "0.1.0"
+dependencies = [
+ "arbiter-macros",
+ "async-stream",
+ "async-trait",
+ "crossbeam-channel",
+ "futures",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-test",
+]
+
+[[package]]
 name = "arbiter-macros"
 version = "0.1.4"
 dependencies = [
@@ -1183,25 +1204,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b45de904aa0b010bce2ab45264d0631681847fa7b6f2eaa7dab7619943bc4f59"
 dependencies = [
  "cfg-if",
-]
-
-[[package]]
-name = "engine"
-version = "0.1.0"
-dependencies = [
- "arbiter-macros",
- "async-stream",
- "async-trait",
- "crossbeam-channel",
- "futures",
- "futures-util",
- "serde",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
- "tokio-stream",
- "tracing",
- "tracing-test",
 ]
 
 [[package]]
