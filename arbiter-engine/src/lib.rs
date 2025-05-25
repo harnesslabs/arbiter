@@ -1,23 +1,23 @@
-#![warn(missing_docs)]
+use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-//! Arbiter Engine is a library for creating and running automations or
-//! simulations of multi-agent systems. It is designed to be used in a
-//! distributed fashion where each agent is running in its own process and
-//! communicating with other agents via a messaging layer.
-
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
-
-use futures_util::future::join_all;
+use futures::{future::join_all, Stream, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tokio::task::{spawn, JoinError};
-use tracing::{debug, info, trace, warn};
+use tokio::{
+  sync::{broadcast, mpsc},
+  task,
+};
+use tracing::{debug, error, info, trace};
 
-use crate::messager::Messager;
+use crate::{
+  environment::{Environment, Middleware},
+  error::ArbiterEngineError,
+  messager::Messager,
+};
 
 pub mod agent;
 pub mod environment;
 pub mod error;
 pub mod machine;
 pub mod messager;
-// pub mod universe; // TODO: Unneeded for now really
+pub mod universe;
 pub mod world;

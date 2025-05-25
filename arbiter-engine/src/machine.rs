@@ -3,15 +3,7 @@
 
 use std::pin::Pin;
 
-use futures_util::{Stream, StreamExt};
-use tokio::task::JoinHandle;
-use tracing::error;
-
 use super::*;
-use crate::{
-  environment::{Environment, Middleware},
-  error::ArbiterEngineError,
-};
 
 /// A type alias for a pinned, boxed stream of events.
 ///
@@ -215,53 +207,51 @@ where
         let id_clone = id.clone();
         self.state = State::Starting;
         let mut behavior = self.behavior.take().unwrap();
-        let behavior_task: JoinHandle<Result<(Option<EventStream<E>>, B), ArbiterEngineError>> =
-          tokio::spawn(async move {
-            let stream = match behavior.startup(client, messager).await {
-              Ok(stream) => stream,
-              Err(e) => {
-                error!("startup failed for behavior {:?}: \n reason: {:?}", id_clone, e);
-                // Throw a panic as we cannot recover from this for now.
-                panic!();
-              },
-            };
-            debug!("startup complete for behavior {:?}", id_clone);
-            Ok((stream, behavior))
-          });
+        let behavior_task: task::JoinHandle<
+          Result<(Option<EventStream<E>>, B), ArbiterEngineError>,
+        > = tokio::spawn(async move {
+          let stream = match behavior.startup(client, messager).await {
+            Ok(stream) => stream,
+            Err(e) => {
+              error!("startup failed for behavior {:?}: \n reason: {:?}", id_clone, e);
+              // Throw a panic as we cannot recover from this for now.
+              panic!();
+            },
+          };
+          debug!("startup complete for behavior {:?}", id_clone);
+          Ok((stream, behavior))
+        });
         let (stream, behavior) = behavior_task.await??;
-        match stream {
-          Some(stream) => {
-            self.event_stream = Some(stream);
-            self.behavior = Some(behavior);
-            match self.execute(MachineInstruction::Process).await {
-              Ok(_) => {},
-              Err(e) => {
-                error!("process failed for behavior {:?}: \n reason: {:?}", id, e);
-              },
-            }
-            Ok(())
-          },
-          None => {
-            self.behavior = Some(behavior);
-            Ok(())
-          },
+        if let Some(stream) = stream {
+          self.event_stream = Some(stream);
+          self.behavior = Some(behavior);
+          match self.execute(MachineInstruction::Process).await {
+            Ok(()) => {},
+            Err(e) => {
+              error!("process failed for behavior {:?}: \n reason: {:?}", id, e);
+            },
+          }
+        } else {
+          self.behavior = Some(behavior);
         }
+        Ok(())
       },
       MachineInstruction::Process => {
         trace!("Behavior is starting up.");
         let mut behavior = self.behavior.take().unwrap();
         let mut stream = self.event_stream.take().unwrap();
-        let behavior_task: JoinHandle<Result<B, ArbiterEngineError>> = tokio::spawn(async move {
-          while let Some(event) = stream.next().await {
-            match behavior.process(event).await? {
-              ControlFlow::Halt => {
-                break;
-              },
-              ControlFlow::Continue => {},
+        let behavior_task: task::JoinHandle<Result<B, ArbiterEngineError>> =
+          tokio::spawn(async move {
+            while let Some(event) = stream.next().await {
+              match behavior.process(event).await? {
+                ControlFlow::Halt => {
+                  break;
+                },
+                ControlFlow::Continue => {},
+              }
             }
-          }
-          Ok(behavior)
-        });
+            Ok(behavior)
+          });
         // TODO: We don't have to store the behavior again here, we could just discard
         // it.
         self.behavior = Some(behavior_task.await??);

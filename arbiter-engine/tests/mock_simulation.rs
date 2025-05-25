@@ -8,7 +8,7 @@ use arbiter_engine::{
   world::World,
 };
 use arbiter_macros::Behaviors;
-use futures_util::StreamExt;
+use futures::StreamExt;
 use tokio::time::timeout;
 include!("common.rs");
 

@@ -1,15 +1,5 @@
-//! The agent module contains the core agent abstraction for the Arbiter Engine.
-
-use std::fmt::Debug;
-
-use serde::{de::DeserializeOwned, Serialize};
-
-use crate::{
-  environment::Middleware,
-  error::ArbiterEngineError,
-  machine::{Behavior, Engine, StateMachine},
-  messager::Messager,
-};
+use super::*;
+use crate::machine::{Behavior, Engine, StateMachine};
 
 /// An agent is an entity capable of processing events and producing actions.
 /// These are the core actors in simulations or in onchain systems.
@@ -76,7 +66,7 @@ impl AgentBuilder {
       engines.push(Box::new(engine));
     } else {
       self.behavior_engines = Some(vec![Box::new(engine)]);
-    };
+    }
     self
   }
 
@@ -102,7 +92,7 @@ impl AgentBuilder {
       engines.push(engine);
     } else {
       self.behavior_engines = Some(vec![engine]);
-    };
+    }
     self
   }
 

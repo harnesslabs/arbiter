@@ -2,22 +2,11 @@
 
 // TODO: I think the DB needs to have a transaction layer associated to it actually.
 
-use std::{
-  collections::{HashMap, VecDeque},
-  fs::File,
-  hash::Hash,
-  io::Read,
-};
-
-use futures_util::future::join_all;
-use serde::de::DeserializeOwned;
-use tokio::spawn;
+use std::{collections::VecDeque, fs::File, io::Read};
 
 use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
-  environment::Environment,
-  error::ArbiterEngineError,
   machine::{CreateStateMachine, MachineInstruction},
 };
 
@@ -210,7 +199,7 @@ impl<
       for mut engine in agent.behavior_engines.drain(..) {
         let client = agent.middleware.clone();
         let messager = messagers.pop_front().unwrap();
-        tasks.push(spawn(async move {
+        tasks.push(task::spawn(async move {
           engine.execute(MachineInstruction::Start(client, messager)).await
         }));
       }

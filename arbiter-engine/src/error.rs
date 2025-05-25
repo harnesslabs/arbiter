@@ -1,10 +1,7 @@
-//! Error types for the arbiter engine.
-
 use thiserror::Error;
 
 use super::*;
 
-/// Errors that can occur in the arbiter engine.
 #[derive(Debug, Error)]
 pub enum ArbiterEngineError {
   /// Error occurred with the [`Messager`].
@@ -29,9 +26,9 @@ pub enum ArbiterEngineError {
 
   /// Error occurred in joining a task.
   #[error(transparent)]
-  JoinError(#[from] tokio::task::JoinError),
+  JoinError(#[from] task::JoinError),
 
   /// Error occurred in sending a message.
   #[error(transparent)]
-  SendError(#[from] tokio::sync::broadcast::error::SendError<crate::messager::Message>),
+  SendError(#[from] broadcast::error::SendError<crate::messager::Message>),
 }

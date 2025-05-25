@@ -1,9 +1,7 @@
 //! The messager module contains the core messager layer for the Arbiter Engine.
 
-use tokio::sync::broadcast::{channel, Receiver, Sender};
-
 use super::*;
-use crate::{error::ArbiterEngineError, machine::EventStream};
+use crate::machine::EventStream;
 
 /// A message that can be sent between agents.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -35,9 +33,9 @@ pub struct Messager {
   /// The identifier of the entity that is using the messager.
   pub id: Option<String>,
 
-  pub(crate) broadcast_sender: Sender<Message>,
+  pub(crate) broadcast_sender: broadcast::Sender<Message>,
 
-  broadcast_receiver: Option<Receiver<Message>>,
+  broadcast_receiver: Option<broadcast::Receiver<Message>>,
 }
 
 impl Clone for Messager {
@@ -54,7 +52,7 @@ impl Messager {
   /// Creates a new messager with the given capacity.
   #[allow(clippy::new_without_default)]
   pub fn new() -> Self {
-    let (broadcast_sender, broadcast_receiver) = channel(512);
+    let (broadcast_sender, broadcast_receiver) = broadcast::channel(512);
     Self { broadcast_sender, broadcast_receiver: Some(broadcast_receiver), id: None }
   }
 
@@ -71,26 +69,22 @@ impl Messager {
   /// utility function for getting the next value from the broadcast_receiver
   /// without streaming
   pub async fn get_next(&mut self) -> Result<Message, ArbiterEngineError> {
-    let mut receiver = match self.broadcast_receiver.take() {
-      Some(receiver) => receiver,
-      None =>
-        return Err(ArbiterEngineError::MessagerError(
-          "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
-        )),
+    let Some(mut receiver) = self.broadcast_receiver.take() else {
+      return Err(ArbiterEngineError::MessagerError(
+        "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
+      ));
     };
     while let Ok(message) = receiver.recv().await {
       match &message.to {
         To::All => {
           return Ok(message);
         },
-        To::Agent(id) => {
+        To::Agent(id) =>
           if let Some(self_id) = &self.id {
             if id == self_id {
               return Ok(message);
             }
-          }
-          continue;
-        },
+          },
       }
     }
     unreachable!()
@@ -99,12 +93,10 @@ impl Messager {
   /// Returns a stream of messages that are either sent to [`To::All`] or to
   /// the agent via [`To::Agent(id)`].
   pub fn stream(mut self) -> Result<EventStream<Message>, ArbiterEngineError> {
-    let mut receiver = match self.broadcast_receiver.take() {
-      Some(receiver) => receiver,
-      None =>
-        return Err(ArbiterEngineError::MessagerError(
-          "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
-        )),
+    let Some(mut receiver) = self.broadcast_receiver.take() else {
+      return Err(ArbiterEngineError::MessagerError(
+        "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
+      ));
     };
     Ok(Box::pin(async_stream::stream! {
         while let Ok(message) = receiver.recv().await {
@@ -148,7 +140,7 @@ impl Messager {
         from: id.clone(),
         to,
         data: serde_json::to_string(&data).map_err(|e| {
-          ArbiterEngineError::MessagerError(format!("Failed to serialize data: {}", e))
+          ArbiterEngineError::MessagerError(format!("Failed to serialize data: {e}"))
         })?,
       };
       self.broadcast_sender.send(message)?;

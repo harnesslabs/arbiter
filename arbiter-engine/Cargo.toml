@@ -1,35 +1,28 @@
 [package]
-authors = ["Colin Roberts <colin@autoparallel.xyz>"]
+authors = ["Harness Labs"]
 edition = "2021"
 name = "arbiter-engine"
 version = "0.1.0"
 
 [dependencies]
-# Local
-arbiter-macros = { workspace = true }
-
 # Serialization
-serde = { workspace = true, features = ["derive"] }
-# TODO: This is just for testing really, we can use any serailization eventually.
-serde_json = { version = "1.0" }
+serde = { workspace = true, features = [
+    "derive",
+] } # TODO: We should likely use a zero-copy serialization lib for speed.
+serde_json = { version = "1.0" } # TODO: This is just for testing really, we can use any serailization eventually.
 toml = "0.8"
 
 # Async
 async-stream.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-futures-util.workspace = true
 tokio = { workspace = true, features = ["macros", "full"] }
-tokio-stream = "0.1.15"
-
-# Concurrency
-crossbeam-channel.workspace = true
 
 # Error and logging
 thiserror.workspace = true
 tracing.workspace = true
 
-
 [dev-dependencies]
+arbiter-macros = { workspace = true }
 tracing-test = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
