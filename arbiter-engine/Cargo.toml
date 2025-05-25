@@ -6,7 +6,7 @@ version = "0.1.0"
 
 [dependencies]
 # Local
-macros = { workspace = true }
+arbiter-macros = { workspace = true }
 
 # Serialization
 serde = { workspace = true, features = ["derive"] }

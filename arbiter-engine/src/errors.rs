@@ -6,7 +6,7 @@ use super::*;
 
 /// Errors that can occur in the arbiter engine.
 #[derive(Debug, Error)]
-pub enum EngineError {
+pub enum ArbiterEngineError {
   /// Error occurred with the [`Messager`].
   #[error("MessagerError: {0}")]
   MessagerError(String),

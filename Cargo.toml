@@ -1,6 +1,12 @@
 [workspace]
 exclude = ["benches", "docs"]
-members = ["bindings", "core", "engine", "macros", "docs"]
+members = [
+  "arbiter-bindings",
+  "arbiter-core",
+  "arbiter-engine",
+  "arbiter-macros",
+  "docs",
+]
 
 [package]
 authors = ["Harness Labs"]
