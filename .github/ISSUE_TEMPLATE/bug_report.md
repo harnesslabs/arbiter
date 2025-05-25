@@ -1,30 +1,41 @@
 ---
-name: Bug report
-about: Create a report to help us fix something that is broken
-title: ADD YOUR TITLE HERE WITH TAGS AND BRIEF DESCRIPTION
-labels: ''
+name: Bug Report
+about: Report a bug to help us improve
+title: 'bug(area): brief description of the bug'
+labels: 'type: enhancement'
 assignees: ''
 
 ---
-# Problem
-Describe the problem here.
 
----
+**Title Format**
+Please use the following format for your title:
+```
+fix(area): brief description of the bug
+```
+Where `area` is one of: `algebra`, `space`
 
-## Steps to reproduce
-Outline the steps to reproduce the problem here.
+**Describe the Bug**
+A clear and concise description of what the bug is.
 
-## Expected behavior
+**To Reproduce**
+Steps to reproduce the behavior:
+1. Use function/method '...'
+2. With parameters '....'
+3. See error
+
+**Expected Behavior**
 A clear and concise description of what you expected to happen.
 
-## Code snippets/links or screenshots 
-If applicable, add code snippets or links or screenshots to help explain your problem here.
+**Environment**
+- OS: [e.g. Ubuntu 20.04]
+- Rust Version: [e.g. 1.75.0]
+- Crate Version: [e.g. 0.1.0]
 
-## Additional context 
+**Additional Context**
 Add any other context about the problem here.
 
----
-
-**Provide an adequate title with tags and a brief description**
-The tags should be in the format of "tag:" Description. Since this is a bug report, please use:
-- "bug:" A bug fix.
+**Labels to Consider**
+- `area: algebra` or `area: space` (based on affected component)
+- `priority: critical/high/medium/low` (based on impact)
+- `tech: performance` (if performance related)
+- `tech: security` (if security related)

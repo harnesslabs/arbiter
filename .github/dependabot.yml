@@ -1,16 +1,28 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
-
 version: 2
 updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "daily"
-
-  - package-ecosystem: "cargo"
-    directory: "arbiter-core"
-    schedule:
-      interval: "daily"
+      interval: "monthly"
+    # Group all updates together
+    groups:
+      all-updates:
+        patterns:
+          - "*"
+    # Specify rules for version updates
+    open-pull-requests-limit: 10
+    # Assign reviewers (optional)
+    reviewers:
+      - "autoparallel"
+    # Labels for PRs (optional)
+    labels:
+      - "dependencies"
+      - "automated pr"
+    # Configure commit message
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # Only allow certain update types (optional)
+    allow:
+      # Allow both direct and indirect updates for all packages
+      - dependency-type: "all"

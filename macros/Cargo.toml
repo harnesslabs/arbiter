@@ -1,19 +1,19 @@
 [package]
-name = "arbiter-macros"
-version = "0.1.4"
-edition = "2021"
 authors = [
-    "Matt Czernik <matt@primitive.xyz>",
-    "Colin Roberts <colin@autoparallel.xyz>",
+  "Matt Czernik <matt@primitive.xyz>",
+  "Colin Roberts <colin@autoparallel.xyz>",
 ]
 description = "Arbiter macros for Ethereum smart contract testing."
-license = "Apache-2.0"
+edition = "2021"
 keywords = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
+license = "Apache-2.0"
+name = "arbiter-macros"
 readme = "../README.md"
+version = "0.1.4"
 
 [lib]
 proc-macro = true
 
 [dependencies]
+quote         = "1.0.36"
 syn.workspace = true
-quote = "1.0.36"

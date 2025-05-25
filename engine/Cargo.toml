@@ -1,45 +1,45 @@
 [package]
-name = "arbiter-engine"
-version = "0.4.0"
-edition = "2021"
 authors = [
-    "Waylon Jepsen <waylonjepsen1@gmail.com>",
-    "Colin Roberts <colin@autoparallel.xyz>",
+  "Waylon Jepsen <waylonjepsen1@gmail.com>",
+  "Colin Roberts <colin@autoparallel.xyz>",
 ]
 description = "Allowing smart contract developers to do simulation driven development via an EVM emulator"
-license = "Apache-2.0"
-keywords = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
-readme = "../README.md"
 documentation = "https://docs.rs/arbiter-engine"
+edition = "2021"
 homepage = "https://github.com/anthias-labs/arbiter"
+keywords = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
+license = "Apache-2.0"
+name = "arbiter-engine"
+readme = "../README.md"
 repository = "https://github.com/anthias-labs/arbiter"
+version = "0.4.0"
 
 [dependencies]
 arbiter-bindings.workspace = true
-arbiter-core.workspace = true
-arbiter-macros.workspace = true
+arbiter-core.workspace     = true
+arbiter-macros.workspace   = true
 
 ethers.workspace = true
 
-tokio.workspace = true
-tokio-stream = "0.1.15"
-futures.workspace = true
-futures-util.workspace = true
-async-trait.workspace = true
 async-stream.workspace = true
+async-trait.workspace  = true
+futures.workspace      = true
+futures-util.workspace = true
+tokio.workspace        = true
+tokio-stream           = "0.1.15"
 
-serde.workspace = true
+serde.workspace      = true
 serde_json.workspace = true
-toml.workspace = true
+toml.workspace       = true
 
+anyhow.workspace    = true
 thiserror.workspace = true
-tracing.workspace = true
-anyhow.workspace = true
+tracing.workspace   = true
 
 crossbeam-channel.workspace = true
 
 [dev-dependencies]
-arbiter-core.workspace = true
 arbiter-bindings.workspace = true
-tracing-subscriber = "0.3.18"
-tracing-test = "0.2.4"
+arbiter-core.workspace     = true
+tracing-subscriber         = "0.3.18"
+tracing-test               = "0.2.4"

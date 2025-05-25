@@ -1,8 +1,8 @@
 # Basic configuration
+block_number     = 18228556
 output_directory = "examples/fork/"
-output_filename = "test.json"
-provider = "https://eth.llamarpc.com"
-block_number = 18228556
+output_filename  = "test.json"
+provider         = "https://eth.llamarpc.com"
 
 # EOAs
 [externally_owned_accounts]
@@ -11,7 +11,7 @@ vitalik = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045" # vitalik.eth as of 10/2/
 # Contracts stored in a mapping
 # Try this out with the weth contract
 [contracts.weth]
-address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+address        = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
 artifacts_path = "examples/fork/WETH.json"
 
 [contracts.weth.mappings]

@@ -1,0 +1,88 @@
+# Priority Levels (Red to Green)
+- name: "priority: critical"
+  color: "b60205"
+  description: "Must be addressed immediately"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "High priority tasks"
+
+- name: "priority: medium"
+  color: "fbca04"
+  description: "Medium priority tasks"
+
+- name: "priority: low"
+  color: "0e8a16"
+  description: "Low priority tasks"
+
+# Areas of Codebase (Blues)
+- name: "area: core"
+  color: "0052cc"
+  description: "Core related changes"
+
+- name: "area: engine"
+  color: "006b75"
+  description: "Engine related changes"
+
+# Task Types (Purples)
+- name: "type: refactor"
+  color: "6f42c1"
+  description: "Code refactoring and restructuring"
+
+- name: "type: enhancement"
+  color: "7057ff"
+  description: "Improvements to existing features"
+
+- name: "type: maintenance"
+  color: "8a63d2"
+  description: "Maintenance and cleanup tasks"
+
+# Technical Categories (Oranges)
+- name: "tech: security"
+  color: "d93f0b"
+  description: "Security-related changes"
+
+- name: "tech: performance"
+  color: "fbca04"
+  description: "Performance improvements"
+
+- name: "tech: testing"
+  color: "ff7619"
+  description: "Testing related changes"
+
+# Process Labels (Greens)
+- name: "status: needs-review"
+  color: "0e8a16"
+  description: "Needs review from maintainers"
+
+- name: "status: blocked"
+  color: "44cc11"
+  description: "Blocked by other issues"
+
+- name: "status: in-progress"
+  color: "1a7f37"
+  description: "Currently being worked on"
+
+# Community Labels (Teals)
+- name: "community: good-first-issue"
+  color: "008672"
+  description: "Good for new contributors"
+
+- name: "community: help-wanted"
+  color: "006b75"
+  description: "Extra attention needed"
+
+# Documentation (Light Blue)
+- name: "docs"
+  color: "0075ca"
+  description: "Documentation updates"
+
+# Dependencies (Pink)
+- name: "dependencies"
+  color: "cb7eed"
+  description: "Dependency updates and maintenance"
+
+# CI/CD (Bright Green)
+- name: "ci/cd"
+  color: "44cc11"
+  description: "Continuous integration and deployment pipeline changes"

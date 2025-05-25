@@ -17,15 +17,11 @@ pub(crate) mod abi;
 pub struct ConsoleLogs(pub Vec<Bytes>);
 
 impl<DB: Database> Inspector<DB> for ConsoleLogs {
-    #[inline]
-    fn call(
-        &mut self,
-        _context: &mut EvmContext<DB>,
-        call: &mut CallInputs,
-    ) -> Option<CallOutcome> {
-        if call.contract == CONSOLE_ADDRESS {
-            self.0.push(call.input.clone());
-        }
-        None
+  #[inline]
+  fn call(&mut self, _context: &mut EvmContext<DB>, call: &mut CallInputs) -> Option<CallOutcome> {
+    if call.contract == CONSOLE_ADDRESS {
+      self.0.push(call.input.clone());
     }
+    None
+  }
 }

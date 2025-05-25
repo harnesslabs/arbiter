@@ -1,12 +1,12 @@
 [package]
-name = "arbiter-bindings"
-version = "0.1.7"
-edition = "2021"
 description = "Rust bindings for common solidity smart contracts"
-license = "Apache-2.0"
+edition     = "2021"
+license     = "Apache-2.0"
+name        = "arbiter-bindings"
+version     = "0.1.7"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 ethers.workspace = true
-serde.workspace = true
+serde.workspace  = true

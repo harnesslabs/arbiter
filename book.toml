@@ -1,9 +1,9 @@
 [book]
-authors = ["Arbiter Contributors"]
-language = "en"
+authors      = ["Arbiter Contributors"]
+language     = "en"
 multilingual = false
-src = "docs/src"
-title = "Arbiter Documentation"
+src          = "docs/src"
+title        = "Arbiter Documentation"
 
 
 [output.html]
@@ -12,21 +12,21 @@ katex = true
 [preprocessor.katex]
 after = ["links"]
 # KaTeX options.
-output = "html"
-leqno = false
-fleqn = false
-throw-on-error = true
-error-color = "#cc0000"
+error-color        = "#cc0000"
+fleqn              = false
+leqno              = false
+max-expand         = 1000
+max-size           = "Infinity"
 min-rule-thickness = -1.0
-max-size = "Infinity"
-max-expand = 1000
-trust = false
+output             = "html"
+throw-on-error     = true
+trust              = false
 # Extra options.
-no-css = false
-include-src = false
-block-delimiter = { left = "$$", right = "$$" }
+block-delimiter  = { left = "$$", right = "$$" }
+include-src      = false
 inline-delimiter = { left = "$", right = "$" }
+no-css           = false
 
 [output.linkcheck]
-optional = true
 follow-web-links = false
+optional         = true

@@ -1,16 +1,16 @@
 [package]
-name = "docs"
-version = "0.0.1"
+build   = "build.rs"
 edition = "2021"
-build = "build.rs"
+name    = "docs"
 publish = false
+version = "0.0.1"
 
 [build-dependencies]
 skeptic = "0.13.7"
-tokio = "1.36.0"
+tokio   = "1.36.0"
 
 [dev-dependencies]
-skeptic = "0.13.7"
-arbiter-core.workspace = true
 arbiter-bindings.workspace = true
-revm-primitives.workspace = true
+arbiter-core.workspace     = true
+revm-primitives.workspace  = true
+skeptic                    = "0.13.7"

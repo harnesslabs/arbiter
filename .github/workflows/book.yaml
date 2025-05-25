@@ -1,82 +1,59 @@
-name: book
+# name: MDBook Build (and Deploy on Push)
 
-concurrency:
-  cancel-in-progress: true
-  group: ${{github.workflow}}-${{github.ref}}
+# on:
+#   pull_request:
+#     branches: ["main"]
+#   push:
+#     branches: ["main"]
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  merge_group:
+# permissions:
+#   contents: read
+#   pages: write
+#   id-token: write
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-
-      # Install Rust
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-
-      # Install mdbook
-      - name: Install mdbook
-        run: cargo install mdbook --vers "^0.4.35"
-
-      # Install mdbook-katex
-      - name: Install mdbook-katex
-        run: cargo install mdbook-katex
-
-      # Build book
-      - name: build book
-        run: mdbook build
-
-  lint:
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
+# jobs:
+#   build:
+#     name: Build Documentation
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
       
-      # Install Rust
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-      
-      # Install mdbook-linkcheck
-      - name: Install mdbook-linkcheck
-        run: cargo install mdbook-linkcheck
-      
-      - name: linkcheck
-        run: mdbook-linkcheck --standalone
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@master
+#         with:
+#           toolchain: nightly-2025-05-25
 
-  test:
-    runs-on: ubuntu-latest
+#       - name: Install mdbook
+#         uses: taiki-e/install-action@cargo-binstall
+#         with:
+#           tool: mdbook
 
-    steps:
-      - uses: actions/checkout@v3
-        with:
-          fetch-depth: 0
-      
-      # Install Rust
-      - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          override: true
-      
-      - name: test
-        run: |
-          cd docs
-          cargo test
+#       - name: Install mdbook-katex
+#         uses: taiki-e/install-action@cargo-binstall
+#         with:
+#           tool: mdbook-katex
+
+#       - name: Install mdbook-linkcheck
+#         uses: taiki-e/install-action@cargo-binstall
+#         with:
+#           tool: mdbook-linkcheck
+
+#       - name: Build mdBook
+#         run: mdbook build
+
+#       - name: Upload artifact
+#         uses: actions/upload-pages-artifact@v3
+#         with:
+#           path: ./docs/html
+
+#   deploy:
+#     environment:
+#       name: github-pages
+#       url: ${{ steps.deployment.outputs.page_url }}
+#     runs-on: ubuntu-latest
+#     needs: build
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#     steps:
+#       - name: Deploy to GitHub Pages
+#         id: deployment
+#         uses: actions/deploy-pages@v4

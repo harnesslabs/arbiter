@@ -7,16 +7,16 @@ exclude = ["benches", "docs"]
 
 # Package configuration
 [package]
-name = "arbiter"
-version = "0.4.20"
-edition = "2021"
 authors = [
-    "Waylon Jepsen <waylonjepsen1@gmail.com>",
-    "Colin Roberts <colin@autoparallel.xyz>",
+  "Waylon Jepsen <waylonjepsen1@gmail.com>",
+  "Colin Roberts <colin@autoparallel.xyz>",
 ]
 description = "Allowing smart contract developers to do simulation driven development via an EVM emulator"
-license = "Apache-2.0"
+edition = "2021"
 keywords = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
+license = "Apache-2.0"
+name = "arbiter"
+version = "0.4.20"
 
 # Binary configuration
 [[bin]]
@@ -37,70 +37,70 @@ path = "examples/minter/main.rs"
 
 # Arbiter crates.io for release, these need to be used to do crate releases!
 arbiter-bindings = "0.1.7"
-arbiter-core = "0.11.0"
-arbiter-engine = "0.4.0"
-arbiter-macros = "0.1.4"
+arbiter-core     = "0.11.0"
+arbiter-engine   = "0.4.0"
+arbiter-macros   = "0.1.4"
 
-revm = { version = "8.0.0", features = ["ethersdb", "std", "serde"] }
+ethers          = { version = "2.0.14" }
+revm            = { version = "8.0.0", features = ["ethersdb", "std", "serde"] }
 revm-primitives = "3.1.1"
-ethers = { version = "2.0.14" }
 
-serde = { version = "1.0.200", features = ["derive"] }
+serde      = { version = "1.0.200", features = ["derive"] }
 serde_json = { version = "1.0.116" }
-toml = "0.8.12"
+toml       = "0.8.12"
 
-tokio = { version = "1.36.0", features = ["macros", "full"] }
-futures = "0.3.30"
-futures-util = { version = "0.3.30" }
-async-stream = "0.3.5"
-async-trait = { version = "0.1.80" }
+async-stream      = "0.3.5"
+async-trait       = { version = "0.1.80" }
 crossbeam-channel = { version = "0.5.12" }
+futures           = "0.3.30"
+futures-util      = { version = "0.3.30" }
+tokio             = { version = "1.36.0", features = ["macros", "full"] }
 
-syn = { version = "2.0.60", features = ["full"] }
 proc-macro2 = { version = "1.0.79" }
+syn         = { version = "2.0.60", features = ["full"] }
 
-tracing = "0.1.40"
+anyhow    = "1.0.83"
 thiserror = { version = "1.0.59" }
-anyhow = "1.0.83"
+tracing   = "0.1.40"
 
 # Dependencies for the release build of Arbiter bin
 [dependencies]
 arbiter-core.workspace = true
 
 # Command line and config
-clap = { version = "4.5.2", features = ["derive"] }
-serde.workspace = true
-serde_json.workspace = true
-config = { version = "=0.14.0" }
-ethers.workspace = true
-revm.workspace = true
-toml.workspace = true
+Inflector             = { version = "=0.11.4" }
+clap                  = { version = "4.5.2", features = ["derive"] }
+config                = { version = "=0.14.0" }
+ethers.workspace      = true
 proc-macro2.workspace = true
-syn.workspace = true
-Inflector = { version = "=0.11.4" }
+revm.workspace        = true
+serde.workspace       = true
+serde_json.workspace  = true
+syn.workspace         = true
+toml.workspace        = true
 
 # Building files
 foundry-config = { version = "=0.2.0" }
-tempfile = { version = "3.10.1" }
+tempfile       = { version = "3.10.1" }
 
 # Errors
 thiserror.workspace = true
 # Dependencies for the test build and development
 [dev-dependencies]
+anyhow.workspace           = true
 arbiter-bindings.workspace = true
-arbiter-engine.workspace = true
-arbiter-macros.workspace = true
-revm-primitives.workspace = true
-serde.workspace = true
-async-trait.workspace = true
-anyhow.workspace = true
-rayon = { version = "1.10.0" }
+arbiter-engine.workspace   = true
+arbiter-macros.workspace   = true
+async-trait.workspace      = true
+rayon                      = { version = "1.10.0" }
+revm-primitives.workspace  = true
+serde.workspace            = true
 
 # Necessary for examples
-tokio.workspace = true
-tracing.workspace = true
+assert_cmd         = { version = "=2.0.14" }
+tokio.workspace    = true
+tracing.workspace  = true
 tracing-subscriber = "0.3.18"
-assert_cmd = { version = "=2.0.14" }
 
 
 # Release profile

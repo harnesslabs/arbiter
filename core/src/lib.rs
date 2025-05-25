@@ -16,10 +16,10 @@
 //! without associated overheads like networking latency.
 //!
 //! Key Features:
-//! - **Environment Handling**: Detailed setup and control mechanisms for
-//!   running the Ethereum-like blockchain environment.
-//! - **Middleware Implementation**: Customized middleware to reduce overhead
-//!   and provide optimal performance.
+//! - **Environment Handling**: Detailed setup and control mechanisms for running the Ethereum-like
+//!   blockchain environment.
+//! - **Middleware Implementation**: Customized middleware to reduce overhead and provide optimal
+//!   performance.
 //!
 //! For a detailed guide on getting started, check out the
 //! [Arbiter Github page](https://github.com/amthias-labs/arbiter/).
@@ -38,19 +38,19 @@ pub mod events;
 pub mod middleware;
 
 use std::{
-    collections::{BTreeMap, HashMap},
-    convert::Infallible,
-    fmt::Debug,
-    sync::{Arc, RwLock},
+  collections::{BTreeMap, HashMap},
+  convert::Infallible,
+  fmt::Debug,
+  sync::{Arc, RwLock},
 };
 
 use async_trait::async_trait;
 use ethers::types::{Address as eAddress, Filter, Log as eLog, H256, U256 as eU256, U64};
 use revm::{
-    db::{CacheDB, EmptyDB},
-    interpreter::{CallInputs, CallOutcome},
-    primitives::{AccountInfo, Address, Bytes, ExecutionResult, Log, TxEnv, U256},
-    Database, Evm, EvmContext, Inspector,
+  db::{CacheDB, EmptyDB},
+  interpreter::{CallInputs, CallOutcome},
+  primitives::{AccountInfo, Address, Bytes, ExecutionResult, Log, TxEnv, U256},
+  Database, Evm, EvmContext, Inspector,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast::{Receiver as BroadcastReceiver, Sender as BroadcastSender};

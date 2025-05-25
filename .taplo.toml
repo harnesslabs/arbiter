@@ -1,0 +1,12 @@
+# .toml file formatting settings for `taplo`
+# https://taplo.tamasfe.dev/configuration/formatter-options.html
+
+[formatting]
+# align entries vertically
+align_entries = true
+# allow up to 1 consecutive empty line (default: 2)
+allowed_blank_line = 1
+# collapse arrays into one line if they fit
+array_auto_collapse = true
+# alphabetically sort entries not separated by line breaks
+reorder_keys = true

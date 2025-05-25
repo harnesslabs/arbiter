@@ -1,4 +1,4 @@
-bindings_path = "src/"
-ignore_interfaces = false
+bindings_path      = "src/"
 bindings_workspace = "arbiter-bindings" # must be a valid workspace member
-submodules = true                # change to true if you want the submodule bindings to be generated
+ignore_interfaces  = false
+submodules         = true               # change to true if you want the submodule bindings to be generated

@@ -1,13 +1,44 @@
-# Rustfmt configuration
+# Opinionated whitespace and tabs. The most important of these are imports and width settings.
+# Others may want to borrow or change these to their own liking.
+# https://rust-lang.github.io/rustfmt
 
-imports_granularity = "Crate"
-group_imports = "StdExternalCrate"
+# version-related
+edition           = "2021" # redundant, fmt will read Cargo.toml for editor edition year
+unstable_features = true
+use_try_shorthand = true   # replace any `try!` (2015 Rust) with `?` 
 
-format_code_in_doc_comments = true
+# misc formatting
+condense_wildcard_suffixes   = true # replace: (a,b,_,_)=(1, 2, 3, 4); -> (a,b,..)=(1, 2, 3, 4);
+format_code_in_doc_comments  = true # format code blocks in doc comments
+format_macro_matchers        = true # $a: ident -> $a:ident
+format_strings               = true # break and insert newlines for long string literals 
+match_block_trailing_comma   = true # include comma in match blocks after '}'
+normalize_comments           = true # convert /*..*/ to //.. where possible
+reorder_impl_items           = true # move `type` and `const` declarations to top of impl block
+struct_field_align_threshold = 20   # align struct arguments' types vertically 
+use_field_init_shorthand     = true # struct initialization short {x: x} -> {x}
 
-use_field_init_shorthand = true
+# reduce whitespace
+blank_lines_upper_bound = 1                # default: 1. Sometimes useful to change to 0 to condense a file.
+brace_style             = "PreferSameLine" # prefer starting `{` without inserting extra \n
+fn_single_line          = true             # if it's a short 1-liner, let it be a short 1-liner
+match_arm_blocks        = false            # remove unnecessary {} in match arms
+newline_style           = "Unix"           # not auto, we won the culture war. \n over \r\n
+overflow_delimited_expr = true             # prefer ]); to ]\n);
+where_single_line       = true             # put where on a single line if possible
 
-wrap_comments = true
-normalize_comments = true
-comment_width = 80
-edition = "2021"
+# imports preferences
+group_imports       = "StdExternalCrate" # create import groupings for std, external libs, and internal deps
+imports_granularity = "Crate"            # aggressively group imports
+
+# width settings: everything to 100
+comment_width          = 100   # default: 80
+inline_attribute_width = 60    # inlines #[cfg(test)]\nmod test -> #[cfg(test)] mod test
+max_width              = 100   # default: 100
+use_small_heuristics   = "Max" # don't ever newline short of `max_width`.
+wrap_comments          = true  # wrap comments at `comment_width`
+# format_strings = true # wrap strings at `max_length`
+
+# tabs and spaces
+hard_tabs  = false # (def: false) use spaces over tabs
+tab_spaces = 2     # 2 > 4, it's just math.
