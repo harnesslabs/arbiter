@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::Hash};
 
-use futures::{pin_mut, stream, Stream, StreamExt};
+use futures::{stream, Stream};
 use tokio::task;
 
 use super::*;
@@ -52,12 +52,13 @@ where K: Eq + Hash
 
   pub fn run(mut self) -> Result<task::JoinHandle<()>, <HashMap<K, V> as StateDB>::Error>
   where
-    K: Send + Sync + 'static,
-    V: Send + Sync + 'static, {
+    K: Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static, {
     let mut tx_receiver = self.tx_receiver;
     Ok(tokio::spawn(async move {
       while let Some((k, v)) = tx_receiver.recv().await {
-        self.inner.set(k, v).unwrap();
+        self.inner.set(k.clone(), v.clone()).unwrap();
+        self.broadcast.send((k, v));
       }
     }))
   }
@@ -80,11 +81,11 @@ where S::Error: From<mpsc::error::SendError<(S::Location, S::State)>>
     Ok(())
   }
 
-  pub fn stream(&self) -> impl Stream<Item = (S::Location, S::State)>
+  pub fn stream(&self) -> impl Stream<Item = (S::Location, S::State)> + Unpin
   where
     S::Location: Clone,
     S::State: Clone, {
-    let stream = stream::unfold(self.receiver.resubscribe(), |mut receiver| async move {
+    Box::pin(stream::unfold(self.receiver.resubscribe(), |mut receiver| async move {
       loop {
         match receiver.recv().await {
           Ok(request) => return Some((request, receiver)),
@@ -92,14 +93,14 @@ where S::Error: From<mpsc::error::SendError<(S::Location, S::State)>>
           Err(broadcast::error::RecvError::Lagged(_)) => {},
         }
       }
-    });
-    pin_mut!(stream);
-    stream
+    }))
   }
 }
 
 #[cfg(test)]
 mod tests {
+  use futures::StreamExt;
+
   use super::*;
 
   #[tokio::test]
@@ -109,7 +110,7 @@ mod tests {
 
     // Get middleware and start streaming events
     let middleware = environment.middleware();
-    let stream = middleware.stream();
+    let mut stream = middleware.stream();
 
     // Start environment
     let handle = environment.run().unwrap();
