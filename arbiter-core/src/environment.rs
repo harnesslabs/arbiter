@@ -1,6 +1,6 @@
 use std::{collections::HashMap, hash::Hash};
 
-use futures::{stream, Stream};
+use futures::{stream, Stream, StreamExt};
 
 use super::*;
 
@@ -69,7 +69,7 @@ where
     Ok(())
   }
 
-  pub fn stream(mut self) -> impl Stream<Item = S::Request> {
+  pub fn stream(self) -> impl Stream<Item = S::Request> {
     stream::unfold(self.receiver, |mut receiver| async move {
       loop {
         match receiver.recv().await {
@@ -87,5 +87,12 @@ mod tests {
   use super::*;
 
   #[tokio::test]
-  async fn test_middleware() { let environment = Environment::new(10).unwrap(); }
+  async fn test_middleware() {
+    let environment = Environment::<HashMap<String, String>>::new(10).unwrap();
+    let middleware = environment.middleware();
+    middleware.send("test".to_string()).await.unwrap();
+    let mut stream = middleware.stream();
+    let next = stream.next().await.unwrap();
+    assert_eq!(next, "test");
+  }
 }
