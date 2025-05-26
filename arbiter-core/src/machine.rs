@@ -4,6 +4,7 @@
 use std::pin::Pin;
 
 use super::*;
+use crate::environment::Middleware;
 
 /// A type alias for a pinned, boxed stream of events.
 ///
@@ -68,21 +69,21 @@ pub enum State {
 /// The [`Behavior`] trait is the lowest level functionality that will be used
 /// by a [`StateMachine`]. This constitutes what each state transition will do.
 #[async_trait::async_trait]
-pub trait Behavior<S: StateDB, E: Send + 'static>:
+pub trait Behavior<E: Send + 'static>:
   Serialize + DeserializeOwned + Send + Sync + Debug + 'static {
   /// Used to start the agent.
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
-  async fn startup(
+  async fn startup<S: StateDB>(
     &mut self,
     middleware: Middleware<S>,
     messager: Messager,
-  ) -> Result<Option<EventStream<E>>, ArbiterEngineError>;
+  ) -> Result<Option<EventStream<E>>, ArbiterCoreError>;
 
   /// Used to process events.
   /// This is where the agent can engage in its specific processing
   /// of events that can lead to actions being taken.
-  async fn process(&mut self, _event: E) -> Result<ControlFlow, ArbiterEngineError> {
+  async fn process(&mut self, _event: E) -> Result<ControlFlow, ArbiterCoreError> {
     Ok(ControlFlow::Halt)
   }
 }
@@ -143,10 +144,10 @@ pub trait StateMachine: Send + Sync + Debug + 'static {
   async fn execute<S: StateDB>(
     &mut self,
     _instruction: MachineInstruction<S>,
-  ) -> Result<(), ArbiterEngineError>
+  ) -> Result<(), ArbiterCoreError>
   where
-    S::Location: Debug,
-    S::State: Debug;
+    S::Location: Debug + Send + Sync + 'static,
+    S::State: Debug + Send + Sync + 'static;
 }
 
 /// The `Engine` struct represents the core logic unit of a state machine-based
@@ -206,7 +207,10 @@ where
   B: Behavior<E> + Debug + Serialize + DeserializeOwned,
   E: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
 {
-  async fn execute(&mut self, instruction: MachineInstruction) -> Result<(), ArbiterEngineError> {
+  async fn execute<S: StateDB>(
+    &mut self,
+    instruction: MachineInstruction<S>,
+  ) -> Result<(), ArbiterCoreError> {
     // NOTE: The unwraps here are safe because the `Behavior` in an engine is only
     // accessed here and it is private.
     let id: Option<String>;
@@ -216,20 +220,19 @@ where
         let id_clone = id.clone();
         self.state = State::Starting;
         let mut behavior = self.behavior.take().unwrap();
-        let behavior_task: task::JoinHandle<
-          Result<(Option<EventStream<E>>, B), ArbiterEngineError>,
-        > = tokio::spawn(async move {
-          let stream = match behavior.startup(client, messager).await {
-            Ok(stream) => stream,
-            Err(e) => {
-              error!("startup failed for behavior {:?}: \n reason: {:?}", id_clone, e);
-              // Throw a panic as we cannot recover from this for now.
-              panic!();
-            },
-          };
-          debug!("startup complete for behavior {:?}", id_clone);
-          Ok((stream, behavior))
-        });
+        let behavior_task: task::JoinHandle<Result<(Option<EventStream<E>>, B), ArbiterCoreError>> =
+          tokio::spawn(async move {
+            let stream = match behavior.startup(client, messager).await {
+              Ok(stream) => stream,
+              Err(e) => {
+                error!("startup failed for behavior {:?}: \n reason: {:?}", id_clone, e);
+                // Throw a panic as we cannot recover from this for now.
+                panic!();
+              },
+            };
+            debug!("startup complete for behavior {:?}", id_clone);
+            Ok((stream, behavior))
+          });
         let (stream, behavior) = behavior_task.await??;
         if let Some(stream) = stream {
           self.event_stream = Some(stream);
@@ -249,7 +252,7 @@ where
         trace!("Behavior is starting up.");
         let mut behavior = self.behavior.take().unwrap();
         let mut stream = self.event_stream.take().unwrap();
-        let behavior_task: task::JoinHandle<Result<B, ArbiterEngineError>> =
+        let behavior_task: task::JoinHandle<Result<B, ArbiterCoreError>> =
           tokio::spawn(async move {
             while let Some(event) = stream.next().await {
               match behavior.process(event).await? {

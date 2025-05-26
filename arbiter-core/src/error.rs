@@ -3,7 +3,7 @@ use thiserror::Error;
 use super::*;
 
 #[derive(Debug, Error)]
-pub enum ArbiterEngineError {
+pub enum ArbiterCoreError {
   /// Error occurred with the [`Messager`].
   #[error("MessagerError: {0}")]
   MessagerError(String),

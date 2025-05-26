@@ -1,6 +1,5 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-use arbiter_core::environment::{Environment, Middleware, StateDB};
 use futures::{future::join_all, Stream, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::{
@@ -9,9 +8,10 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace};
 
-use crate::{error::ArbiterEngineError, messager::Messager};
+use crate::{environment::StateDB, error::ArbiterCoreError, messager::Messager};
 
 pub mod agent;
+pub mod environment;
 pub mod error;
 pub mod machine;
 pub mod messager;

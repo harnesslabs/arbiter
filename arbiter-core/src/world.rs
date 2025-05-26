@@ -21,12 +21,12 @@ use crate::{
 /// connected to the world via a client ([`Arc<RevmMiddleware>`]) and a messager
 /// ([`Messager`]).
 #[derive(Debug)]
-pub struct World<K, V> {
+pub struct World<S: StateDB> {
   /// The identifier of the world.
   pub id: String,
 
   /// The agents in the world.
-  pub agents: Option<HashMap<String, Agent>>,
+  pub agents: Option<HashMap<String, Agent<S>>>,
 
   /// The environment for the world.
   pub environment: Environment<K, V>,
@@ -96,7 +96,7 @@ impl<
   /// ```
   pub fn from_config<C: CreateStateMachine + Serialize + DeserializeOwned + Debug>(
     config_path: &str,
-  ) -> Result<Self, ArbiterEngineError> {
+  ) -> Result<Self, ArbiterCoreError> {
     let cwd = std::env::current_dir().unwrap();
     let path = cwd.join(config_path);
     info!("Reading from path: {:?}", path);
@@ -176,11 +176,11 @@ impl<
   /// Returns an error if no agents are found in the world, possibly
   /// indicating that the world has already been run or that no agents
   /// were added prior to execution.
-  pub async fn run(&mut self) -> Result<(), ArbiterEngineError> {
+  pub async fn run(&mut self) -> Result<(), ArbiterCoreError> {
     let agents = match self.agents.take() {
       Some(agents) => agents,
       None =>
-        return Err(ArbiterEngineError::WorldError(
+        return Err(ArbiterCoreError::WorldError(
           "No agents found. Has the world already been ran?".to_owned(),
         )),
     };

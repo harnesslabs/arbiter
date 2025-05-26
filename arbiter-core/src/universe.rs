@@ -30,9 +30,9 @@ where
   }
 
   /// Runs all of the [`World`]s in the [`Universe`] in parallel.
-  pub async fn run_worlds(&mut self) -> Result<(), ArbiterEngineError> {
+  pub async fn run_worlds(&mut self) -> Result<(), ArbiterCoreError> {
     if self.is_online() {
-      return Err(ArbiterEngineError::UniverseError("Universe is already running.".to_owned()));
+      return Err(ArbiterCoreError::UniverseError("Universe is already running.".to_owned()));
     }
     let mut tasks = Vec::new();
     // NOTE: Unwrap is safe because we checked if the universe is online.

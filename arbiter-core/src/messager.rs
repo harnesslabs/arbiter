@@ -68,9 +68,9 @@ impl Messager {
 
   /// utility function for getting the next value from the broadcast_receiver
   /// without streaming
-  pub async fn get_next(&mut self) -> Result<Message, ArbiterEngineError> {
+  pub async fn get_next(&mut self) -> Result<Message, ArbiterCoreError> {
     let Some(mut receiver) = self.broadcast_receiver.take() else {
-      return Err(ArbiterEngineError::MessagerError(
+      return Err(ArbiterCoreError::MessagerError(
         "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
       ));
     };
@@ -92,9 +92,9 @@ impl Messager {
 
   /// Returns a stream of messages that are either sent to [`To::All`] or to
   /// the agent via [`To::Agent(id)`].
-  pub fn stream(mut self) -> Result<EventStream<Message>, ArbiterEngineError> {
+  pub fn stream(mut self) -> Result<EventStream<Message>, ArbiterCoreError> {
     let Some(mut receiver) = self.broadcast_receiver.take() else {
-      return Err(ArbiterEngineError::MessagerError(
+      return Err(ArbiterCoreError::MessagerError(
         "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
       ));
     };
@@ -133,20 +133,19 @@ impl Messager {
   /// - `to`: The recipient of the message. Can be an individual agent's ID or a broadcast to all
   ///   agents.
   /// - `data`: The data to be sent in the message. This data is serialized into JSON format.
-  pub async fn send<S: Serialize>(&self, to: To, data: S) -> Result<(), ArbiterEngineError> {
+  pub async fn send<S: Serialize>(&self, to: To, data: S) -> Result<(), ArbiterCoreError> {
     trace!("Sending message via messager.");
     if let Some(id) = &self.id {
       let message = Message {
         from: id.clone(),
         to,
-        data: serde_json::to_string(&data).map_err(|e| {
-          ArbiterEngineError::MessagerError(format!("Failed to serialize data: {e}"))
-        })?,
+        data: serde_json::to_string(&data)
+          .map_err(|e| ArbiterCoreError::MessagerError(format!("Failed to serialize data: {e}")))?,
       };
       self.broadcast_sender.send(message)?;
       Ok(())
     } else {
-      Err(ArbiterEngineError::MessagerError(
+      Err(ArbiterCoreError::MessagerError(
         "Messager has no ID! You must have an ID to send messages!".to_owned(),
       ))
     }

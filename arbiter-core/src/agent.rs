@@ -1,5 +1,8 @@
 use super::*;
-use crate::machine::{Behavior, Engine, StateMachine};
+use crate::{
+  environment::Middleware,
+  machine::{Behavior, Engine, StateMachine},
+};
 
 /// An agent is an entity capable of processing events and producing actions.
 /// These are the core actors in simulations or in onchain systems.
@@ -141,7 +144,7 @@ impl AgentBuilder {
     self,
     middleware: Middleware<S>,
     messager: Messager,
-  ) -> Result<Agent<S>, ArbiterEngineError>
+  ) -> Result<Agent<S>, ArbiterCoreError>
   where
     S: StateDB,
     S::Location: Debug,
@@ -149,7 +152,7 @@ impl AgentBuilder {
   {
     match self.behavior_engines {
       Some(engines) => Ok(Agent { id: self.id, messager, middleware, behavior_engines: engines }),
-      None => Err(ArbiterEngineError::AgentBuildError("Missing behavior engines".to_owned())),
+      None => Err(ArbiterCoreError::AgentBuildError("Missing behavior engines".to_owned())),
     }
   }
 }
