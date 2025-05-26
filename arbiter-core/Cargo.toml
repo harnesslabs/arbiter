@@ -16,7 +16,11 @@ name = "arbiter-core"
 version = "0.11.0"
 
 [dependencies]
-futures   = { workspace = true }
-serde     = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
 thiserror = { workspace = true }
-tokio     = { workspace = true }
+tokio = { workspace = true, features = [
+    "macros",
+    "sync",
+    "rt",
+] } # NOTE: Minimal requirements for release build. We should make sure we can build in both release and tests pass in debug. This set of features will also work with wasm.

@@ -1,9 +1,8 @@
 [package]
 authors = ["Harness Labs"]
 edition = "2021"
-license = "AGPL-3.0"
 name    = "arbiter-engine"
-version = "0.4.0"
+version = "0.1.0"
 
 [dependencies]
 # Serialization
@@ -15,9 +14,13 @@ toml = "0.8"
 
 # Async
 async-stream.workspace = true
-async-trait.workspace  = true
-futures.workspace      = true
-tokio                  = { workspace = true, features = [] }
+async-trait.workspace = true
+futures.workspace = true
+tokio = { workspace = true, features = [
+    "macros",
+    "sync",
+    "rt",
+] } # NOTE: Minimal requirements for release build. We should make sure we can build in both release and tests pass in debug. This set of features will also work with wasm.
 
 # Error and logging
 thiserror.workspace = true
@@ -25,5 +28,6 @@ tracing.workspace   = true
 
 [dev-dependencies]
 arbiter-macros     = { workspace = true }
+tokio              = { workspace = true, features = ["macros", "full"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-test       = { workspace = true }
