@@ -130,21 +130,46 @@ dependencies = [
 
 [[package]]
 name = "arbiter"
-version = "0.4.20"
-
-[[package]]
-name = "arbiter-bindings"
-version = "0.1.7"
+version = "0.5.0"
 dependencies = [
- "ethers",
- "serde",
+ "arbiter-core",
+ "arbiter-engine",
+ "arbiter-ethereum",
+ "arbiter-macros",
 ]
 
 [[package]]
 name = "arbiter-core"
 version = "0.11.0"
 dependencies = [
- "arbiter-bindings",
+ "futures",
+ "serde",
+ "thiserror 2.0.12",
+ "tokio",
+]
+
+[[package]]
+name = "arbiter-engine"
+version = "0.4.0"
+dependencies = [
+ "arbiter-macros",
+ "async-stream",
+ "async-trait",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-test",
+]
+
+[[package]]
+name = "arbiter-ethereum"
+version = "0.1.0"
+dependencies = [
  "assert_matches",
  "async-stream",
  "async-trait",
@@ -170,24 +195,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uint",
-]
-
-[[package]]
-name = "arbiter-engine"
-version = "0.1.0"
-dependencies = [
- "arbiter-macros",
- "async-stream",
- "async-trait",
- "futures",
- "serde",
- "serde_json",
- "thiserror 2.0.12",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "tracing-test",
 ]
 
 [[package]]
@@ -1127,7 +1134,6 @@ dependencies = [
 name = "docs"
 version = "0.0.1"
 dependencies = [
- "arbiter-bindings",
  "arbiter-core",
  "revm-primitives",
  "skeptic",
@@ -4245,15 +4251,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-hook-registry"
-version = "1.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9203b8055f63a2a00e2f593bb0510367fe707d7ff1e5c872de2f537b339e5410"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "signature"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4743,9 +4740,7 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.52.0",

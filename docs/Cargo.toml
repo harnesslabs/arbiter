@@ -7,10 +7,9 @@ version = "0.0.1"
 
 [build-dependencies]
 skeptic = "0.13.7"
-tokio   = "1.36.0"
+tokio   = { workspace = true }
 
 [dev-dependencies]
-arbiter-bindings.workspace = true
-arbiter-core.workspace     = true
-revm-primitives.workspace  = true
-skeptic                    = "0.13.7"
+arbiter-core.workspace    = true
+revm-primitives.workspace = true
+skeptic                   = "0.13.7"

@@ -11,10 +11,10 @@ members = [
 
 [workspace.dependencies]
 # Local
-arbiter-core     = { path = "arbiter-core", version = "=0.11.0" }
-arbiter-engine   = { path = "arbiter-engine", version = "=0.4.0" }
-arbiter-ethereum = { path = "arbiter-ethereum", version = "=0.1.0" }
-arbiter-macros   = { path = "arbiter-macros", version = "=0.1.4" }
+arbiter-core     = { path = "arbiter-core" }
+arbiter-engine   = { path = "arbiter-engine" }
+arbiter-ethereum = { path = "arbiter-ethereum" }
+arbiter-macros   = { path = "arbiter-macros" }
 
 # Ethereum
 ethers          = { version = "2.0.14" }
