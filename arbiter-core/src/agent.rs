@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-  environment::Middleware,
-  machine::{Behavior, Engine, StateMachine},
+  environment::{Database, Middleware},
+  machine::{Behavior, Engine},
 };
 
 /// An agent is an entity capable of processing events and producing actions.
@@ -15,25 +15,17 @@ use crate::{
 /// will return a stream of events that then let the [`Behavior`] move into the
 /// `State::Processing` stage.
 // TODO: Having to have `Debug` here is annoying
-#[derive(Debug)]
-pub struct Agent<S: StateDB>
-where
-  S::Location: Debug,
-  S::State: Debug, {
+pub struct Agent<DB: Database> {
   pub id: String,
 
   pub messager: Messager,
 
-  pub middleware: Middleware<S>,
+  pub middleware: Middleware<DB>,
 
-  pub(crate) behavior_engines: Vec<Box<dyn StateMachine>>,
+  pub(crate) engines: Vec<Box<dyn Engine<DB>>>,
 }
 
-impl<S: StateDB> Agent<S>
-where
-  S::Location: Debug,
-  S::State: Debug,
-{
+impl<DB: Database> Agent<DB> {
   /// Creates a new [`AgentBuilder`] instance with a specified identifier.
   ///
   /// This method initializes an [`AgentBuilder`] with the provided `id` and
@@ -49,30 +41,33 @@ where
   ///
   /// Returns an [`AgentBuilder`] instance that can be used to configure and
   /// build an [`Agent`].
-  pub fn builder(id: &str) -> AgentBuilder {
+  pub fn builder(id: &str) -> AgentBuilder<DB> {
     AgentBuilder { id: id.to_owned(), behavior_engines: None }
   }
 }
 
 /// [`AgentBuilder`] represents the intermediate state of agent creation before
 /// it is converted into a full on [`Agent`]
-pub struct AgentBuilder {
+pub struct AgentBuilder<DB: Database> {
   /// Identifier for this agent.
   /// Used for routing messages.
   pub id:           String,
   /// The engines/behaviors that the agent uses to sync, startup, and process
   /// events.
-  behavior_engines: Option<Vec<Box<dyn StateMachine>>>,
+  behavior_engines: Option<Vec<Box<dyn Engine<DB>>>>,
 }
 
-impl AgentBuilder {
+impl<DB: Database> AgentBuilder<DB> {
   /// Appends a behavior onto an [`AgentBuilder`]. Behaviors are initialized
   /// when the agent builder is added to the [`crate::world::World`]
-  pub fn with_behavior<E: DeserializeOwned + Serialize + Send + Sync + Debug + 'static>(
-    mut self,
-    behavior: impl Behavior<E> + 'static,
-  ) -> Self {
-    let engine = Engine::new(behavior);
+  pub fn with_behavior<E, B>(mut self, behavior: B) -> Self
+  where
+    E: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
+    B: Behavior<E> + Serialize + DeserializeOwned + Send + Sync + 'static,
+    DB: Database + 'static,
+    DB::Location: Send + Sync + 'static,
+    DB::State: Send + Sync + 'static, {
+    let engine = Engine::new().with_behavior(behavior);
     if let Some(engines) = &mut self.behavior_engines {
       engines.push(Box::new(engine));
     } else {
@@ -98,7 +93,7 @@ impl AgentBuilder {
   /// # Returns
   ///
   /// Returns the `AgentBuilder` instance to allow for method chaining.
-  pub(crate) fn with_engine(mut self, engine: Box<dyn StateMachine>) -> Self {
+  pub(crate) fn with_engine(mut self, engine: Box<dyn Engine<DB>>) -> Self {
     if let Some(engines) = &mut self.behavior_engines {
       engines.push(engine);
     } else {
@@ -140,18 +135,13 @@ impl AgentBuilder {
   /// let messager = Messager::new(...);
   /// let agent = agent_builder.build(client, messager).expect("Failed to build agent");
   /// ```
-  pub fn build<S>(
+  pub fn build(
     self,
-    middleware: Middleware<S>,
+    middleware: Middleware<DB>,
     messager: Messager,
-  ) -> Result<Agent<S>, ArbiterCoreError>
-  where
-    S: StateDB,
-    S::Location: Debug,
-    S::State: Debug,
-  {
+  ) -> Result<Agent<DB>, ArbiterCoreError> {
     match self.behavior_engines {
-      Some(engines) => Ok(Agent { id: self.id, messager, middleware, behavior_engines: engines }),
+      Some(engines) => Ok(Agent { id: self.id, messager, middleware, engines }),
       None => Err(ArbiterCoreError::AgentBuildError("Missing behavior engines".to_owned())),
     }
   }

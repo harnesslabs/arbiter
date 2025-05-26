@@ -8,7 +8,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace};
 
-use crate::{environment::StateDB, error::ArbiterCoreError, messager::Messager};
+use crate::{environment::Environment, error::ArbiterCoreError, messager::Messager};
 
 pub mod agent;
 pub mod environment;

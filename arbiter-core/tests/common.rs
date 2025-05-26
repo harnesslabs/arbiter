@@ -43,29 +43,40 @@ impl TimedMessage {
   }
 }
 
-#[async_trait::async_trait]
 impl Behavior<Message> for TimedMessage {
-  async fn startup(
+  fn startup<S: StateDB>(
     &mut self,
-    _client: Middleware,
+    _client: Middleware<S>,
     messager: Messager,
-  ) -> Result<Option<EventStream<Message>>, ArbiterEngineError> {
-    if let Some(startup_message) = &self.startup_message {
-      messager.send(To::All, startup_message).await?;
+  ) -> impl std::future::Future<Output = Result<Option<EventStream<Message>>, ArbiterEngineError>> + Send
+  where
+    S: Send + Sync,
+    S::Location: Send + Sync,
+    S::State: Send + Sync,
+  {
+    async move {
+      if let Some(startup_message) = &self.startup_message {
+        messager.send(To::All, startup_message).await?;
+      }
+      self.messager = Some(messager.clone());
+      Ok(Some(messager.stream()?))
     }
-    self.messager = Some(messager.clone());
-    Ok(Some(messager.stream()?))
   }
 
-  async fn process(&mut self, event: Message) -> Result<ControlFlow, ArbiterEngineError> {
-    if event.data == serde_json::to_string(&self.receive_data).unwrap() {
-      let messager = self.messager.clone().unwrap();
-      messager.send(To::All, self.send_data.clone()).await?;
-      self.count += 1;
+  fn process(
+    &mut self,
+    event: Message,
+  ) -> impl std::future::Future<Output = Result<ControlFlow, ArbiterEngineError>> + Send {
+    async move {
+      if event.data == serde_json::to_string(&self.receive_data).unwrap() {
+        let messager = self.messager.clone().unwrap();
+        messager.send(To::All, self.send_data.clone()).await?;
+        self.count += 1;
+      }
+      if self.count == self.max_count.unwrap_or(u64::MAX) {
+        return Ok(ControlFlow::Halt);
+      }
+      Ok(ControlFlow::Continue)
     }
-    if self.count == self.max_count.unwrap_or(u64::MAX) {
-      return Ok(ControlFlow::Halt);
-    }
-    Ok(ControlFlow::Continue)
   }
 }

@@ -1,24 +1,33 @@
 use std::{collections::HashMap, hash::Hash};
 
 use futures::{stream, Stream};
-use tokio::task;
 
 use super::*;
 
-pub trait StateDB {
-  type Location;
-  type State;
-  type Error;
+pub trait Database: Sized {
+  type Location: Clone;
+  type State: Clone;
+  type Error: Debug;
+  fn new() -> Result<Self, Self::Error>;
   fn get(&self, location: Self::Location) -> Result<&Self::State, Self::Error>;
   fn set(&mut self, location: Self::Location, state: Self::State) -> Result<(), Self::Error>;
 }
 
-impl<K, V> StateDB for HashMap<K, V>
-where K: Eq + Hash
+pub trait Environment<DB: Database>: Sized {
+  fn new() -> Result<Self, DB::Error>;
+  fn middleware(&self) -> Middleware<DB>;
+}
+
+impl<K, V> Database for HashMap<K, V>
+where
+  K: Eq + Hash + Clone,
+  V: Clone,
 {
   type Error = Box<dyn std::error::Error>;
   type Location = K;
   type State = V;
+
+  fn new() -> Result<Self, Self::Error> { Ok(HashMap::new()) }
 
   fn get(&self, location: Self::Location) -> Result<&Self::State, Self::Error> {
     Ok(self.get(&location).unwrap())
@@ -30,63 +39,61 @@ where K: Eq + Hash
   }
 }
 
+// TODO: Could have a `State` trait so we can replace the inner with a JoinHandle<DB> when we run.
+
 #[derive(Debug)]
-pub struct Environment<S: StateDB> {
-  inner:       S,
-  tx_sender:   mpsc::Sender<(S::Location, S::State)>,
-  tx_receiver: mpsc::Receiver<(S::Location, S::State)>,
-  broadcast:   broadcast::Sender<(S::Location, S::State)>,
+pub struct InMemoryEnvironment<DB: Database> {
+  inner:       DB,
+  tx_sender:   mpsc::Sender<(DB::Location, DB::State)>,
+  tx_receiver: mpsc::Receiver<(DB::Location, DB::State)>,
+  broadcast:   broadcast::Sender<(DB::Location, DB::State)>,
 }
 
-impl<K, V> Environment<HashMap<K, V>>
-where K: Eq + Hash
-{
-  pub fn new(capacity: usize) -> Result<Self, <HashMap<K, V> as StateDB>::Error> {
+impl<DB: Database> InMemoryEnvironment<DB> {
+  pub fn new(capacity: usize) -> Result<Self, DB::Error> {
     let (tx_sender, tx_receiver) = mpsc::channel(capacity);
     Ok(Self {
-      inner: HashMap::new(),
+      inner: DB::new()?,
       tx_sender,
       tx_receiver,
       broadcast: broadcast::Sender::new(capacity),
     })
   }
 
-  pub fn run(mut self) -> Result<task::JoinHandle<()>, <HashMap<K, V> as StateDB>::Error>
-  where
-    K: Clone + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static, {
-    let mut tx_receiver = self.tx_receiver;
-    Ok(tokio::spawn(async move {
-      while let Some((k, v)) = tx_receiver.recv().await {
-        self.inner.set(k.clone(), v.clone()).unwrap();
-        self.broadcast.send((k, v));
-      }
-    }))
+  pub async fn run(mut self) -> Result<(), DB::Error> {
+    while let Some((k, v)) = self.tx_receiver.recv().await {
+      self.inner.set(k.clone(), v.clone()).unwrap();
+      self.broadcast.send((k, v));
+    }
+    Ok(())
   }
 
-  pub fn middleware(&self) -> Middleware<HashMap<K, V>> {
+  pub fn middleware(&self) -> Middleware<DB> {
     Middleware { sender: self.tx_sender.clone(), receiver: self.broadcast.subscribe() }
   }
 }
 
 #[derive(Debug)]
-pub struct Middleware<S: StateDB> {
-  pub sender:   mpsc::Sender<(S::Location, S::State)>,
-  pub receiver: broadcast::Receiver<(S::Location, S::State)>,
+pub struct Middleware<DB: Database> {
+  pub sender:   mpsc::Sender<(DB::Location, DB::State)>,
+  pub receiver: broadcast::Receiver<(DB::Location, DB::State)>,
 }
 
-impl<S: StateDB> Middleware<S>
-where S::Error: From<mpsc::error::SendError<(S::Location, S::State)>>
+impl<DB: Database> Clone for Middleware<DB> {
+  fn clone(&self) -> Self {
+    Self { sender: self.sender.clone(), receiver: self.receiver.resubscribe() }
+  }
+}
+
+impl<DB: Database> Middleware<DB>
+where DB::Error: From<mpsc::error::SendError<(DB::Location, DB::State)>>
 {
-  pub async fn send(&self, location: S::Location, state: S::State) -> Result<(), S::Error> {
-    self.sender.send((location, state)).await.map_err(S::Error::from)?;
+  pub async fn send(&self, location: DB::Location, state: DB::State) -> Result<(), DB::Error> {
+    self.sender.send((location, state)).await.map_err(DB::Error::from)?;
     Ok(())
   }
 
-  pub fn stream(&self) -> impl Stream<Item = (S::Location, S::State)> + Unpin
-  where
-    S::Location: Clone,
-    S::State: Clone, {
+  pub fn stream(&self) -> impl Stream<Item = (DB::Location, DB::State)> + Unpin {
     Box::pin(stream::unfold(self.receiver.resubscribe(), |mut receiver| async move {
       loop {
         match receiver.recv().await {
@@ -108,14 +115,14 @@ mod tests {
   #[tokio::test]
   async fn test_middleware() {
     // Build environment
-    let environment = Environment::<HashMap<String, String>>::new(10).unwrap();
+    let environment = InMemoryEnvironment::<HashMap<String, String>>::new(10).unwrap();
 
     // Get middleware and start streaming events
     let middleware = environment.middleware();
     let mut stream = middleware.stream();
 
     // Start environment
-    let handle = environment.run().unwrap();
+    let _handle = task::spawn(async move { environment.run().await.unwrap() });
 
     // Send event
     middleware.send("test_location".to_string(), "test_state".to_string()).await.unwrap();

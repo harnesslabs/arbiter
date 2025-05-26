@@ -5,14 +5,18 @@ include!("common.rs");
 #[derive(Debug, Deserialize, Serialize)]
 struct MockBehavior;
 
-#[async_trait::async_trait]
 impl Behavior<()> for MockBehavior {
-  async fn startup(
+  fn startup<S: StateDB>(
     &mut self,
-    _client: Middleware,
+    _client: Middleware<S>,
     _messager: Messager,
-  ) -> Result<Option<EventStream<()>>, ArbiterEngineError> {
-    Ok(None)
+  ) -> impl std::future::Future<Output = Result<Option<EventStream<()>>, ArbiterEngineError>> + Send
+  where
+    S: Send + Sync,
+    S::Location: Send + Sync,
+    S::State: Send + Sync,
+  {
+    async move { Ok(None) }
   }
 }
 

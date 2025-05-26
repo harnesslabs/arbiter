@@ -7,7 +7,8 @@ use std::{collections::VecDeque, fs::File, io::Read};
 use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
-  machine::{CreateStateMachine, MachineInstruction},
+  environment::{Database, InMemoryEnvironment},
+  machine::CreateStateMachine,
 };
 
 /// A world is a collection of agents that use the same type of provider, e.g.,
@@ -20,32 +21,27 @@ use crate::{
 /// [`AgentBuilder`]s and when it does so, it creates [`Agent`]s that are now
 /// connected to the world via a client ([`Arc<RevmMiddleware>`]) and a messager
 /// ([`Messager`]).
-#[derive(Debug)]
-pub struct World<S: StateDB> {
+pub struct World<DB: Database> {
   /// The identifier of the world.
   pub id: String,
 
   /// The agents in the world.
-  pub agents: Option<HashMap<String, Agent<S>>>,
+  pub agents: Option<HashMap<String, Agent<DB>>>,
 
   /// The environment for the world.
-  pub environment: Environment<K, V>,
+  pub environment: InMemoryEnvironment<DB>,
 
   /// The messaging layer for the world.
   pub messager: Messager,
 }
 
-impl<
-    K: Clone + Eq + Hash + Send + Sync + 'static + DeserializeOwned,
-    V: Clone + Send + Sync + 'static + DeserializeOwned,
-  > World<K, V>
-{
+impl<DB: Database> World<DB> {
   /// Creates a new [`World`] with the given identifier and provider.
   pub fn new(id: &str) -> Self {
     Self {
       id:          id.to_owned(),
       agents:      Some(HashMap::new()),
-      environment: Environment::new().unwrap(),
+      environment: InMemoryEnvironment::new(10).unwrap(),
       messager:    Messager::new(),
     }
   }
@@ -94,9 +90,12 @@ impl<
   /// [agent2]
   /// BehaviorTypeC = { ... }
   /// ```
-  pub fn from_config<C: CreateStateMachine + Serialize + DeserializeOwned + Debug>(
-    config_path: &str,
-  ) -> Result<Self, ArbiterCoreError> {
+  pub fn from_config<C>(config_path: &str) -> Result<Self, ArbiterCoreError>
+  where
+    C: CreateStateMachine<DB> + Serialize + DeserializeOwned + Debug,
+    DB: Database + 'static,
+    DB::Location: Send + Sync + 'static,
+    DB::State: Send + Sync + 'static, {
     let cwd = std::env::current_dir().unwrap();
     let path = cwd.join(config_path);
     info!("Reading from path: {:?}", path);
@@ -153,7 +152,7 @@ impl<
   /// ```
   ///
   /// This will add the agent defined by `agent_builder` to the world.
-  pub fn add_agent(&mut self, agent_builder: AgentBuilder) {
+  pub fn add_agent(&mut self, agent_builder: AgentBuilder<DB>) {
     let id = agent_builder.id.clone();
     let middleware = self.environment.middleware();
     let messager = self.messager.for_agent(&id);
@@ -176,7 +175,11 @@ impl<
   /// Returns an error if no agents are found in the world, possibly
   /// indicating that the world has already been run or that no agents
   /// were added prior to execution.
-  pub async fn run(&mut self) -> Result<(), ArbiterCoreError> {
+  pub async fn run(&mut self) -> Result<(), ArbiterCoreError>
+  where
+    DB: Database + 'static,
+    DB::Location: Send + Sync + 'static,
+    DB::State: Send + Sync + 'static, {
     let agents = match self.agents.take() {
       Some(agents) => agents,
       None =>
@@ -188,20 +191,18 @@ impl<
     // Prepare a queue for messagers corresponding to each behavior engine.
     let mut messagers = VecDeque::new();
     // Populate the messagers queue.
-    for (_, agent) in agents.iter() {
-      for _ in &agent.behavior_engines {
+    for agent in agents.values() {
+      for _ in &agent.engines {
         messagers.push_back(agent.messager.clone());
       }
     }
     // For each agent, spawn a task for each of its behavior engines.
     // Unwrap here is safe as we just built the dang thing.
     for (_, mut agent) in agents {
-      for mut engine in agent.behavior_engines.drain(..) {
+      for mut engine in agent.engines.drain(..) {
         let client = agent.middleware.clone();
         let messager = messagers.pop_front().unwrap();
-        tasks.push(task::spawn(async move {
-          engine.execute(MachineInstruction::Start(client, messager)).await
-        }));
+        tasks.push(task::spawn(async move { engine.engage(client, messager).await }));
       }
     }
     // Await the completion of all tasks.
