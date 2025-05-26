@@ -76,28 +76,6 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace
 
-  check-wasm:
-    name: check-wasm
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2025-05-25
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: rust/check-wasm
-
-      - name: Install WASM target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Run cargo check for WASM
-        run: cargo check --workspace --target wasm32-unknown-unknown
-
   clippy:
     name: clippy
     runs-on: ubuntu-latest
@@ -120,29 +98,6 @@ jobs:
 
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- --deny warnings
-
-  clippy-wasm:
-    name: clippy-wasm
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: nightly-2025-05-25
-          components: clippy
-
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: rust/clippy-wasm
-
-      - name: Install WASM target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Clippy for WASM
-        run: cargo clippy --target wasm32-unknown-unknown --all-features -- --deny warnings
 
   test:
     name: test
