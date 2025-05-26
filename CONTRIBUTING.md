@@ -88,11 +88,11 @@ type(area): brief description
 ```
 Where:
 - `type` is one of: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`
-- `area` is one of: `core`, `engine`, etc.
+- `area` is one of: `core`, `engine`, `ethereum`, `macros`, etc.
 
 ### Labels
 Please use appropriate labels to categorize your issue:
-- Area labels: `area: core`, `area: engine`, etc.
+- Area labels: `area: core`, `area: engine`, `area: ethereum`, `area: macros`, etc.
 - Priority labels: `priority: critical/high/medium/low`
 - Type labels: `type: enhancement`, `type: refactor`
 - Technical labels: `tech: performance`, `tech: security`, `tech: testing`

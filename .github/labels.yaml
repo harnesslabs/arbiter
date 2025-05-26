@@ -24,6 +24,14 @@
   color: "006b75"
   description: "Engine related changes"
 
+- name: "area: ethereum"
+  color: "0075ca"
+  description: "Ethereum related changes"
+
+- name: "area: macros"
+  color: "008672"
+  description: "Macros related changes"
+
 # Task Types (Purples)
 - name: "type: refactor"
   color: "6f42c1"

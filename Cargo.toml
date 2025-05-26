@@ -1,36 +1,20 @@
 [workspace]
 exclude = ["benches", "docs"]
 members = [
-  "arbiter-bindings",
+  "arbiter",
   "arbiter-core",
   "arbiter-engine",
+  "arbiter-ethereum",
   "arbiter-macros",
   "docs",
 ]
 
-[package]
-authors = ["Harness Labs"]
-description = "A Rust-based multi-agent framework."
-edition = "2021"
-keywords = [
-  "ethereum",
-  "evm",
-  "emulator",
-  "testing",
-  "smart-contracts",
-  "multi-agent",
-  "framework",
-]
-license = "Apache-2.0"
-name = "arbiter"
-version = "0.4.20"
-
 [workspace.dependencies]
 # Local
-arbiter-bindings = { path = "arbiter-bindings", version = "0.1.7" }
-arbiter-core     = { path = "arbiter-core", version = "0.11.0" }
-arbiter-engine   = { path = "arbiter-engine", version = "0.4.0" }
-arbiter-macros   = { path = "arbiter-macros", version = "0.1.4" }
+arbiter-core     = { path = "arbiter-core", version = "=0.11.0" }
+arbiter-engine   = { path = "arbiter-engine", version = "=0.4.0" }
+arbiter-ethereum = { path = "arbiter-ethereum", version = "=0.1.0" }
+arbiter-macros   = { path = "arbiter-macros", version = "=0.1.4" }
 
 # Ethereum
 ethers          = { version = "2.0.14" }

@@ -1,69 +1,16 @@
 [package]
-authors = [
-  "Waylon Jepsen <waylonjepsen1@gmail.com>",
-  "Colin Roberts <colin@autoparallel.xyz>",
-]
-description = "Allowing smart contract developers to do simulation driven development via an EVM emulator"
+authors = ["Harness Labs"]
+description = "Core functionality for the Arbiter framework."
 edition = "2021"
-keywords = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
-license = "Apache-2.0"
+keywords = [
+    "ethereum",
+    "evm",
+    "emulator",
+    "testing",
+    "smart-contracts",
+    "multi-agent",
+    "framework",
+]
+license = "AGPL-3.0"
 name = "arbiter-core"
-readme = "../README.md"
 version = "0.11.0"
-
-# Dependencies for the release build
-[dependencies]
-arbiter-bindings.workspace = true
-
-# Ethereum and EVM
-ethers.workspace          = true
-revm.workspace            = true
-revm-primitives.workspace = true
-
-
-# Serialization
-serde.workspace      = true
-serde_json.workspace = true
-
-# Types
-bytes     = { version = "^1.5.0" }
-hashbrown = "^0.14.5"
-hex       = { version = "^0.4.3", default-features = false }
-uint      = "^0.9.5"
-
-# Concurrency/async
-async-stream.workspace      = true
-async-trait.workspace       = true
-crossbeam-channel.workspace = true
-futures-locks               = { version = "=0.7.1" }
-futures-timer               = { version = ">=3.0.2, <4.0.0" }
-futures-util.workspace      = true
-tokio.workspace             = true
-
-# Randomness
-rand = { version = "=0.8.5" }
-
-# Errors
-thiserror.workspace = true
-
-# Logging
-tracing.workspace = true
-
-# File types
-polars = { version = "0.38.3", features = ["parquet", "csv", "json"] }
-
-# Dependencies for the test build and development
-[dev-dependencies]
-futures.workspace  = true
-tracing-subscriber = "0.3.18"
-
-# For bench
-cargo_metadata = "0.18.1"
-chrono         = "0.4.38"
-
-assert_matches = { version = "=1.5" }
-
-[[bench]]
-harness = false
-name    = "bench"
-path    = "benches/bench.rs"

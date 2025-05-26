@@ -1,15 +1,12 @@
 [package]
-authors = [
-  "Matt Czernik <matt@primitive.xyz>",
-  "Colin Roberts <colin@autoparallel.xyz>",
-]
+authors     = ["Harness Labs"]
 description = "Arbiter macros for Ethereum smart contract testing."
-edition = "2021"
-keywords = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
-license = "Apache-2.0"
-name = "arbiter-macros"
-readme = "../README.md"
-version = "0.1.4"
+edition     = "2021"
+keywords    = ["ethereum", "evm", "emulator", "testing", "smart-contracts"]
+license     = "AGPL-3.0"
+name        = "arbiter-macros"
+readme      = "../README.md"
+version     = "0.1.4"
 
 [lib]
 proc-macro = true

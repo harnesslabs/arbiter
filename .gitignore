@@ -12,7 +12,6 @@
 *.csv
 
 .DS_Store
-arbiter/
 
 .vscode
 
