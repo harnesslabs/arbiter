@@ -133,23 +133,12 @@ name = "arbiter"
 version = "0.5.0"
 dependencies = [
  "arbiter-core",
- "arbiter-engine",
  "arbiter-ethereum",
  "arbiter-macros",
 ]
 
 [[package]]
 name = "arbiter-core"
-version = "0.11.0"
-dependencies = [
- "futures",
- "serde",
- "thiserror 2.0.12",
- "tokio",
-]
-
-[[package]]
-name = "arbiter-engine"
 version = "0.1.0"
 dependencies = [
  "arbiter-macros",

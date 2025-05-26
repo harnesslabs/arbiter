@@ -18,9 +18,12 @@ pub type EventStream<E> = Pin<Box<dyn Stream<Item = E> + Send + Sync>>;
 
 /// The instructions that can be sent to a [`StateMachine`].
 #[derive(Debug)]
-pub enum MachineInstruction {
+pub enum MachineInstruction<S: StateDB>
+where
+  S::Location: Debug,
+  S::State: Debug, {
   /// Used to make a [`StateMachine`] start up.
-  Start(Middleware, Messager),
+  Start(Middleware<S>, Messager),
 
   /// Used to make a [`StateMachine`] process events.
   /// This will offload the process into a task that can be halted by sending
@@ -65,14 +68,14 @@ pub enum State {
 /// The [`Behavior`] trait is the lowest level functionality that will be used
 /// by a [`StateMachine`]. This constitutes what each state transition will do.
 #[async_trait::async_trait]
-pub trait Behavior<E: Send + 'static>:
+pub trait Behavior<S: StateDB, E: Send + 'static>:
   Serialize + DeserializeOwned + Send + Sync + Debug + 'static {
   /// Used to start the agent.
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
   async fn startup(
     &mut self,
-    transaction_layer: Middleware,
+    middleware: Middleware<S>,
     messager: Messager,
   ) -> Result<Option<EventStream<E>>, ArbiterEngineError>;
 
@@ -137,7 +140,13 @@ pub trait StateMachine: Send + Sync + Debug + 'static {
   /// This method does not return a value, but it may result in state changes
   /// within the implementing type or the generation of further instructions
   /// or events.
-  async fn execute(&mut self, _instruction: MachineInstruction) -> Result<(), ArbiterEngineError>;
+  async fn execute<S: StateDB>(
+    &mut self,
+    _instruction: MachineInstruction<S>,
+  ) -> Result<(), ArbiterEngineError>
+  where
+    S::Location: Debug,
+    S::State: Debug;
 }
 
 /// The `Engine` struct represents the core logic unit of a state machine-based

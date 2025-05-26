@@ -11,18 +11,26 @@ use crate::machine::{Behavior, Engine, StateMachine};
 /// each of its [`Behavior`]s `startup()` methods. The [`Behavior`]s themselves
 /// will return a stream of events that then let the [`Behavior`] move into the
 /// `State::Processing` stage.
+// TODO: Having to have `Debug` here is annoying
 #[derive(Debug)]
-pub struct Agent {
+pub struct Agent<S: StateDB>
+where
+  S::Location: Debug,
+  S::State: Debug, {
   pub id: String,
 
   pub messager: Messager,
 
-  pub middleware: Middleware,
+  pub middleware: Middleware<S>,
 
   pub(crate) behavior_engines: Vec<Box<dyn StateMachine>>,
 }
 
-impl Agent {
+impl<S: StateDB> Agent<S>
+where
+  S::Location: Debug,
+  S::State: Debug,
+{
   /// Creates a new [`AgentBuilder`] instance with a specified identifier.
   ///
   /// This method initializes an [`AgentBuilder`] with the provided `id` and
@@ -129,11 +137,16 @@ impl AgentBuilder {
   /// let messager = Messager::new(...);
   /// let agent = agent_builder.build(client, messager).expect("Failed to build agent");
   /// ```
-  pub fn build(
+  pub fn build<S>(
     self,
-    middleware: Middleware,
+    middleware: Middleware<S>,
     messager: Messager,
-  ) -> Result<Agent, ArbiterEngineError> {
+  ) -> Result<Agent<S>, ArbiterEngineError>
+  where
+    S: StateDB,
+    S::Location: Debug,
+    S::State: Debug,
+  {
     match self.behavior_engines {
       Some(engines) => Ok(Agent { id: self.id, messager, middleware, behavior_engines: engines }),
       None => Err(ArbiterEngineError::AgentBuildError("Missing behavior engines".to_owned())),

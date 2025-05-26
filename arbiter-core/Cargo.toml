@@ -1,26 +1,33 @@
 [package]
 authors = ["Harness Labs"]
-description = "Core functionality for the Arbiter framework."
 edition = "2021"
-keywords = [
-    "ethereum",
-    "evm",
-    "emulator",
-    "testing",
-    "smart-contracts",
-    "multi-agent",
-    "framework",
-]
-license = "AGPL-3.0"
-name = "arbiter-core"
-version = "0.11.0"
+name    = "arbiter-core"
+version = "0.1.0"
 
 [dependencies]
-futures = { workspace = true }
-serde = { workspace = true }
-thiserror = { workspace = true }
+# Serialization
+serde = { workspace = true, features = [
+    "derive",
+] } # TODO: We should likely use a zero-copy serialization lib for speed.
+serde_json = { version = "1.0" } # TODO: This is just for testing really, we can use any serailization eventually.
+toml = "0.8"
+
+# Async
+async-stream.workspace = true
+async-trait.workspace = true
+futures.workspace = true
 tokio = { workspace = true, features = [
     "macros",
     "sync",
     "rt",
 ] } # NOTE: Minimal requirements for release build. We should make sure we can build in both release and tests pass in debug. This set of features will also work with wasm.
+
+# Error and logging
+thiserror.workspace = true
+tracing.workspace   = true
+
+[dev-dependencies]
+arbiter-macros     = { workspace = true }
+tokio              = { workspace = true, features = ["macros", "full"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-test       = { workspace = true }

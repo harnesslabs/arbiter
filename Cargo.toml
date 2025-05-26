@@ -3,7 +3,6 @@ exclude = ["benches", "docs"]
 members = [
   "arbiter",
   "arbiter-core",
-  "arbiter-engine",
   "arbiter-ethereum",
   "arbiter-macros",
   "docs",
@@ -12,7 +11,6 @@ members = [
 [workspace.dependencies]
 # Local
 arbiter-core     = { path = "arbiter-core" }
-arbiter-engine   = { path = "arbiter-engine" }
 arbiter-ethereum = { path = "arbiter-ethereum" }
 arbiter-macros   = { path = "arbiter-macros" }
 

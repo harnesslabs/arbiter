@@ -17,6 +17,8 @@ version = "0.5.0"
 
 [dependencies]
 arbiter-core     = { workspace = true }
-arbiter-engine   = { workspace = true }
-arbiter-ethereum = { workspace = true }
+arbiter-ethereum = { workspace = true, optional = true }
 arbiter-macros   = { workspace = true }
+
+[features]
+ethereum = ["dep:arbiter-ethereum"]

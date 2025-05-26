@@ -30,6 +30,7 @@ where K: Eq + Hash
   }
 }
 
+#[derive(Debug)]
 pub struct Environment<S: StateDB> {
   inner:       S,
   tx_sender:   mpsc::Sender<(S::Location, S::State)>,
@@ -68,6 +69,7 @@ where K: Eq + Hash
   }
 }
 
+#[derive(Debug)]
 pub struct Middleware<S: StateDB> {
   pub sender:   mpsc::Sender<(S::Location, S::State)>,
   pub receiver: broadcast::Receiver<(S::Location, S::State)>,
