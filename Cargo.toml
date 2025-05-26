@@ -48,17 +48,18 @@ async-trait       = { version = "0.1" }
 crossbeam-channel = { version = "0.5" }
 futures           = "0.3"
 futures-util      = { version = "0.3" }
-tokio             = { version = "1.45", features = ["macros", "full"] }
+tokio             = { version = "1.45", default-features = false }
 
 # Macros
 proc-macro2 = { version = "1.0" }
 syn         = { version = "2.0", features = ["full"] }
 
 # Errors and logging
-anyhow       = "1.0"
-thiserror    = { version = "2.0" }
-tracing      = "0.1"
-tracing-test = "0.2"
+anyhow             = "1.0"
+thiserror          = { version = "2.0" }
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false }
+tracing-test       = "0.2"
 
 [profile.release]
 codegen-units = 1

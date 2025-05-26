@@ -16,7 +16,11 @@ toml = "0.8"
 async-stream.workspace = true
 async-trait.workspace = true
 futures.workspace = true
-tokio = { workspace = true, features = ["macros", "full"] }
+tokio = { workspace = true, features = [
+    "macros",
+    "sync",
+    "rt",
+] } # NOTE: Minimal requirements for release build. We should make sure we can build in both release and tests pass in debug. This set of features will also work with wasm.
 
 # Error and logging
 thiserror.workspace = true
@@ -26,3 +30,4 @@ tracing.workspace = true
 arbiter-macros = { workspace = true }
 tracing-test = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { workspace = true, features = ["macros", "full"] }
