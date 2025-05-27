@@ -129,13 +129,13 @@ async fn ping_pong_two_agent() {
   }
 }
 
-// #[tokio::test]
-// async fn config_test() {
-//   let mut world =
-//     World::<HashMap<String, String>>::from_config::<Behaviors>("tests/config.toml").unwrap();
-//   assert_eq!(world.id, "timed_message_world");
-//   world.run().await.unwrap();
-// }
+#[tokio::test]
+async fn config_test() {
+  let mut world =
+    World::<HashMap<String, String>>::from_config::<Behaviors>("tests/config.toml").unwrap();
+  assert_eq!(world.id, "timed_message_world");
+  world.run().await.unwrap();
+}
 
 #[tokio::test]
 #[traced_test]

@@ -35,14 +35,14 @@ pub struct Messager {
 
   pub(crate) broadcast_sender: broadcast::Sender<Message>,
 
-  broadcast_receiver: Option<broadcast::Receiver<Message>>,
+  pub(crate) broadcast_receiver: broadcast::Receiver<Message>,
 }
 
 impl Clone for Messager {
   fn clone(&self) -> Self {
     Self {
       broadcast_sender:   self.broadcast_sender.clone(),
-      broadcast_receiver: Some(self.broadcast_sender.subscribe()),
+      broadcast_receiver: self.broadcast_sender.subscribe(),
       id:                 self.id.clone(),
     }
   }
@@ -53,7 +53,7 @@ impl Messager {
   #[allow(clippy::new_without_default)]
   pub fn new() -> Self {
     let (broadcast_sender, broadcast_receiver) = broadcast::channel(512);
-    Self { broadcast_sender, broadcast_receiver: Some(broadcast_receiver), id: None }
+    Self { broadcast_sender, broadcast_receiver, id: None }
   }
 
   /// Returns a [`Messager`] interface connected to the same instance but with
@@ -61,7 +61,7 @@ impl Messager {
   pub fn for_agent(&self, id: &str) -> Self {
     Self {
       broadcast_sender:   self.broadcast_sender.clone(),
-      broadcast_receiver: Some(self.broadcast_sender.subscribe()),
+      broadcast_receiver: self.broadcast_sender.subscribe(),
       id:                 Some(id.to_owned()),
     }
   }
@@ -69,12 +69,7 @@ impl Messager {
   /// utility function for getting the next value from the broadcast_receiver
   /// without streaming
   pub async fn get_next(&mut self) -> Result<Message, ArbiterCoreError> {
-    let Some(mut receiver) = self.broadcast_receiver.take() else {
-      return Err(ArbiterCoreError::MessagerError(
-        "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
-      ));
-    };
-    while let Ok(message) = receiver.recv().await {
+    while let Ok(message) = self.broadcast_receiver.recv().await {
       match &message.to {
         To::All => {
           return Ok(message);
@@ -93,13 +88,8 @@ impl Messager {
   /// Returns a stream of messages that are either sent to [`To::All`] or to
   /// the agent via [`To::Agent(id)`].
   pub fn stream(mut self) -> Result<EventStream<Message>, ArbiterCoreError> {
-    let Some(mut receiver) = self.broadcast_receiver.take() else {
-      return Err(ArbiterCoreError::MessagerError(
-        "Receiver has been taken! Are you already streaming on this messager?".to_owned(),
-      ));
-    };
     Ok(Box::pin(async_stream::stream! {
-        while let Ok(message) = receiver.recv().await {
+        while let Ok(message) = self.broadcast_receiver.recv().await {
             match &message.to {
                 To::All => {
                     yield message;

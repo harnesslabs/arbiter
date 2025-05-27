@@ -1,7 +1,8 @@
 use super::*;
 use crate::{
   environment::{Database, Middleware},
-  machine::{Behavior, Engine, EngineType},
+  machine::{Action, Behavior, EventStream, Filter},
+  messager::Message,
 };
 
 /// An agent is an entity capable of processing events and producing actions.
@@ -18,11 +19,21 @@ use crate::{
 pub struct Agent<DB: Database> {
   pub id: String,
 
-  pub messager: Messager,
+  pub stream: Stream<DB>,
 
-  pub middleware: Middleware<DB>,
+  pub sender: Sender<DB>,
 
-  pub(crate) engines: Vec<Box<dyn EngineType<DB>>>,
+  pub(crate) behaviors: Vec<Box<dyn Behavior<DB>>>,
+}
+
+pub struct Stream<DB: Database> {
+  stream:  EventStream<Action<DB>>,
+  filters: HashMap<String, Box<dyn Filter<DB>>>,
+}
+
+pub struct Sender<DB: Database> {
+  state_change_sender: mpsc::Sender<(DB::Location, DB::State)>,
+  message_sender:      broadcast::Sender<Message>,
 }
 
 impl<DB: Database> Agent<DB> {
@@ -42,7 +53,7 @@ impl<DB: Database> Agent<DB> {
   /// Returns an [`AgentBuilder`] instance that can be used to configure and
   /// build an [`Agent`].
   pub fn builder(id: &str) -> AgentBuilder<DB> {
-    AgentBuilder { id: id.to_owned(), behavior_engines: Vec::new() }
+    AgentBuilder { id: id.to_owned(), behaviors: Vec::new() }
   }
 }
 
@@ -51,46 +62,22 @@ impl<DB: Database> Agent<DB> {
 pub struct AgentBuilder<DB: Database> {
   /// Identifier for this agent.
   /// Used for routing messages.
-  pub id:           String,
+  pub id:    String,
   /// The engines/behaviors that the agent uses to sync, startup, and process
   /// events.
-  behavior_engines: Vec<Box<dyn EngineType<DB>>>,
+  behaviors: Vec<Box<dyn Behavior<DB>>>,
 }
 
 impl<DB: Database> AgentBuilder<DB> {
   /// Appends a behavior onto an [`AgentBuilder`]. Behaviors are initialized
   /// when the agent builder is added to the [`crate::world::World`]
-  pub fn with_behavior<E, B>(mut self, behavior: B) -> Self
+  pub fn with_behavior<B>(mut self, behavior: B) -> Self
   where
-    E: DeserializeOwned + Serialize + Send + Sync + Debug + 'static,
-    B: Behavior<E> + Serialize + DeserializeOwned + Send + Sync + 'static,
+    B: Behavior<DB> + Send + Sync + 'static,
     DB: Database + 'static,
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
-    let engine = Engine::new(behavior);
-    self.behavior_engines.push(Box::new(engine));
-    self
-  }
-
-  /// Adds a state machine engine to the agent builder.
-  ///
-  /// This method allows for the addition of a custom state machine engine to
-  /// the agent's behavior engines. If the agent builder already has some
-  /// engines, the new engine is appended to the list. If no engines are
-  /// present, a new list is created with the provided engine as its first
-  /// element.
-  ///
-  /// # Parameters
-  ///
-  /// - `engine`: The state machine engine to be added to the agent builder. This engine must
-  ///   implement the `StateMachine` trait and is expected to be provided as a boxed trait object to
-  ///   allow for dynamic dispatch.
-  ///
-  /// # Returns
-  ///
-  /// Returns the `AgentBuilder` instance to allow for method chaining.
-  pub(crate) fn with_engine(mut self, engine: Box<dyn EngineType<DB>>) -> Self {
-    self.behavior_engines.push(engine);
+    self.behaviors.push(Box::new(behavior));
     self
   }
 
@@ -132,6 +119,28 @@ impl<DB: Database> AgentBuilder<DB> {
     middleware: Middleware<DB>,
     messager: Messager,
   ) -> Result<Agent<DB>, ArbiterCoreError> {
-    Ok(Agent { id: self.id, messager, middleware, engines: self.behavior_engines })
+    let middleware_sender = middleware.sender;
+    let middleware_receiver = middleware.receiver;
+    let messager_sender = messager.broadcast_sender;
+    let messager_receiver = messager.broadcast_receiver;
+    let stream =
+      Stream { stream: create_unified_stream(middleware, messager), filters: HashMap::new() };
+    let sender = Sender {
+      state_change_sender: middleware.sender.clone(),
+      message_sender:      messager.broadcast_sender.clone(),
+    };
+
+    Ok(Agent { id: self.id, sender, stream, behaviors: self.behaviors })
   }
+}
+
+fn create_unified_stream<DB: Database>(
+  middleware_receiver: broadcast::Receiver<(DB::Location, DB::State)>,
+  messager_receiver: broadcast::Receiver<Message>,
+) -> EventStream<Action<DB>> {
+  let middleware_stream =
+    middleware.stream().map(|(location, state)| Action::StateChange(location, state));
+  let messager_stream = messager.stream().unwrap().map(|msg| Action::Message(msg));
+
+  Box::pin(futures::stream::select(middleware_stream, messager_stream))
 }

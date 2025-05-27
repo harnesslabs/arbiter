@@ -1,7 +1,10 @@
 use arbiter_core::{
   environment::{Database, Middleware},
   error::ArbiterCoreError,
-  machine::{Behavior, ControlFlow, CreateEngine, Engine, EngineType, EventStream},
+  machine::{
+    Actions, Behavior, ControlFlow, CreateEngine, Engine, EngineType, EventStream, Filter,
+    UnifiedEvent,
+  },
   messager::{Message, Messager, To},
 };
 use arbiter_macros::Behaviors;
@@ -12,19 +15,27 @@ mod engine;
 #[derive(Debug, Deserialize, Serialize)]
 struct MockBehavior;
 
+// Simple filter that doesn't filter anything
+struct NoFilter;
+
+impl<DB: Database> Filter<DB, ()> for NoFilter {
+  fn filter(&self, _event: UnifiedEvent<DB>) -> Option<()> { Some(()) }
+}
+
 #[async_trait::async_trait]
-impl Behavior<()> for MockBehavior {
-  async fn startup<DB>(
+impl<DB: Database> Behavior<DB, ()> for MockBehavior
+where
+  DB::Location: Send + Sync + 'static,
+  DB::State: Send + Sync + 'static,
+{
+  type Filter = NoFilter;
+
+  async fn startup(
     &mut self,
     _middleware: Middleware<DB>,
     _messager: Messager,
-  ) -> Result<Option<EventStream<()>>, ArbiterCoreError>
-  where
-    DB: Database + 'static,
-    DB::Location: Send + Sync + 'static,
-    DB::State: Send + Sync + 'static,
-  {
-    Ok(None)
+  ) -> Result<(Option<Self::Filter>, Option<Actions<DB>>), ArbiterCoreError> {
+    Ok((None, None))
   }
 }
 
@@ -57,39 +68,94 @@ impl TimedMessage {
   }
 }
 
-#[async_trait::async_trait]
-impl Behavior<Message> for TimedMessage {
-  async fn startup<DB: Database>(
-    &mut self,
-    _middleware: Middleware<DB>,
-    messager: Messager,
-  ) -> Result<Option<EventStream<Message>>, ArbiterCoreError>
-  where
-    DB: Database + 'static,
-    DB::Location: Send + Sync + 'static,
-    DB::State: Send + Sync + 'static,
-  {
-    if let Some(startup_message) = &self.startup_message {
-      messager.send(To::All, startup_message).await?;
-    }
-    self.messager = Some(messager.clone());
-    Ok(Some(messager.stream()?))
-  }
+// Filter that only passes through Message events
+struct MessageFilter;
 
-  async fn process(&mut self, event: Message) -> Result<ControlFlow, ArbiterCoreError> {
-    if event.data == serde_json::to_string(&self.receive_data).unwrap() {
-      let messager = self.messager.clone().unwrap();
-      messager.send(To::All, self.send_data.clone()).await?;
-      self.count += 1;
+impl<DB: Database> Filter<DB, Message> for MessageFilter {
+  fn filter(&self, event: UnifiedEvent<DB>) -> Option<Message> {
+    match event {
+      UnifiedEvent::Message(msg) => Some(msg),
+      UnifiedEvent::StateChange(..) => None,
     }
-    if self.count == self.max_count.unwrap_or(u64::MAX) {
-      return Ok(ControlFlow::Halt);
-    }
-    Ok(ControlFlow::Continue)
   }
 }
 
-#[derive(Serialize, Deserialize, Debug, Behaviors)]
-enum Behaviors {
+#[async_trait::async_trait]
+impl<DB: Database> Behavior<DB, Message> for TimedMessage
+where
+  DB::Location: Send + Sync + 'static,
+  DB::State: Send + Sync + 'static,
+{
+  type Filter = MessageFilter;
+
+  async fn startup(
+    &mut self,
+    _middleware: Middleware<DB>,
+    messager: Messager,
+  ) -> Result<(Option<Self::Filter>, Option<Actions<DB>>), ArbiterCoreError> {
+    println!(
+      "TimedMessage startup: receive_data={}, send_data={}, startup_message={:?}",
+      self.receive_data, self.send_data, self.startup_message
+    );
+
+    let mut actions = Actions::new();
+
+    if let Some(startup_message) = &self.startup_message {
+      println!("Sending startup message: {}", startup_message);
+      let message = Message {
+        from: messager.id.clone().unwrap_or_default(),
+        to:   To::All,
+        data: serde_json::to_string(startup_message).unwrap(),
+      };
+      actions.add_action(arbiter_core::machine::Action::Message(message));
+    }
+
+    self.messager = Some(messager);
+
+    let filter = Some(MessageFilter);
+    let actions = if actions.get_actions().is_empty() { None } else { Some(actions) };
+
+    Ok((filter, actions))
+  }
+
+  async fn process_event(
+    &mut self,
+    event: Message,
+  ) -> Result<(ControlFlow, Option<Actions<DB>>), ArbiterCoreError> {
+    println!(
+      "TimedMessage process: received message from={}, data={}, looking_for={}",
+      event.from,
+      event.data,
+      serde_json::to_string(&self.receive_data).unwrap()
+    );
+
+    let mut actions = Actions::new();
+
+    if event.data == serde_json::to_string(&self.receive_data).unwrap() {
+      println!("Message matches! Sending response: {}", self.send_data);
+      let message = Message {
+        from: self.messager.as_ref().unwrap().id.clone().unwrap_or_default(),
+        to:   To::All,
+        data: serde_json::to_string(&self.send_data).unwrap(),
+      };
+      actions.add_action(arbiter_core::machine::Action::Message(message));
+      self.count += 1;
+      println!("Count incremented to: {}", self.count);
+    } else {
+      println!("Message does not match, ignoring");
+    }
+
+    let actions = if actions.get_actions().is_empty() { None } else { Some(actions) };
+
+    if self.count == self.max_count.unwrap_or(u64::MAX) {
+      println!("Reached max count ({}), halting behavior", self.max_count.unwrap_or(u64::MAX));
+      return Ok((ControlFlow::Halt, actions));
+    }
+    Ok((ControlFlow::Continue, actions))
+  }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+enum Behaviors<DB: Database> {
   TimedMessage(TimedMessage),
 }

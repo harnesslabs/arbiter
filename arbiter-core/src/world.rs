@@ -8,7 +8,7 @@ use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
   environment::{Database, InMemoryEnvironment},
-  machine::CreateEngine,
+  machine::Behavior,
 };
 
 /// A world is a collection of agents that use the same type of provider, e.g.,
@@ -90,9 +90,9 @@ impl<DB: Database> World<DB> {
   /// [agent2]
   /// BehaviorTypeC = { ... }
   /// ```
-  pub fn from_config<C>(config_path: &str) -> Result<Self, ArbiterCoreError>
+  pub fn from_config<B>(config_path: &str) -> Result<Self, ArbiterCoreError>
   where
-    C: CreateEngine<DB> + Serialize + DeserializeOwned + Debug,
+    B: Behavior<DB> + Serialize + DeserializeOwned + Debug,
     DB: Database + 'static,
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
