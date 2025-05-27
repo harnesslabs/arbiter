@@ -64,7 +64,7 @@ pub fn create_behavior_from_enum(input: TokenStream) -> TokenStream {
     // variant.
     quote! {
         #name::#variant_name(inner) => {
-            Box::new(Engine::new(inner))
+            Box::new(inner)
         }
     }
   });
@@ -72,8 +72,8 @@ pub fn create_behavior_from_enum(input: TokenStream) -> TokenStream {
   // Generate the full implementation of the `CreateStateMachine` trait for the
   // enum.
   let expanded = quote! {
-      impl<DB> CreateEngine<DB> for #name where DB: Database + 'static, DB::Location: Send + Sync + 'static, DB::State: Send + Sync + 'static {
-          fn create_engine(self) -> Box<dyn EngineType<DB>> {
+      impl<DB> ConfigurableBehavior<DB> for #name where DB: Database + 'static, DB::Location: Send + Sync + 'static, DB::State: Send + Sync + 'static {
+          fn create_behavior(self) -> Box<dyn Behavior<DB>> {
               match self {
                   #(#match_arms,)*
               }
@@ -160,7 +160,7 @@ impl Parse for MacroArgs {
     let behaviors = behaviors.ok_or_else(|| input.error("missing behaviors"))?;
 
     // Return the parsed `MacroArgs`.
-    Ok(MacroArgs { name, about, behaviors })
+    Ok(Self { name, about, behaviors })
   }
 }
 
@@ -212,7 +212,7 @@ pub fn main(attr: TokenStream, item: TokenStream) -> TokenStream {
       async fn main() -> Result<(), Box<dyn std::error::Error>> {
           use clap::{Parser, Subcommand, ArgAction, CommandFactory};
           use tracing::Level;
-          use arbiter_engine::world::World;
+          use arbiter_core::world::World;
 
           #[derive(Parser)]
           #[clap(name = #name)]

@@ -1,7 +1,9 @@
 use arbiter_core::{
   environment::{Database, Middleware},
   error::ArbiterCoreError,
-  machine::{Action, Actions, Behavior, ControlFlow, Event, EventStream, Filter},
+  machine::{
+    Action, Actions, Behavior, ConfigurableBehavior, ControlFlow, Event, EventStream, Filter,
+  },
   messager::{Message, MessageTo, Messager, To},
 };
 use arbiter_macros::Behaviors;
@@ -123,8 +125,7 @@ where
   }
 }
 
-// TODO: Fix macro
-// #[derive(Serialize, Deserialize, Debug)]
-// enum Behaviors<DB: Database> {
-//   TimedMessage(TimedMessage),
-// }
+#[derive(Serialize, Deserialize, Debug, Behaviors)]
+enum Behaviors {
+  TimedMessage(TimedMessage),
+}

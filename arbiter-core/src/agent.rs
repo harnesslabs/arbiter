@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
   environment::{Database, Middleware},
-  machine::{Action, Behavior, Event, EventStream, Filter},
-  messager::{Message, MessageFrom},
+  machine::{Action, Behavior, ConfigurableBehavior, Event, EventStream, Filter},
+  messager::{Message, MessageFrom, Messager},
 };
 
 pub struct Agent<DB: Database> {
@@ -27,9 +27,22 @@ pub struct AgentBuilder<DB: Database> {
   behaviors: Vec<Box<dyn Behavior<DB>>>,
 }
 
-impl<DB: Database> AgentBuilder<DB> {
-  pub fn with_behavior(mut self, behavior: Box<dyn Behavior<DB>>) -> Self {
-    self.behaviors.push(behavior);
+impl<DB> AgentBuilder<DB>
+where
+  DB: Database + 'static,
+  DB::Location: Send + Sync + 'static,
+  DB::State: Send + Sync + 'static,
+{
+  pub fn with_behavior<B: Behavior<DB> + 'static>(mut self, behavior: B) -> Self {
+    self.behaviors.push(Box::new(behavior));
+    self
+  }
+
+  pub fn with_behavior_from_config<B: ConfigurableBehavior<DB> + 'static>(
+    mut self,
+    behavior: B,
+  ) -> Self {
+    self.behaviors.push(behavior.create_behavior());
     self
   }
 
@@ -37,11 +50,7 @@ impl<DB: Database> AgentBuilder<DB> {
     self,
     middleware: Middleware<DB>,
     messager: Messager,
-  ) -> Result<Agent<DB>, ArbiterCoreError>
-  where
-    DB::Location: Send + Sync + 'static,
-    DB::State: Send + Sync + 'static,
-  {
+  ) -> Result<Agent<DB>, ArbiterCoreError> {
     Ok(Agent {
       id:        self.id.clone(),
       sender:    Sender {
