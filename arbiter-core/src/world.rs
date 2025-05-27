@@ -71,17 +71,17 @@ where
   }
 
   // TODO: Make this return a world, or env, or db or something that contains the sim data.
-  pub async fn run(self) -> Result<(), ArbiterCoreError> {
+  pub async fn run(mut self) -> Result<Self, ArbiterCoreError> {
     // Get the agents
-    let agents = self.agents;
+    let agents = std::mem::take(&mut self.agents);
     if agents.is_empty() {
       return Err(ArbiterCoreError::WorldError(
         "No agents found. Has the world already been ran?".to_owned(),
       ));
     }
 
-    // Start the environment
-    let _environment_task = self.environment.run().unwrap();
+    // Start the environment and get the shutdown sender
+    let environment_task = self.environment.run().unwrap();
 
     let mut tasks = vec![];
 
@@ -178,6 +178,19 @@ where
     // Await the completion of all tasks
     join_all(tasks).await;
 
-    Ok(())
+    // Wait for the environment task to complete and get the final database
+    debug!("All agent tasks completed, waiting for environment task to complete");
+    match environment_task.await {
+      Ok(final_database) => {
+        // Reconstruct the environment with the final database state
+        self.environment = InMemoryEnvironment::with_database(final_database, 1000);
+      },
+      Err(e) => {
+        panic!("Environment task failed: {e:?}");
+      },
+    }
+
+    // Return the world with its final state
+    Ok(self)
   }
 }

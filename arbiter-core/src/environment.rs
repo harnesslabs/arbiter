@@ -73,7 +73,12 @@ impl<DB: Database> InMemoryEnvironment<DB> {
     })
   }
 
-  pub fn run(mut self) -> Result<task::JoinHandle<()>, DB::Error>
+  pub fn with_database(database: DB, capacity: usize) -> Self {
+    let (tx_sender, tx_receiver) = mpsc::channel(capacity);
+    Self { inner: database, tx_sender, tx_receiver, broadcast: broadcast::Sender::new(capacity) }
+  }
+
+  pub fn run(mut self) -> Result<task::JoinHandle<DB>, DB::Error>
   where
     DB: 'static,
     DB::Location: Send + Sync + 'static,
@@ -81,8 +86,9 @@ impl<DB: Database> InMemoryEnvironment<DB> {
     let task = tokio::spawn(async move {
       while let Some((k, v)) = self.tx_receiver.recv().await {
         self.inner.set(k.clone(), v.clone()).unwrap();
-        self.broadcast.send((k, v));
+        let _ = self.broadcast.send((k, v));
       }
+      self.inner
     });
     Ok(task)
   }

@@ -1,10 +1,8 @@
 use arbiter_core::{
-  environment::{Database, Middleware},
+  environment::Database,
   error::ArbiterCoreError,
-  machine::{
-    Action, Actions, Behavior, ConfigurableBehavior, ControlFlow, Event, EventStream, Filter,
-  },
-  messager::{Message, MessageTo, Messager, To},
+  machine::{Action, Actions, Behavior, ConfigurableBehavior, ControlFlow, Event, Filter},
+  messager::{MessageTo, To},
 };
 use arbiter_macros::Behaviors;
 use serde::{Deserialize, Serialize};

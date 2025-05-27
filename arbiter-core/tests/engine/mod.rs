@@ -15,7 +15,7 @@ async fn behavior_no_stream() {
   let agent = Agent::builder("agent").with_behavior(behavior);
   world.add_agent(agent);
 
-  world.run().await.unwrap();
+  let _world = world.run().await.unwrap();
 }
 
 #[tokio::test]
@@ -33,7 +33,7 @@ async fn echoer() {
   );
   world.add_agent(agent.with_behavior(behavior));
 
-  world.run().await.unwrap();
+  let _world = world.run().await.unwrap();
 
   // Check that the expected messages were logged
   logs_contain("Hello, world!");
@@ -52,7 +52,7 @@ async fn ping_pong() {
 
   world.add_agent(agent.with_behavior(behavior_ping).with_behavior(behavior_pong));
 
-  world.run().await.unwrap();
+  let _world = world.run().await.unwrap();
 
   // Check that ping and pong messages were logged
   logs_contain("ping");
@@ -75,7 +75,7 @@ async fn ping_pong_two_agent() {
   world.add_agent(agent_ping.with_behavior(behavior_ping));
   world.add_agent(agent_pong.with_behavior(behavior_pong));
 
-  world.run().await.unwrap();
+  let _world = world.run().await.unwrap();
 
   // Check that ping and pong messages were logged from both agents
   logs_contain("ping");
@@ -85,10 +85,10 @@ async fn ping_pong_two_agent() {
 
 #[tokio::test]
 async fn config_test() {
-  let mut world =
+  let world =
     World::<HashMap<String, String>>::from_config::<Behaviors>("tests/config.toml").unwrap();
   assert_eq!(world.id, "timed_message_world");
-  world.run().await.unwrap();
+  let _world = world.run().await.unwrap();
 }
 
 #[tokio::test]
@@ -110,7 +110,7 @@ async fn run_parallel() {
   universe.add_world(world1);
   universe.add_world(world2);
 
-  universe.run_worlds().await.unwrap();
+  let _universe = universe.run_worlds().await.unwrap();
 
   // With tracing-test, we can check the logs using logs_contain
   logs_contain("Engaging behavior Some(\"agent1\")");
