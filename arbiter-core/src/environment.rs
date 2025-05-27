@@ -85,11 +85,31 @@ impl<DB: Database> InMemoryEnvironment<DB> {
     DB: 'static,
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
+    let mut shutdown_rx = self.shutdown_rx;
     tokio::spawn(async move {
-      while let Some((k, v)) = self.tx_receiver.recv().await {
-        self.inner.set(k.clone(), v.clone()).unwrap();
-        self.broadcast.send((k, v));
+      loop {
+        tokio::select! {
+          // Wait for messages from tx_receiver
+          msg = self.tx_receiver.recv() => {
+            match msg {
+              Some((k, v)) => {
+                self.inner.set(k.clone(), v.clone()).unwrap();
+                let _ = self.broadcast.send((k, v));
+              },
+              None => {
+                // Channel closed, exit
+                break;
+              }
+            }
+          },
+          // Wait for shutdown signal
+          _ = &mut shutdown_rx => {
+            debug!("Environment received shutdown signal");
+            break;
+          }
+        }
       }
+      debug!("Environment task shutting down");
     });
     Ok(self.shutdown_tx.take().unwrap())
   }

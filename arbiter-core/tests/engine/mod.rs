@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use arbiter_core::{agent::Agent, universe::Universe, world::World};
+use arbiter_core::{agent::Agent, world::World};
 use futures::StreamExt;
 use tokio::time::timeout;
 use tracing_test::traced_test;
@@ -17,7 +17,7 @@ async fn behavior_no_stream() {
   let agent = Agent::builder("agent").with_behavior(Box::new(behavior));
   world.add_agent(agent);
 
-  tokio::spawn(async move { world.run().await.unwrap() });
+  world.run().await.unwrap();
 }
 
 #[tokio::test]
@@ -35,7 +35,7 @@ async fn echoer() {
   world.add_agent(agent.with_behavior(Box::new(behavior)));
   let messager = world.messager.for_agent("outside_world");
 
-  tokio::spawn(async move { world.run().await.unwrap() });
+  world.run().await.unwrap();
 
   let mut stream = messager.stream().unwrap();
   let mut idx = 0;
@@ -142,25 +142,26 @@ async fn config_test() {
 #[tokio::test]
 #[traced_test]
 async fn run_parallel() {
-  let mut world1 = World::<HashMap<String, String>>::new("test1");
-  let agent1 = Agent::builder("agent1");
-  let behavior1 =
-    TimedMessage::new(1, "echo".to_owned(), "echo".to_owned(), Some(5), Some("echo".to_owned()));
-  world1.add_agent(agent1.with_behavior(Box::new(behavior1)));
+  todo!()
+  // let mut world1 = World::<HashMap<String, String>>::new("test1");
+  // let agent1 = Agent::builder("agent1");
+  // let behavior1 =
+  //   TimedMessage::new(1, "echo".to_owned(), "echo".to_owned(), Some(5), Some("echo".to_owned()));
+  // world1.add_agent(agent1.with_behavior(Box::new(behavior1)));
 
-  let mut world2 = World::<HashMap<String, String>>::new("test2");
-  let agent2 = Agent::builder("agent2");
-  let behavior2 =
-    TimedMessage::new(1, "echo".to_owned(), "echo".to_owned(), Some(5), Some("echo".to_owned()));
-  world2.add_agent(agent2.with_behavior(Box::new(behavior2)));
+  // let mut world2 = World::<HashMap<String, String>>::new("test2");
+  // let agent2 = Agent::builder("agent2");
+  // let behavior2 =
+  //   TimedMessage::new(1, "echo".to_owned(), "echo".to_owned(), Some(5), Some("echo".to_owned()));
+  // world2.add_agent(agent2.with_behavior(Box::new(behavior2)));
 
-  let mut universe = Universe::new();
-  universe.add_world(world1);
-  universe.add_world(world2);
+  // let mut universe = Universe::new();
+  // universe.add_world(world1);
+  // universe.add_world(world2);
 
-  universe.run_worlds().await.unwrap();
+  // universe.run_worlds().await.unwrap();
 
-  // With tracing-test, we can check the logs using logs_contain
-  logs_contain("Engaging behavior Some(\"agent1\")");
-  logs_contain("Engaging behavior Some(\"agent2\")");
+  // // With tracing-test, we can check the logs using logs_contain
+  // logs_contain("Engaging behavior Some(\"agent1\")");
+  // logs_contain("Engaging behavior Some(\"agent2\")");
 }

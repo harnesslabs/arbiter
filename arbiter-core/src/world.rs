@@ -4,13 +4,14 @@
 
 use std::{collections::VecDeque, fs::File, io::Read};
 
+use futures::StreamExt;
+
 use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
   environment::{Database, InMemoryEnvironment},
   machine::{Behavior, ConfigurableBehavior},
 };
-
 /// A world is a collection of agents that use the same type of provider, e.g.,
 /// operate on the same blockchain or same `Environment`. The world is
 /// responsible for managing the agents and their state transitions.
@@ -199,53 +200,52 @@ impl<DB: Database> World<DB> {
     for (agent_id, agent) in agents {
       let Agent { id, sender, mut stream, behaviors } = agent;
 
-      debug!("Starting agent: {}", agent_id);
+      debug!("Starting agent: {}", id);
 
       // Collect behaviors with their filters and startup actions
       let mut behavior_data = Vec::new();
-
       for (behavior_idx, mut behavior) in behaviors.into_iter().enumerate() {
-        // Call startup and get optional filter and actions
-        let (filter, startup_actions) = match behavior.startup() {
-          Ok((filter, actions)) => (filter, actions),
+        let (behavior_idx, filter, startup_actions) = match behavior.startup() {
+          Ok((filter, actions)) => {
+            debug!("Startup finished for behavior {}", behavior_idx);
+            (behavior_idx, filter, actions)
+          },
           Err(e) => {
             error!("Startup failed for behavior {}: {:?}", behavior_idx, e);
             continue;
           },
         };
 
-        // Execute startup actions if provided
         if !startup_actions.is_empty() {
           if let Err(e) = sender.execute_actions(startup_actions).await {
             error!("Failed to execute startup actions for behavior {}: {:?}", behavior_idx, e);
           }
         }
 
-        // Store behavior data for event processing
-        behavior_data.push((behavior_idx, behavior, filter));
+        if filter.is_some() {
+          behavior_data.push((behavior_idx, behavior, filter));
+        }
       }
 
       // Create a single task per agent to handle event streaming and routing
       if behavior_data.is_empty() {
-        debug!("No behaviors for agent: {}", agent_id);
-        // Create a minimal task that completes immediately for agents with no behaviors
-        let agent_task = task::spawn(async move {
-          debug!("Agent {} has no behaviors, completing immediately", agent_id);
-        });
-        tasks.push(agent_task);
+        // TODO: Set agent to halted.
       } else {
         let agent_task = task::spawn(async move {
-          use futures::StreamExt;
-
           // Get the event stream
           let event_stream = stream.stream_mut();
+
+          if behavior_data.is_empty() {
+            debug!("No processing behaviors for agent, exiting event loop");
+            return;
+          }
 
           while let Some(event) = event_stream.next().await {
             // Process each behavior and retain only those that don't halt
             behavior_data.retain_mut(|(behavior_id, behavior, filter)| {
-              // If filter is None, process all events; if Some(filter), check the filter
+              // If filter is None, process no events; if Some(filter), check the filter
               let should_process = match filter {
-                None => true, // No filter means process all events
+                None => false, // No filter means process no events
                 Some(filter) => filter.filter(&event),
               };
 
@@ -310,6 +310,7 @@ impl<DB: Database> World<DB> {
 
     // Await the completion of all tasks
     join_all(tasks).await;
+    shutdown_tx.send(()).unwrap();
 
     Ok(())
   }
