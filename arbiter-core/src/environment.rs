@@ -39,6 +39,20 @@ where
   }
 }
 
+impl Database for () {
+  type Error = ();
+  type Location = ();
+  type State = ();
+
+  fn new() -> Result<Self, Self::Error> { Ok(()) }
+
+  fn get(&self, _location: Self::Location) -> Result<&Self::State, Self::Error> { Ok(&()) }
+
+  fn set(&mut self, _location: Self::Location, _state: Self::State) -> Result<(), Self::Error> {
+    Ok(())
+  }
+}
+
 // TODO: Could have a `State` trait so we can replace the inner with a JoinHandle<DB> when we run.
 
 #[derive(Debug)]

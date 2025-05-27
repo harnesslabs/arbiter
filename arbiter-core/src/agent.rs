@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
   environment::{Database, Middleware},
-  machine::{Behavior, Engine},
+  machine::{Behavior, Engine, EngineType},
 };
 
 /// An agent is an entity capable of processing events and producing actions.
@@ -22,7 +22,7 @@ pub struct Agent<DB: Database> {
 
   pub middleware: Middleware<DB>,
 
-  pub(crate) engines: Vec<Box<dyn Engine<DB>>>,
+  pub(crate) engines: Vec<Box<dyn EngineType<DB>>>,
 }
 
 impl<DB: Database> Agent<DB> {
@@ -54,7 +54,7 @@ pub struct AgentBuilder<DB: Database> {
   pub id:           String,
   /// The engines/behaviors that the agent uses to sync, startup, and process
   /// events.
-  behavior_engines: Option<Vec<Box<dyn Engine<DB>>>>,
+  behavior_engines: Option<Vec<Box<dyn EngineType<DB>>>>,
 }
 
 impl<DB: Database> AgentBuilder<DB> {
@@ -67,7 +67,7 @@ impl<DB: Database> AgentBuilder<DB> {
     DB: Database + 'static,
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
-    let engine = Engine::new().with_behavior(behavior);
+    let engine = Engine::new(behavior);
     if let Some(engines) = &mut self.behavior_engines {
       engines.push(Box::new(engine));
     } else {
@@ -93,7 +93,7 @@ impl<DB: Database> AgentBuilder<DB> {
   /// # Returns
   ///
   /// Returns the `AgentBuilder` instance to allow for method chaining.
-  pub(crate) fn with_engine(mut self, engine: Box<dyn Engine<DB>>) -> Self {
+  pub(crate) fn with_engine(mut self, engine: Box<dyn EngineType<DB>>) -> Self {
     if let Some(engines) = &mut self.behavior_engines {
       engines.push(engine);
     } else {

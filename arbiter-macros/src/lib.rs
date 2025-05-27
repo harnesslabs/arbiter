@@ -72,8 +72,8 @@ pub fn create_behavior_from_enum(input: TokenStream) -> TokenStream {
   // Generate the full implementation of the `CreateStateMachine` trait for the
   // enum.
   let expanded = quote! {
-      impl CreateStateMachine for #name {
-          fn create_state_machine(self) -> Box<dyn StateMachine> {
+      impl<DB> CreateEngine<DB> for #name where DB: Database + 'static, DB::Location: Send + Sync + 'static, DB::State: Send + Sync + 'static {
+          fn create_engine(self) -> Box<dyn EngineType<DB>> {
               match self {
                   #(#match_arms,)*
               }

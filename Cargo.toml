@@ -43,6 +43,9 @@ tracing            = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false }
 tracing-test       = "0.2"
 
+# Testing
+tempfile = "3.20"
+
 [profile.release]
 codegen-units = 1
 lto           = true

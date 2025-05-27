@@ -8,7 +8,7 @@ use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
   environment::{Database, InMemoryEnvironment},
-  machine::CreateStateMachine,
+  machine::CreateEngine,
 };
 
 /// A world is a collection of agents that use the same type of provider, e.g.,
@@ -92,7 +92,7 @@ impl<DB: Database> World<DB> {
   /// ```
   pub fn from_config<C>(config_path: &str) -> Result<Self, ArbiterCoreError>
   where
-    C: CreateStateMachine<DB> + Serialize + DeserializeOwned + Debug,
+    C: CreateEngine<DB> + Serialize + DeserializeOwned + Debug,
     DB: Database + 'static,
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
@@ -118,7 +118,7 @@ impl<DB: Database> World<DB> {
     for (agent, behaviors) in config.agents_map {
       let mut next_agent = Agent::builder(&agent);
       for behavior in behaviors {
-        let engine = behavior.create_state_machine();
+        let engine = behavior.create_engine();
         next_agent = next_agent.with_engine(engine);
       }
       world.add_agent(next_agent);

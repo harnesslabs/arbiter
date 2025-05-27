@@ -28,25 +28,6 @@ pub enum ControlFlow {
   Continue,
 }
 
-/// The state used by any entity implementing [`StateMachine`].
-#[derive(Clone, Copy, Debug)]
-pub enum State {
-  /// The entity is not yet running any process.
-  /// This is the state adopted by the entity when it is first created.
-  Uninitialized,
-
-  /// The entity is starting up.
-  /// This is where the entity can engage in its specific start up activities
-  /// that it can do given the current state of the world.
-  /// These are usually quick one-shot activities that are not repeated.
-  Starting,
-
-  /// The entity is processing.
-  /// This is where the entity can engage in its specific processing
-  /// of events that can lead to actions being taken.
-  Processing,
-}
-
 /// The [`Behavior`] trait is the lowest level functionality that will be used
 /// by a [`StateMachine`]. This constitutes what each state transition will do.
 #[async_trait::async_trait]
@@ -55,11 +36,15 @@ where E: Send + 'static {
   /// Used to start the agent.
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
-  async fn startup<DB: Database>(
+  async fn startup<DB>(
     &mut self,
     middleware: Middleware<DB>,
     messager: Messager,
-  ) -> Result<(Option<EventStream<E>>, Messager), ArbiterCoreError>;
+  ) -> Result<Option<EventStream<E>>, ArbiterCoreError>
+  where
+    DB: Database + 'static,
+    DB::Location: Send + Sync + 'static,
+    DB::State: Send + Sync + 'static;
 
   /// Used to process events.
   /// This is where the agent can engage in its specific processing
@@ -69,14 +54,17 @@ where E: Send + 'static {
   }
 }
 
-pub struct Engine<B, E>(B);
+pub struct Engine<B, E> {
+  behavior: B,
+  event:    std::marker::PhantomData<E>,
+}
 
 impl<B, E> Engine<B, E>
 where
   B: Behavior<E>,
   E: Send + 'static,
 {
-  pub fn new(behavior: B) -> Self { Self(behavior) }
+  pub const fn new(behavior: B) -> Self { Self { behavior, event: std::marker::PhantomData } }
 }
 
 /// A trait for creating a state machine.
@@ -95,7 +83,7 @@ where
 /// # Returns
 ///
 /// - `Box<dyn StateMachine>`: A boxed state machine object that can be dynamically dispatched.
-pub trait CreateStateMachine<DB: Database> {
+pub trait CreateEngine<DB: Database> {
   /// Creates and returns a new state machine instance.
   ///
   /// This method consumes the implementer and returns a new instance of a
@@ -103,7 +91,7 @@ pub trait CreateStateMachine<DB: Database> {
   /// specific type of the state machine returned can vary, allowing for
   /// flexibility and reuse of the state machine logic across
   /// different contexts.
-  fn create_state_machine(self) -> Box<dyn StateMachine<DB>>;
+  fn create_engine(self) -> Box<dyn EngineType<DB>>;
 }
 
 /// A trait defining the capabilities of a state machine within the system.
@@ -117,7 +105,7 @@ pub trait CreateStateMachine<DB: Database> {
 /// among threads safely, hence the `Send`, `Sync`, and `'static` bounds. They
 /// should also support debugging through the `Debug` trait.
 #[async_trait::async_trait]
-pub trait StateMachine<DB: Database>: Send {
+pub trait EngineType<DB: Database>: Send {
   /// Executes a given instruction asynchronously.
   ///
   /// This method takes a mutable reference to self, allowing the state
@@ -141,9 +129,11 @@ pub trait StateMachine<DB: Database>: Send {
   ) -> Result<(), ArbiterCoreError>;
 }
 
-impl<B, DB> StateMachine<DB> for B
+#[async_trait::async_trait]
+impl<B, E, DB> EngineType<DB> for Engine<B, E>
 where
   B: Behavior<E> + Send + 'static,
+  E: Send + 'static,
   DB: Database + 'static,
   DB::Location: Send + Sync + 'static,
   DB::State: Send + Sync + 'static,
@@ -153,158 +143,33 @@ where
     middleware: Middleware<DB>,
     messager: Messager,
   ) -> Result<(), ArbiterCoreError> {
-    self.startup(middleware, messager).await
+    let id = messager.id.clone();
+    let messager_clone = messager.clone();
+    debug!("Engaging behavior {:?}", id);
+    let option_stream = match self.behavior.startup(middleware, messager_clone).await {
+      Ok(stream) => stream,
+      Err(e) => {
+        error!("Startup failed for behavior {:?}: \n reason: {:?}", id, e);
+        // Throw a panic as we cannot recover from this for now.
+        panic!();
+      },
+    };
+    debug!("Startup complete for behavior {:?}", id);
+
+    let Some(mut stream) = option_stream else {
+      debug!("No stream returned from startup for behavior {:?}", id);
+      return Ok(());
+    };
+
+    while let Some(event) = stream.next().await {
+      match self.behavior.process(event).await? {
+        ControlFlow::Halt => {
+          break;
+        },
+        ControlFlow::Continue => {},
+      }
+    }
+
+    Ok(())
   }
 }
-
-// impl<B, E, DB> StateMachine<DB> for Engine<B, E>
-// where
-//   B: Behavior<E>,
-//   E: Send + 'static,
-//   DB: Database + 'static,
-//   DB::Location: Send + Sync + 'static,
-//   DB::State: Send + Sync + 'static,
-// {
-//   async fn engage(
-//     &mut self,
-//     middleware: Middleware<DB>,
-//     messager: Messager,
-//   ) -> Result<(), ArbiterCoreError> {
-//     let id = messager.id.clone();
-//     let (option_stream, messager) = match self.startup(middleware, messager).await {
-//       Ok(stream) => stream,
-//       Err(e) => {
-//         error!("Startup failed for behavior {:?}: \n reason: {:?}", id, e);
-//         // Throw a panic as we cannot recover from this for now.
-//         panic!();
-//       },
-//     };
-//     debug!("Startup complete for behavior {:?}", messager.id);
-
-//     let Some(mut stream) = option_stream else {
-//       debug!("No stream returned from startup for behavior {:?}", id);
-//       return Ok(());
-//     };
-
-//     while let Some(event) = stream.next().await {
-//       match self.process(event).await? {
-//         ControlFlow::Halt => {
-//           break;
-//         },
-//         ControlFlow::Continue => {},
-//       }
-//     }
-
-//     Ok(())
-//   }
-// }
-
-// /// The `Engine` struct represents the core logic unit of a state machine-based
-// /// entity, such as an agent. It encapsulates a behavior and manages the flow
-// /// of events to and from this behavior, effectively driving the entity's
-// /// response to external stimuli.
-// ///
-// /// The `Engine` is generic over a behavior type `B` and an event type `E`,
-// /// allowing it to be used with a wide variety of behaviors and event sources.
-// /// It is itself a state machine, capable of executing instructions that
-// /// manipulate its behavior or react to events.
-// ///
-// /// # Fields
-// ///
-// /// - `behavior`: An optional behavior that the engine is currently managing. This is where the
-// ///   engine's logic is primarily executed in response to events.
-// pub struct Engine<B, E>
-// where
-//   B: Behavior<E>,
-//   E: Send + 'static, {
-//   /// The behavior the `Engine` runs.
-//   behavior: Option<B>,
-
-//   /// The current state of the [`Engine`].
-//   state: State,
-
-//   /// The receiver of events that the [`Engine`] will process.
-//   /// The [`State::Processing`] stage will attempt a decode of the [`String`]s
-//   /// into the event type `<E>`.
-//   event_stream: Option<EventStream<E>>,
-// }
-
-// impl<B, E> Debug for Engine<B, E>
-// where
-//   B: Behavior<E> + Debug,
-//   E: Send + 'static,
-// {
-//   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//     f.debug_struct("Engine").field("behavior", &self.behavior).field("state",
-// &self.state).finish()   }
-// }
-
-// impl<B, E> Engine<B, E>
-// where
-//   B: Behavior<E>,
-//   E: DeserializeOwned + Send + Sync + 'static,
-// {
-//   /// Creates a new [`Engine`] with the given [`Behavior`] and [`Receiver`].
-//   pub fn new() -> Self { Self { behavior: None, state: State::Uninitialized, event_stream: None }
-// }
-
-//   pub fn with_behavior(mut self, behavior: B) -> Self {
-//     self.behavior = Some(behavior);
-//     self
-//   }
-// }
-
-// #[async_trait::async_trait]
-// impl<B, E, DB> StateMachine<DB> for Engine<B, E>
-// where
-//   B: Behavior<E> + Serialize + DeserializeOwned + Send + Sync + 'static,
-//   E: DeserializeOwned + Serialize + Send + Sync + 'static,
-//   DB: Database + 'static,
-//   DB::Location: Send + Sync + 'static,
-//   DB::State: Send + Sync + 'static,
-// {
-//   async fn start(
-//     &mut self,
-//     middleware: Middleware<DB>,
-//     messager: Messager,
-//   ) -> Result<(), ArbiterCoreError> {
-//     let id = messager.id.clone();
-//     let id_clone = id.clone();
-//     let mut behavior = self.behavior.take().unwrap();
-//     self.state = State::Starting;
-//     let behavior_task: task::JoinHandle<Result<(Option<EventStream<E>>, B), ArbiterCoreError>> =
-//       tokio::spawn(async move {
-//         let stream = match behavior.startup(middleware, messager).await {
-//           Ok(stream) => stream,
-//           Err(e) => {
-//             error!("startup failed for behavior {:?}: \n reason: {:?}", id_clone, e);
-//             // Throw a panic as we cannot recover from this for now.
-//             panic!();
-//           },
-//         };
-//         debug!("startup complete for behavior {:?}", id_clone);
-//         Ok((stream, behavior))
-//       });
-//     let (stream, behavior) = behavior_task.await??;
-
-//     self.state = State::Processing;
-//     trace!("Behavior is starting up.");
-//     let mut behavior = self.behavior.take().unwrap();
-//     let mut stream = self.event_stream.take().unwrap();
-//     let behavior_task: task::JoinHandle<Result<B, ArbiterCoreError>> = tokio::spawn(async move {
-//       while let Some(event) = stream.next().await {
-//         match behavior.process(event).await? {
-//           ControlFlow::Halt => {
-//             break;
-//           },
-//           ControlFlow::Continue => {},
-//         }
-//       }
-//       Ok(behavior)
-//     });
-//     // TODO: We don't have to store the behavior again here, we could just discard
-//     // it.
-//     self.behavior = Some(behavior_task.await??);
-//     Ok(())
-//   }
-// }
