@@ -17,7 +17,7 @@ async fn behavior_no_stream() {
   let agent = Agent::builder("agent").with_behavior(Box::new(behavior));
   world.add_agent(agent);
 
-  world.run().await.unwrap();
+  tokio::spawn(async move { world.run().await.unwrap() });
 }
 
 #[tokio::test]
@@ -35,7 +35,7 @@ async fn echoer() {
   world.add_agent(agent.with_behavior(Box::new(behavior)));
   let messager = world.messager.for_agent("outside_world");
 
-  world.run().await.unwrap();
+  tokio::spawn(async move { world.run().await.unwrap() });
 
   let mut stream = messager.stream().unwrap();
   let mut idx = 0;

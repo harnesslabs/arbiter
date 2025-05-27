@@ -29,7 +29,7 @@ pub struct World<DB: Database> {
   pub agents: Option<HashMap<String, Agent<DB>>>,
 
   /// The environment for the world.
-  pub environment: InMemoryEnvironment<DB>,
+  pub environment: Option<InMemoryEnvironment<DB>>,
 
   /// The messaging layer for the world.
   pub messager: Messager,
@@ -41,7 +41,7 @@ impl<DB: Database> World<DB> {
     Self {
       id:          id.to_owned(),
       agents:      Some(HashMap::new()),
-      environment: InMemoryEnvironment::new(10).unwrap(),
+      environment: Some(InMemoryEnvironment::new(10).unwrap()),
       messager:    Messager::new(),
     }
   }
@@ -157,7 +157,7 @@ impl<DB: Database> World<DB> {
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
     let id = agent_builder.id.clone();
-    let middleware = self.environment.middleware();
+    let middleware = self.environment.as_ref().unwrap().middleware();
     let messager = self.messager.for_agent(&id);
     let agent =
       agent_builder.build(middleware, messager).expect("Failed to build agent from AgentBuilder");
@@ -192,8 +192,7 @@ impl<DB: Database> World<DB> {
     };
 
     // Start the environment task
-    let environment =
-      std::mem::replace(&mut self.environment, InMemoryEnvironment::new(10).unwrap());
+    let environment = self.environment.take().unwrap();
     let _environment_task = task::spawn(async move {
       if let Err(e) = environment.run().await {
         error!("Environment task failed: {:?}", e);
@@ -233,7 +232,12 @@ impl<DB: Database> World<DB> {
 
       // Create a single task per agent to handle event streaming and routing
       if behavior_data.is_empty() {
-        debug!("No behaviors with filters for agent: {}", agent_id);
+        debug!("No behaviors for agent: {}", agent_id);
+        // Create a minimal task that completes immediately for agents with no behaviors
+        let agent_task = task::spawn(async move {
+          debug!("Agent {} has no behaviors, completing immediately", agent_id);
+        });
+        tasks.push(agent_task);
       } else {
         let agent_task = task::spawn(async move {
           use futures::StreamExt;
@@ -242,46 +246,63 @@ impl<DB: Database> World<DB> {
           let event_stream = stream.stream_mut();
 
           while let Some(event) = event_stream.next().await {
-            // For each event, check all behaviors to see which ones should process it
-            for (behavior_id, behavior, filter) in &mut behavior_data {
-              if let Some(filter) = filter {
-                // Check if this behavior's filter matches the event
-                if filter.filter(&event) {
-                  debug!("Event matched filter for behavior: {}", behavior_id);
+            // Process each behavior and retain only those that don't halt
+            behavior_data.retain_mut(|(behavior_id, behavior, filter)| {
+              // If filter is None, process all events; if Some(filter), check the filter
+              let should_process = match filter {
+                None => true, // No filter means process all events
+                Some(filter) => filter.filter(&event),
+              };
 
-                  // Process the event with this behavior
-                  match behavior.process_event(event.clone()).await {
-                    Ok((crate::machine::ControlFlow::Halt, actions)) => {
-                      debug!("Behavior {} requested halt", behavior_id);
+              if should_process {
+                debug!("Event matched filter for behavior: {}", behavior_id);
 
-                      // Execute any final actions before halting
-                      if !actions.is_empty() {
-                        if let Err(e) = sender.execute_actions(actions).await {
-                          error!(
-                            "Failed to execute final actions for behavior {}: {:?}",
-                            behavior_id, e
-                          );
-                        }
+                // Process the event with this behavior
+                match futures::executor::block_on(behavior.process_event(event.clone())) {
+                  Ok((crate::machine::ControlFlow::Halt, actions)) => {
+                    debug!("Behavior {} requested halt", behavior_id);
+
+                    // Execute any final actions before halting
+                    if !actions.is_empty() {
+                      if let Err(e) = futures::executor::block_on(sender.execute_actions(actions)) {
+                        error!(
+                          "Failed to execute final actions for behavior {}: {:?}",
+                          behavior_id, e
+                        );
                       }
+                    }
 
-                      // Note: In a more sophisticated implementation, you might want to
-                      // remove this behavior from the list or mark it as halted
-                      // For now, we'll continue processing other behaviors
-                    },
-                    Ok((crate::machine::ControlFlow::Continue, actions)) => {
-                      // Execute actions and continue processing
-                      if !actions.is_empty() {
-                        if let Err(e) = sender.execute_actions(actions).await {
-                          error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
-                        }
+                    // Return false to remove this behavior
+                    false
+                  },
+                  Ok((crate::machine::ControlFlow::Continue, actions)) => {
+                    // Execute actions and continue processing
+                    if !actions.is_empty() {
+                      if let Err(e) = futures::executor::block_on(sender.execute_actions(actions)) {
+                        error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
                       }
-                    },
-                    Err(e) => {
-                      error!("Error processing event for behavior {}: {:?}", behavior_id, e);
-                    },
-                  }
+                    }
+                    // Return true to keep this behavior
+                    true
+                  },
+                  Err(e) => {
+                    error!("Error processing event for behavior {}: {:?}", behavior_id, e);
+                    // Return true to keep this behavior despite the error
+                    true
+                  },
                 }
+              } else {
+                // Event didn't match filter, keep the behavior
+                true
               }
+            });
+
+            debug!("{} behaviors remaining after processing event", behavior_data.len());
+
+            // If no behaviors remain, exit the event loop
+            if behavior_data.is_empty() {
+              debug!("No behaviors remaining for agent, exiting event loop");
+              break;
             }
           }
 
