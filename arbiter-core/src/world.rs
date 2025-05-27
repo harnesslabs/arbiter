@@ -181,8 +181,8 @@ impl<DB: Database> World<DB> {
   pub async fn run(&mut self) -> Result<(), ArbiterCoreError>
   where
     DB: Database + 'static,
-    DB::Location: Send + Sync + 'static,
-    DB::State: Send + Sync + 'static, {
+    DB::Location: Send + Sync + Clone + 'static,
+    DB::State: Send + Sync + Clone + 'static, {
     let agents = match self.agents.take() {
       Some(agents) => agents,
       None =>
@@ -190,19 +190,112 @@ impl<DB: Database> World<DB> {
           "No agents found. Has the world already been ran?".to_owned(),
         )),
     };
+
+    // Start the environment task
+    let environment =
+      std::mem::replace(&mut self.environment, InMemoryEnvironment::new(10).unwrap());
+    let _environment_task = task::spawn(async move {
+      if let Err(e) = environment.run().await {
+        error!("Environment task failed: {:?}", e);
+      }
+    });
+
     let mut tasks = vec![];
 
-    for (_, agent) in agents {
-      for mut behavior in agent.behaviors.drain(..) {
-        let (filter, actions) = behavior.startup().unwrap();
-        // TODO: Add all the filters to the stream
-        // TODO: Start the agent streaming and passing actions to the behavior matching filters then
-        // processing
-        // TODO: In the same task (one per agent), send all the actions.
-        agent.stream.add_filter(filter);
+    for (agent_id, mut agent) in agents {
+      debug!("Starting agent: {}", agent_id);
+
+      // Collect behaviors with their filters and startup actions
+      let mut behavior_data = Vec::new();
+
+      for (behavior_idx, mut behavior) in agent.behaviors.into_iter().enumerate() {
+        let behavior_id = format!("{}_{}", agent_id, behavior_idx);
+
+        // Call startup and get optional filter and actions
+        let (filter, startup_actions) = match behavior.startup() {
+          Ok((filter, actions)) => (filter, actions),
+          Err(e) => {
+            error!("Startup failed for behavior {}: {:?}", behavior_id, e);
+            continue;
+          },
+        };
+
+        // Execute startup actions if provided
+        if let Some(actions) = startup_actions {
+          if let Err(e) = agent.sender.execute_actions(actions).await {
+            error!("Failed to execute startup actions for behavior {}: {:?}", behavior_id, e);
+          }
+        }
+
+        // Store behavior data for event processing
+        behavior_data.push((behavior_id, behavior, filter));
+      }
+
+      // Create a single task per agent to handle event streaming and routing
+      if !behavior_data.is_empty() {
+        let sender = agent.sender.clone();
+        let mut stream = agent.stream;
+
+        let agent_task = task::spawn(async move {
+          use futures::StreamExt;
+
+          // Get the event stream
+          let event_stream = stream.stream_mut();
+
+          while let Some(event) = event_stream.next().await {
+            // For each event, check all behaviors to see which ones should process it
+            for (behavior_id, behavior, filter) in &mut behavior_data {
+              if let Some(filter) = filter {
+                // Check if this behavior's filter matches the event
+                if filter.filter(event.clone()) {
+                  debug!("Event matched filter for behavior: {}", behavior_id);
+
+                  // Process the event with this behavior
+                  match behavior.process_event(event.clone()).await {
+                    Ok((crate::machine::ControlFlow::Halt, actions)) => {
+                      debug!("Behavior {} requested halt", behavior_id);
+
+                      // Execute any final actions before halting
+                      if let Some(actions) = actions {
+                        if let Err(e) = sender.execute_actions(actions).await {
+                          error!(
+                            "Failed to execute final actions for behavior {}: {:?}",
+                            behavior_id, e
+                          );
+                        }
+                      }
+
+                      // Note: In a more sophisticated implementation, you might want to
+                      // remove this behavior from the list or mark it as halted
+                      // For now, we'll continue processing other behaviors
+                    },
+                    Ok((crate::machine::ControlFlow::Continue, actions)) => {
+                      // Execute actions and continue processing
+                      if let Some(actions) = actions {
+                        if let Err(e) = sender.execute_actions(actions).await {
+                          error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
+                        }
+                      }
+                    },
+                    Err(e) => {
+                      error!("Error processing event for behavior {}: {:?}", behavior_id, e);
+                    },
+                  }
+                }
+              }
+            }
+          }
+
+          debug!("Event stream ended for agent: {}", agent_id);
+        });
+
+        tasks.push(agent_task);
+      } else {
+        debug!("No behaviors with filters for agent: {}", agent_id);
       }
     }
-    // Await the completion of all tasks.
+
+    // Await the completion of all tasks
     join_all(tasks).await;
 
     Ok(())

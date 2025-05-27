@@ -4,7 +4,7 @@ use futures::{stream, Stream};
 
 use super::*;
 
-pub trait Database: Sized {
+pub trait Database: Sized + Send {
   type Location: Clone;
   type State: Clone;
   type Error: Debug;
@@ -20,8 +20,8 @@ pub trait Environment<DB: Database>: Sized {
 
 impl<K, V> Database for HashMap<K, V>
 where
-  K: Eq + Hash + Clone,
-  V: Clone,
+  K: Eq + Hash + Clone + Send,
+  V: Clone + Send,
 {
   type Error = Box<dyn std::error::Error>;
   type Location = K;

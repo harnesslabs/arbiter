@@ -22,9 +22,25 @@ use crate::{
 /// * `E`: The type of the items in the stream.
 pub type EventStream<E> = Pin<Box<dyn Stream<Item = E> + Send + Sync>>;
 
-pub enum Action<DB: Database> {
+pub enum Action<DB: Database>
+where
+  DB::Location: Clone,
+  DB::State: Clone, {
   StateChange(DB::Location, DB::State),
   Message(Message),
+}
+
+impl<DB: Database> Clone for Action<DB>
+where
+  DB::Location: Clone,
+  DB::State: Clone,
+{
+  fn clone(&self) -> Self {
+    match self {
+      Action::StateChange(location, state) => Action::StateChange(location.clone(), state.clone()),
+      Action::Message(message) => Action::Message(message.clone()),
+    }
+  }
 }
 
 pub struct Actions<DB: Database> {
@@ -51,14 +67,14 @@ pub enum ControlFlow {
 }
 
 /// Filter trait that can convert from unified events to specific event types
-pub trait Filter<DB: Database> {
+pub trait Filter<DB: Database>: Send + Sync {
   fn filter(&self, event: Action<DB>) -> bool;
 }
 
 /// The [`Behavior`] trait is the lowest level functionality that will be used
 /// by a [`StateMachine`]. This constitutes what each state transition will do.
 #[async_trait::async_trait]
-pub trait Behavior<DB: Database>
+pub trait Behavior<DB: Database>: Send + Sync
 where
   DB: Database + 'static,
   DB::Location: Send + Sync + 'static,

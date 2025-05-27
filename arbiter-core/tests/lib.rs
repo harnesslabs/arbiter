@@ -1,10 +1,7 @@
 use arbiter_core::{
   environment::{Database, Middleware},
   error::ArbiterCoreError,
-  machine::{
-    Actions, Behavior, ControlFlow, CreateEngine, Engine, EngineType, EventStream, Filter,
-    UnifiedEvent,
-  },
+  machine::{Action, Actions, Behavior, ControlFlow, EventStream, Filter},
   messager::{Message, Messager, To},
 };
 use arbiter_macros::Behaviors;
@@ -18,23 +15,22 @@ struct MockBehavior;
 // Simple filter that doesn't filter anything
 struct NoFilter;
 
-impl<DB: Database> Filter<DB, ()> for NoFilter {
-  fn filter(&self, _event: UnifiedEvent<DB>) -> Option<()> { Some(()) }
+impl<DB: Database> Filter<DB> for NoFilter {
+  fn filter(&self, _event: Action<DB>) -> bool { true }
 }
 
 #[async_trait::async_trait]
-impl<DB: Database> Behavior<DB, ()> for MockBehavior
+impl<DB: Database> Behavior<DB> for MockBehavior
 where
+  DB: Database + 'static,
   DB::Location: Send + Sync + 'static,
   DB::State: Send + Sync + 'static,
 {
-  type Filter = NoFilter;
-
   async fn startup(
     &mut self,
     _middleware: Middleware<DB>,
     _messager: Messager,
-  ) -> Result<(Option<Self::Filter>, Option<Actions<DB>>), ArbiterCoreError> {
+  ) -> Result<(Option<Box<dyn Filter<DB>>>, Option<Actions<DB>>), ArbiterCoreError> {
     Ok((None, None))
   }
 }
@@ -71,28 +67,25 @@ impl TimedMessage {
 // Filter that only passes through Message events
 struct MessageFilter;
 
-impl<DB: Database> Filter<DB, Message> for MessageFilter {
-  fn filter(&self, event: UnifiedEvent<DB>) -> Option<Message> {
+impl<DB: Database> Filter<DB> for MessageFilter {
+  fn filter(&self, event: Action<DB>) -> bool {
     match event {
-      UnifiedEvent::Message(msg) => Some(msg),
-      UnifiedEvent::StateChange(..) => None,
+      Action::Message(msg) => true,
+      Action::StateChange(..) => false,
     }
   }
 }
 
 #[async_trait::async_trait]
-impl<DB: Database> Behavior<DB, Message> for TimedMessage
+impl<DB: Database> Behavior<DB> for TimedMessage
 where
+  DB: Database + 'static,
   DB::Location: Send + Sync + 'static,
   DB::State: Send + Sync + 'static,
 {
-  type Filter = MessageFilter;
-
-  async fn startup(
+  fn startup(
     &mut self,
-    _middleware: Middleware<DB>,
-    messager: Messager,
-  ) -> Result<(Option<Self::Filter>, Option<Actions<DB>>), ArbiterCoreError> {
+  ) -> Result<(Option<Box<dyn Filter<DB>>>, Option<Actions<DB>>), ArbiterCoreError> {
     println!(
       "TimedMessage startup: receive_data={}, send_data={}, startup_message={:?}",
       self.receive_data, self.send_data, self.startup_message
@@ -102,15 +95,8 @@ where
 
     if let Some(startup_message) = &self.startup_message {
       println!("Sending startup message: {}", startup_message);
-      let message = Message {
-        from: messager.id.clone().unwrap_or_default(),
-        to:   To::All,
-        data: serde_json::to_string(startup_message).unwrap(),
-      };
-      actions.add_action(arbiter_core::machine::Action::Message(message));
+      actions.add_action(arbiter_core::machine::Action::Message(startup_message.clone()));
     }
-
-    self.messager = Some(messager);
 
     let filter = Some(MessageFilter);
     let actions = if actions.get_actions().is_empty() { None } else { Some(actions) };

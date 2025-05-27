@@ -31,9 +31,91 @@ pub struct Stream<DB: Database> {
   filters: HashMap<String, Box<dyn Filter<DB>>>,
 }
 
-pub struct Sender<DB: Database> {
+impl<DB: Database> Stream<DB> {
+  /// Add a filter to the stream with a given identifier
+  pub fn add_filter(&mut self, id: String, filter: Box<dyn Filter<DB>>) {
+    self.filters.insert(id, filter);
+  }
+
+  /// Get a reference to the filters
+  pub fn filters(&self) -> &HashMap<String, Box<dyn Filter<DB>>> { &self.filters }
+
+  /// Get a mutable reference to the event stream
+  pub fn stream_mut(&mut self) -> &mut EventStream<Action<DB>> { &mut self.stream }
+}
+
+pub struct Sender<DB: Database>
+where
+  DB::Location: Clone,
+  DB::State: Clone, {
   state_change_sender: mpsc::Sender<(DB::Location, DB::State)>,
   message_sender:      broadcast::Sender<Message>,
+}
+
+impl<DB: Database> Clone for Sender<DB>
+where
+  DB::Location: Clone,
+  DB::State: Clone,
+{
+  fn clone(&self) -> Self {
+    Self {
+      state_change_sender: self.state_change_sender.clone(),
+      message_sender:      self.message_sender.clone(),
+    }
+  }
+}
+
+impl<DB: Database> Sender<DB> {
+  /// Send a state change action
+  pub async fn send_state_change(
+    &self,
+    location: DB::Location,
+    state: DB::State,
+  ) -> Result<(), ArbiterCoreError>
+  where
+    DB::Error: From<mpsc::error::SendError<(DB::Location, DB::State)>>,
+  {
+    self.state_change_sender.send((location, state)).await.map_err(|e| {
+      ArbiterCoreError::DatabaseError(format!("Failed to send state change: {:?}", e))
+    })?;
+    Ok(())
+  }
+
+  /// Send a message action
+  pub async fn send_message(&self, message: Message) -> Result<(), ArbiterCoreError> {
+    self
+      .message_sender
+      .send(message)
+      .map_err(|e| ArbiterCoreError::MessagerError(format!("Failed to send message: {:?}", e)))?;
+    Ok(())
+  }
+
+  /// Execute a list of actions
+  pub async fn execute_actions(
+    &self,
+    actions: crate::machine::Actions<DB>,
+  ) -> Result<(), ArbiterCoreError> {
+    for action in actions.get_actions() {
+      match action {
+        Action::StateChange(location, state) => {
+          if let Err(e) = self.state_change_sender.send((location.clone(), state.clone())).await {
+            return Err(ArbiterCoreError::DatabaseError(format!(
+              "Failed to send state change: {:?}",
+              e
+            )));
+          }
+        },
+        Action::Message(message) =>
+          if let Err(e) = self.message_sender.send(message.clone()) {
+            return Err(ArbiterCoreError::MessagerError(format!(
+              "Failed to send message: {:?}",
+              e
+            )));
+          },
+      }
+    }
+    Ok(())
+  }
 }
 
 impl<DB: Database> Agent<DB> {
