@@ -9,12 +9,6 @@ use serde::{Deserialize, Serialize};
 
 mod engine;
 
-#[allow(unused)]
-fn trace() {
-  std::env::set_var("RUST_LOG", "trace");
-  tracing_subscriber::fmt::init();
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 struct MockBehavior;
 

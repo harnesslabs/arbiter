@@ -27,8 +27,6 @@ thiserror.workspace = true
 tracing.workspace   = true
 
 [dev-dependencies]
-arbiter-macros     = { workspace = true }
-tempfile           = { workspace = true }
-tokio              = { workspace = true, features = ["macros", "full"] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-test       = { workspace = true }
+arbiter-macros = { workspace = true }
+tokio          = { workspace = true, features = ["macros", "full"] }
+tracing-test   = { workspace = true }
