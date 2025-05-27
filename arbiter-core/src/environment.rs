@@ -1,9 +1,7 @@
-use std::{collections::HashMap, hash::Hash};
-
-use futures::{stream, Stream};
-use tokio::sync::oneshot;
+use std::collections::HashMap;
 
 use super::*;
+use crate::machine::{Event, EventStream};
 
 pub trait Database: Sized + Send {
   type Location: Clone;
@@ -114,16 +112,21 @@ where DB::Error: From<mpsc::error::SendError<(DB::Location, DB::State)>>
     Ok(())
   }
 
-  pub fn stream(&self) -> impl Stream<Item = (DB::Location, DB::State)> + Unpin {
-    Box::pin(stream::unfold(self.receiver.resubscribe(), |mut receiver| async move {
-      loop {
-        match receiver.recv().await {
-          Ok(request) => return Some((request, receiver)),
-          Err(broadcast::error::RecvError::Closed) => return None,
-          Err(broadcast::error::RecvError::Lagged(_)) => {},
+  pub fn into_sender_and_stream(
+    self,
+  ) -> (mpsc::Sender<(DB::Location, DB::State)>, impl Stream<Item = Event<DB>> + Unpin) {
+    (
+      self.sender,
+      Box::pin(stream::unfold(self.receiver, |mut receiver| async move {
+        loop {
+          match receiver.recv().await {
+            Ok((location, state)) => return Some((Event::StateChange(location, state), receiver)),
+            Err(broadcast::error::RecvError::Closed) => return None,
+            Err(broadcast::error::RecvError::Lagged(_)) => {},
+          }
         }
-      }
-    }))
+      })),
+    )
   }
 }
 
@@ -140,15 +143,15 @@ mod tests {
 
     // Get middleware and start streaming events
     let middleware = environment.middleware();
-    let mut stream = middleware.stream();
+    let (sender, mut stream) = middleware.into_sender_and_stream();
 
     // Start environment
     let handle = environment.run().unwrap();
 
     // Send event
-    middleware.send("test_location".to_string(), "test_state".to_string()).await.unwrap();
+    sender.send((String::from("test_location"), String::from("test_state"))).await.unwrap();
 
     let next = stream.next().await.unwrap();
-    assert_eq!(next, ("test_location".to_string(), "test_state".to_string()));
+    assert_eq!(next, Event::StateChange(String::from("test_location"), String::from("test_state")));
   }
 }

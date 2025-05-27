@@ -31,7 +31,7 @@ where
   MessageTo(MessageTo),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Event<DB: Database>
 where
   DB::Location: Clone,

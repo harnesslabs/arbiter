@@ -1,7 +1,6 @@
 //! The messager module contains the core messager layer for the Arbiter Engine.
 
 use super::*;
-use crate::machine::EventStream;
 
 /// A message that can be sent between agents.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -17,13 +16,13 @@ pub struct Message {
   pub data: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MessageTo {
   pub to:   To,
   pub data: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct MessageFrom {
   pub from: String,
   pub data: String,
@@ -49,16 +48,6 @@ pub struct Messager {
   pub(crate) broadcast_receiver: broadcast::Receiver<Message>,
 }
 
-impl Clone for Messager {
-  fn clone(&self) -> Self {
-    Self {
-      broadcast_sender:   self.broadcast_sender.clone(),
-      broadcast_receiver: self.broadcast_sender.subscribe(),
-      id:                 self.id.clone(),
-    }
-  }
-}
-
 impl Messager {
   /// Creates a new messager with the given capacity.
   #[allow(clippy::new_without_default)]
@@ -74,81 +63,6 @@ impl Messager {
       broadcast_sender:   self.broadcast_sender.clone(),
       broadcast_receiver: self.broadcast_sender.subscribe(),
       id:                 Some(id.to_owned()),
-    }
-  }
-
-  /// utility function for getting the next value from the broadcast_receiver
-  /// without streaming
-  pub async fn get_next(&mut self) -> Result<Message, ArbiterCoreError> {
-    while let Ok(message) = self.broadcast_receiver.recv().await {
-      match &message.to {
-        To::All => {
-          return Ok(message);
-        },
-        To::Agent(id) =>
-          if let Some(self_id) = &self.id {
-            if id == self_id {
-              return Ok(message);
-            }
-          },
-      }
-    }
-    unreachable!()
-  }
-
-  /// Returns a stream of messages that are either sent to [`To::All`] or to
-  /// the agent via [`To::Agent(id)`].
-  pub fn stream(mut self) -> Result<EventStream<Message>, ArbiterCoreError> {
-    Ok(Box::pin(async_stream::stream! {
-        while let Ok(message) = self.broadcast_receiver.recv().await {
-            match &message.to {
-                To::All => {
-                    yield message;
-                }
-                To::Agent(id) => {
-                    if let Some(self_id) = &self.id {
-                        if id == self_id {
-                            yield message;
-                        }
-                    }
-                }
-            }
-        }
-    }))
-  }
-
-  /// Asynchronously sends a message to a specified recipient.
-  ///
-  /// This method constructs a message with the provided data and sends it to
-  /// the specified recipient. The recipient can either be a single agent
-  /// or all agents, depending on the `to` parameter. The data is
-  /// serialized into a JSON string before being sent.
-  ///
-  /// # Type Parameters
-  ///
-  /// - `T`: The type that can be converted into a recipient specification (`To`).
-  /// - `S`: The type of the data being sent. Must implement `Serialize`.
-  ///
-  /// # Parameters
-  ///
-  /// - `to`: The recipient of the message. Can be an individual agent's ID or a broadcast to all
-  ///   agents.
-  /// - `data`: The data to be sent in the message. This data is serialized into JSON format.
-  pub async fn send<S: Serialize>(&self, to: To, data: S) -> Result<(), ArbiterCoreError> {
-    trace!("Sending message via messager.");
-    if let Some(id) = &self.id {
-      let message = Message {
-        from: id.clone(),
-        to,
-        data: serde_json::to_string(&data)
-          .map_err(|e| ArbiterCoreError::MessagerError(format!("Failed to serialize data: {e}")))?,
-      };
-      self.broadcast_sender.send(message)?;
-      Ok(())
-    } else {
-      Err(ArbiterCoreError::MessagerError(
-        "Messager has no ID! You must have an ID to send messages!".to_owned(),
-      ))
     }
   }
 }

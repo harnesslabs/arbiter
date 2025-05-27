@@ -1,6 +1,6 @@
 use std::{collections::HashMap, fmt::Debug, hash::Hash};
 
-use futures::{future::join_all, Stream, StreamExt};
+use futures::{future::join_all, stream, Stream, StreamExt};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tokio::{
   sync::{broadcast, mpsc},

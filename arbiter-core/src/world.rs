@@ -198,7 +198,7 @@ impl<DB: Database> World<DB> {
     let mut tasks = vec![];
 
     for (agent_id, agent) in agents {
-      let Agent { id, sender, mut stream, mut behaviors } = agent;
+      let Agent { id, sender, mut stream, behaviors } = agent;
 
       debug!("Starting agent: {}", id);
 
