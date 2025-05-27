@@ -42,7 +42,7 @@ impl<DB: Database> Agent<DB> {
   /// Returns an [`AgentBuilder`] instance that can be used to configure and
   /// build an [`Agent`].
   pub fn builder(id: &str) -> AgentBuilder<DB> {
-    AgentBuilder { id: id.to_owned(), behavior_engines: None }
+    AgentBuilder { id: id.to_owned(), behavior_engines: Vec::new() }
   }
 }
 
@@ -54,7 +54,7 @@ pub struct AgentBuilder<DB: Database> {
   pub id:           String,
   /// The engines/behaviors that the agent uses to sync, startup, and process
   /// events.
-  behavior_engines: Option<Vec<Box<dyn EngineType<DB>>>>,
+  behavior_engines: Vec<Box<dyn EngineType<DB>>>,
 }
 
 impl<DB: Database> AgentBuilder<DB> {
@@ -68,11 +68,7 @@ impl<DB: Database> AgentBuilder<DB> {
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
     let engine = Engine::new(behavior);
-    if let Some(engines) = &mut self.behavior_engines {
-      engines.push(Box::new(engine));
-    } else {
-      self.behavior_engines = Some(vec![Box::new(engine)]);
-    }
+    self.behavior_engines.push(Box::new(engine));
     self
   }
 
@@ -94,11 +90,7 @@ impl<DB: Database> AgentBuilder<DB> {
   ///
   /// Returns the `AgentBuilder` instance to allow for method chaining.
   pub(crate) fn with_engine(mut self, engine: Box<dyn EngineType<DB>>) -> Self {
-    if let Some(engines) = &mut self.behavior_engines {
-      engines.push(engine);
-    } else {
-      self.behavior_engines = Some(vec![engine]);
-    }
+    self.behavior_engines.push(engine);
     self
   }
 
@@ -140,9 +132,6 @@ impl<DB: Database> AgentBuilder<DB> {
     middleware: Middleware<DB>,
     messager: Messager,
   ) -> Result<Agent<DB>, ArbiterCoreError> {
-    match self.behavior_engines {
-      Some(engines) => Ok(Agent { id: self.id, messager, middleware, engines }),
-      None => Err(ArbiterCoreError::AgentBuildError("Missing behavior engines".to_owned())),
-    }
+    Ok(Agent { id: self.id, messager, middleware, engines: self.behavior_engines })
   }
 }

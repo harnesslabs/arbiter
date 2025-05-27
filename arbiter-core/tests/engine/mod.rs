@@ -68,11 +68,12 @@ async fn ping_pong() {
   world.add_agent(agent.with_behavior(behavior_ping).with_behavior(behavior_pong));
 
   let messager = world.messager.for_agent("outside_world");
-  world.run().await.unwrap();
-
   let mut stream = messager.stream().unwrap();
-  let mut idx = 0;
 
+  // Run world and read messages concurrently
+  let world_task = tokio::spawn(async move { world.run().await });
+
+  let mut idx = 0;
   loop {
     match timeout(Duration::from_secs(1), stream.next()).await {
       Ok(Some(event)) => {
@@ -87,6 +88,9 @@ async fn ping_pong() {
       },
     }
   }
+
+  // Wait for world to complete
+  world_task.await.unwrap().unwrap();
 }
 
 #[tokio::test]
