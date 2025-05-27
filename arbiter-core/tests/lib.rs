@@ -30,13 +30,11 @@ where
 
 fn default_max_count() -> Option<u64> { Some(3) }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct TimedMessage {
   delay:           u64,
   receive_data:    String,
   send_data:       String,
-  #[serde(skip)]
-  messager:        Option<Messager>,
   #[serde(default)]
   count:           u64,
   #[serde(default = "default_max_count")]
@@ -53,7 +51,7 @@ impl TimedMessage {
     max_count: Option<u64>,
     startup_message: Option<String>,
   ) -> Self {
-    Self { delay, receive_data, send_data, messager: None, count: 0, max_count, startup_message }
+    Self { delay, receive_data, send_data, count: 0, max_count, startup_message }
   }
 }
 
