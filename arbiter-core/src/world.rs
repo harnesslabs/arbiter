@@ -193,7 +193,7 @@ impl<DB: Database> World<DB> {
     }
 
     // Start the environment
-    let shutdown_tx = self.environment.run().await.unwrap();
+    let _environment_task = self.environment.run().unwrap();
 
     let mut tasks = vec![];
 
@@ -289,7 +289,6 @@ impl<DB: Database> World<DB> {
 
     // Await the completion of all tasks
     join_all(tasks).await;
-    shutdown_tx.send(()).unwrap();
 
     Ok(())
   }
