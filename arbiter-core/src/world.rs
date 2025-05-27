@@ -221,8 +221,8 @@ impl<DB: Database> World<DB> {
         };
 
         // Execute startup actions if provided
-        if let Some(actions) = startup_actions {
-          if let Err(e) = sender.execute_actions(actions).await {
+        if !startup_actions.is_empty() {
+          if let Err(e) = sender.execute_actions(startup_actions).await {
             error!("Failed to execute startup actions for behavior {}: {:?}", behavior_idx, e);
           }
         }
@@ -232,7 +232,9 @@ impl<DB: Database> World<DB> {
       }
 
       // Create a single task per agent to handle event streaming and routing
-      if !behavior_data.is_empty() {
+      if behavior_data.is_empty() {
+        debug!("No behaviors with filters for agent: {}", agent_id);
+      } else {
         let agent_task = task::spawn(async move {
           use futures::StreamExt;
 
@@ -244,7 +246,7 @@ impl<DB: Database> World<DB> {
             for (behavior_id, behavior, filter) in &mut behavior_data {
               if let Some(filter) = filter {
                 // Check if this behavior's filter matches the event
-                if filter.filter(event.clone()) {
+                if filter.filter(&event) {
                   debug!("Event matched filter for behavior: {}", behavior_id);
 
                   // Process the event with this behavior
@@ -253,7 +255,7 @@ impl<DB: Database> World<DB> {
                       debug!("Behavior {} requested halt", behavior_id);
 
                       // Execute any final actions before halting
-                      if let Some(actions) = actions {
+                      if !actions.is_empty() {
                         if let Err(e) = sender.execute_actions(actions).await {
                           error!(
                             "Failed to execute final actions for behavior {}: {:?}",
@@ -268,7 +270,7 @@ impl<DB: Database> World<DB> {
                     },
                     Ok((crate::machine::ControlFlow::Continue, actions)) => {
                       // Execute actions and continue processing
-                      if let Some(actions) = actions {
+                      if !actions.is_empty() {
                         if let Err(e) = sender.execute_actions(actions).await {
                           error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
                         }
@@ -287,8 +289,6 @@ impl<DB: Database> World<DB> {
         });
 
         tasks.push(agent_task);
-      } else {
-        debug!("No behaviors with filters for agent: {}", agent_id);
       }
     }
 

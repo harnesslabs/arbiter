@@ -80,6 +80,8 @@ impl<DB: Database> Actions<DB> {
   pub fn add_action(&mut self, action: Action<DB>) { self.actions.push(action); }
 
   pub fn into_vec(self) -> Vec<Action<DB>> { self.actions }
+
+  pub fn is_empty(&self) -> bool { self.actions.is_empty() }
 }
 
 /// The message that is used in a [`StateMachine`] to continue or halt its
@@ -95,7 +97,7 @@ pub enum ControlFlow {
 
 /// Filter trait that can convert from unified events to specific event types
 pub trait Filter<DB: Database>: Send + Sync {
-  fn filter(&self, event: Event<DB>) -> bool;
+  fn filter(&self, event: &Event<DB>) -> bool;
 }
 
 /// The [`Behavior`] trait is the lowest level functionality that will be used
@@ -110,9 +112,9 @@ where
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
   /// Returns an optional filter and optional actions.
-  fn startup(
-    &mut self,
-  ) -> Result<(Option<Box<dyn Filter<DB>>>, Option<Actions<DB>>), ArbiterCoreError>;
+  fn startup(&mut self) -> Result<(Option<Box<dyn Filter<DB>>>, Actions<DB>), ArbiterCoreError> {
+    Ok((None, Actions::new()))
+  }
 
   /// Used to process events.
   /// This is where the agent can engage in its specific processing
@@ -120,8 +122,8 @@ where
   async fn process_event(
     &mut self,
     _event: Event<DB>,
-  ) -> Result<(ControlFlow, Option<Actions<DB>>), ArbiterCoreError> {
-    Ok((ControlFlow::Halt, None))
+  ) -> Result<(ControlFlow, Actions<DB>), ArbiterCoreError> {
+    Ok((ControlFlow::Halt, Actions::new()))
   }
 }
 

@@ -1,8 +1,8 @@
 use arbiter_core::{
   environment::{Database, Middleware},
   error::ArbiterCoreError,
-  machine::{Action, Actions, Behavior, ControlFlow, EventStream, Filter},
-  messager::{Message, Messager, To},
+  machine::{Action, Actions, Behavior, ControlFlow, Event, EventStream, Filter},
+  messager::{Message, MessageTo, Messager, To},
 };
 use arbiter_macros::Behaviors;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ struct MockBehavior;
 struct NoFilter;
 
 impl<DB: Database> Filter<DB> for NoFilter {
-  fn filter(&self, _event: Action<DB>) -> bool { true }
+  fn filter(&self, _event: &Event<DB>) -> bool { true }
 }
 
 #[async_trait::async_trait]
@@ -26,13 +26,6 @@ where
   DB::Location: Send + Sync + 'static,
   DB::State: Send + Sync + 'static,
 {
-  async fn startup(
-    &mut self,
-    _middleware: Middleware<DB>,
-    _messager: Messager,
-  ) -> Result<(Option<Box<dyn Filter<DB>>>, Option<Actions<DB>>), ArbiterCoreError> {
-    Ok((None, None))
-  }
 }
 
 fn default_max_count() -> Option<u64> { Some(3) }
@@ -68,10 +61,10 @@ impl TimedMessage {
 struct MessageFilter;
 
 impl<DB: Database> Filter<DB> for MessageFilter {
-  fn filter(&self, event: Action<DB>) -> bool {
+  fn filter(&self, event: &Event<DB>) -> bool {
     match event {
-      Action::Message(msg) => true,
-      Action::StateChange(..) => false,
+      Event::MessageFrom(_) => true,
+      Event::StateChange(..) => false,
     }
   }
 }
@@ -83,9 +76,7 @@ where
   DB::Location: Send + Sync + 'static,
   DB::State: Send + Sync + 'static,
 {
-  fn startup(
-    &mut self,
-  ) -> Result<(Option<Box<dyn Filter<DB>>>, Option<Actions<DB>>), ArbiterCoreError> {
+  fn startup(&mut self) -> Result<(Option<Box<dyn Filter<DB>>>, Actions<DB>), ArbiterCoreError> {
     println!(
       "TimedMessage startup: receive_data={}, send_data={}, startup_message={:?}",
       self.receive_data, self.send_data, self.startup_message
@@ -95,43 +86,37 @@ where
 
     if let Some(startup_message) = &self.startup_message {
       println!("Sending startup message: {}", startup_message);
-      actions.add_action(arbiter_core::machine::Action::Message(startup_message.clone()));
+      actions
+        .add_action(Action::MessageTo(MessageTo { to: To::All, data: startup_message.clone() }));
     }
 
-    let filter = Some(MessageFilter);
-    let actions = if actions.get_actions().is_empty() { None } else { Some(actions) };
+    // TODO: This is really clunky. It would be nice to be able to return just the filter.
+    let filter = Some(Box::new(MessageFilter) as Box<dyn Filter<DB>>);
 
     Ok((filter, actions))
   }
 
   async fn process_event(
     &mut self,
-    event: Message,
-  ) -> Result<(ControlFlow, Option<Actions<DB>>), ArbiterCoreError> {
-    println!(
-      "TimedMessage process: received message from={}, data={}, looking_for={}",
-      event.from,
-      event.data,
-      serde_json::to_string(&self.receive_data).unwrap()
-    );
-
+    event: Event<DB>,
+  ) -> Result<(ControlFlow, Actions<DB>), ArbiterCoreError> {
     let mut actions = Actions::new();
-
-    if event.data == serde_json::to_string(&self.receive_data).unwrap() {
-      println!("Message matches! Sending response: {}", self.send_data);
-      let message = Message {
-        from: self.messager.as_ref().unwrap().id.clone().unwrap_or_default(),
-        to:   To::All,
-        data: serde_json::to_string(&self.send_data).unwrap(),
-      };
-      actions.add_action(arbiter_core::machine::Action::Message(message));
-      self.count += 1;
-      println!("Count incremented to: {}", self.count);
-    } else {
-      println!("Message does not match, ignoring");
+    match event {
+      Event::MessageFrom(message) =>
+        if message.data == self.receive_data {
+          println!("Message matches! Sending response: {}", self.send_data);
+          let message =
+            MessageTo { to: To::All, data: serde_json::to_string(&self.send_data).unwrap() };
+          actions.add_action(Action::MessageTo(message));
+          self.count += 1;
+          println!("Count incremented to: {}", self.count);
+        } else {
+          println!("Message does not match, ignoring");
+        },
+      Event::StateChange(..) => {
+        println!("State change, ignoring");
+      },
     }
-
-    let actions = if actions.get_actions().is_empty() { None } else { Some(actions) };
 
     if self.count == self.max_count.unwrap_or(u64::MAX) {
       println!("Reached max count ({}), halting behavior", self.max_count.unwrap_or(u64::MAX));
@@ -141,7 +126,8 @@ where
   }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-enum Behaviors<DB: Database> {
-  TimedMessage(TimedMessage),
-}
+// TODO: Fix macro
+// #[derive(Serialize, Deserialize, Debug)]
+// enum Behaviors<DB: Database> {
+//   TimedMessage(TimedMessage),
+// }
