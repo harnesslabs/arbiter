@@ -8,7 +8,7 @@ use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
   environment::{Database, InMemoryEnvironment},
-  machine::Behavior,
+  machine::{Behavior, ConfigurableBehavior},
 };
 
 /// A world is a collection of agents that use the same type of provider, e.g.,
@@ -90,9 +90,9 @@ impl<DB: Database> World<DB> {
   /// [agent2]
   /// BehaviorTypeC = { ... }
   /// ```
-  pub fn from_config<B>(config_path: &str) -> Result<Self, ArbiterCoreError>
+  pub fn from_config<C>(config_path: &str) -> Result<Self, ArbiterCoreError>
   where
-    B: Behavior<DB> + Serialize + DeserializeOwned + Debug,
+    C: ConfigurableBehavior<DB> + Serialize + DeserializeOwned + Debug,
     DB: Database + 'static,
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
@@ -118,8 +118,7 @@ impl<DB: Database> World<DB> {
     for (agent, behaviors) in config.agents_map {
       let mut next_agent = Agent::builder(&agent);
       for behavior in behaviors {
-        let engine = behavior.create_engine();
-        next_agent = next_agent.with_engine(engine);
+        next_agent = next_agent.with_behavior(behavior.create_behavior());
       }
       world.add_agent(next_agent);
     }
@@ -152,7 +151,11 @@ impl<DB: Database> World<DB> {
   /// ```
   ///
   /// This will add the agent defined by `agent_builder` to the world.
-  pub fn add_agent(&mut self, agent_builder: AgentBuilder<DB>) {
+  pub fn add_agent(&mut self, agent_builder: AgentBuilder<DB>)
+  where
+    DB: Database + 'static,
+    DB::Location: Send + Sync + 'static,
+    DB::State: Send + Sync + 'static, {
     let id = agent_builder.id.clone();
     let middleware = self.environment.middleware();
     let messager = self.messager.for_agent(&id);
@@ -188,21 +191,15 @@ impl<DB: Database> World<DB> {
         )),
     };
     let mut tasks = vec![];
-    // Prepare a queue for messagers corresponding to each behavior engine.
-    let mut messagers = VecDeque::new();
-    // Populate the messagers queue.
-    for agent in agents.values() {
-      for _ in &agent.engines {
-        messagers.push_back(agent.messager.clone());
-      }
-    }
-    // For each agent, spawn a task for each of its behavior engines.
-    // Unwrap here is safe as we just built the dang thing.
-    for (_, mut agent) in agents {
-      for mut engine in agent.engines.drain(..) {
-        let client = agent.middleware.clone();
-        let messager = messagers.pop_front().unwrap();
-        tasks.push(task::spawn(async move { engine.engage(client, messager).await }));
+
+    for (_, agent) in agents {
+      for mut behavior in agent.behaviors.drain(..) {
+        let (filter, actions) = behavior.startup().unwrap();
+        // TODO: Add all the filters to the stream
+        // TODO: Start the agent streaming and passing actions to the behavior matching filters then
+        // processing
+        // TODO: In the same task (one per agent), send all the actions.
+        agent.stream.add_filter(filter);
       }
     }
     // Await the completion of all tasks.

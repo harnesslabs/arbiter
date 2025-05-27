@@ -67,7 +67,7 @@ where
   /// This is where the agent can engage in its specific start up activities
   /// that it can do given the current state of the world.
   /// Returns an optional filter and optional actions.
-  async fn startup(
+  fn startup(
     &mut self,
   ) -> Result<(Option<Box<dyn Filter<DB>>>, Option<Actions<DB>>), ArbiterCoreError>;
 
@@ -76,7 +76,7 @@ where
   /// of events that can lead to actions being taken.
   async fn process_event(
     &mut self,
-    event: Action<DB>,
+    _event: Action<DB>,
   ) -> Result<(ControlFlow, Option<Actions<DB>>), ArbiterCoreError> {
     Ok((ControlFlow::Halt, None))
   }

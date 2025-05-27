@@ -68,16 +68,15 @@ pub struct AgentBuilder<DB: Database> {
   behaviors: Vec<Box<dyn Behavior<DB>>>,
 }
 
-impl<DB: Database> AgentBuilder<DB> {
+impl<DB: Database> AgentBuilder<DB>
+where
+  DB::Location: Send + Sync + 'static,
+  DB::State: Send + Sync + 'static,
+{
   /// Appends a behavior onto an [`AgentBuilder`]. Behaviors are initialized
   /// when the agent builder is added to the [`crate::world::World`]
-  pub fn with_behavior<B>(mut self, behavior: B) -> Self
-  where
-    B: Behavior<DB> + Send + Sync + 'static,
-    DB: Database + 'static,
-    DB::Location: Send + Sync + 'static,
-    DB::State: Send + Sync + 'static, {
-    self.behaviors.push(Box::new(behavior));
+  pub fn with_behavior(mut self, behavior: Box<dyn Behavior<DB>>) -> Self {
+    self.behaviors.push(behavior);
     self
   }
 
@@ -119,28 +118,49 @@ impl<DB: Database> AgentBuilder<DB> {
     middleware: Middleware<DB>,
     messager: Messager,
   ) -> Result<Agent<DB>, ArbiterCoreError> {
-    let middleware_sender = middleware.sender;
-    let middleware_receiver = middleware.receiver;
-    let messager_sender = messager.broadcast_sender;
-    let messager_receiver = messager.broadcast_receiver;
-    let stream =
-      Stream { stream: create_unified_stream(middleware, messager), filters: HashMap::new() };
+    let stream = Stream {
+      stream:  create_unified_stream(middleware.receiver, messager.broadcast_receiver),
+      filters: HashMap::new(),
+    };
     let sender = Sender {
-      state_change_sender: middleware.sender.clone(),
-      message_sender:      messager.broadcast_sender.clone(),
+      state_change_sender: middleware.sender,
+      message_sender:      messager.broadcast_sender,
     };
 
     Ok(Agent { id: self.id, sender, stream, behaviors: self.behaviors })
   }
 }
 
+use futures::stream;
+
 fn create_unified_stream<DB: Database>(
   middleware_receiver: broadcast::Receiver<(DB::Location, DB::State)>,
   messager_receiver: broadcast::Receiver<Message>,
-) -> EventStream<Action<DB>> {
+) -> EventStream<Action<DB>>
+where
+  DB::Location: Send + Sync + 'static,
+  DB::State: Send + Sync + 'static,
+{
   let middleware_stream =
-    middleware.stream().map(|(location, state)| Action::StateChange(location, state));
-  let messager_stream = messager.stream().unwrap().map(|msg| Action::Message(msg));
+    Box::pin(stream::unfold(middleware_receiver, |mut receiver| async move {
+      loop {
+        match receiver.recv().await {
+          Ok((location, state)) => return Some((Action::StateChange(location, state), receiver)),
+          Err(broadcast::error::RecvError::Closed) => return None,
+          Err(broadcast::error::RecvError::Lagged(_)) => {},
+        }
+      }
+    }));
+
+  let messager_stream = Box::pin(stream::unfold(messager_receiver, |mut receiver| async move {
+    loop {
+      match receiver.recv().await {
+        Ok(message) => return Some((Action::Message(message), receiver)),
+        Err(broadcast::error::RecvError::Closed) => return None,
+        Err(broadcast::error::RecvError::Lagged(_)) => {},
+      }
+    }
+  }));
 
   Box::pin(futures::stream::select(middleware_stream, messager_stream))
 }
