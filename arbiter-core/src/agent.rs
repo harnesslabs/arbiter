@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
   environment::{Database, Middleware},
-  machine::{Action, Behavior, EventStream, Filter},
-  messager::Message,
+  machine::{Action, Behavior, Event, EventStream, Filter},
+  messager::{Message, MessageFrom},
 };
 
 /// An agent is an entity capable of processing events and producing actions.
@@ -27,7 +27,7 @@ pub struct Agent<DB: Database> {
 }
 
 pub struct Stream<DB: Database> {
-  stream:  EventStream<Action<DB>>,
+  stream:  EventStream<Event<DB>>,
   filters: HashMap<String, Box<dyn Filter<DB>>>,
 }
 
@@ -41,7 +41,7 @@ impl<DB: Database> Stream<DB> {
   pub fn filters(&self) -> &HashMap<String, Box<dyn Filter<DB>>> { &self.filters }
 
   /// Get a mutable reference to the event stream
-  pub fn stream_mut(&mut self) -> &mut EventStream<Action<DB>> { &mut self.stream }
+  pub fn stream_mut(&mut self) -> &mut EventStream<Event<DB>> { &mut self.stream }
 }
 
 pub struct Sender<DB: Database>
@@ -65,59 +65,6 @@ where
   }
 }
 
-impl<DB: Database> Sender<DB> {
-  /// Send a state change action
-  pub async fn send_state_change(
-    &self,
-    location: DB::Location,
-    state: DB::State,
-  ) -> Result<(), ArbiterCoreError>
-  where
-    DB::Error: From<mpsc::error::SendError<(DB::Location, DB::State)>>,
-  {
-    self.state_change_sender.send((location, state)).await.map_err(|e| {
-      ArbiterCoreError::DatabaseError(format!("Failed to send state change: {:?}", e))
-    })?;
-    Ok(())
-  }
-
-  /// Send a message action
-  pub async fn send_message(&self, message: Message) -> Result<(), ArbiterCoreError> {
-    self
-      .message_sender
-      .send(message)
-      .map_err(|e| ArbiterCoreError::MessagerError(format!("Failed to send message: {:?}", e)))?;
-    Ok(())
-  }
-
-  /// Execute a list of actions
-  pub async fn execute_actions(
-    &self,
-    actions: crate::machine::Actions<DB>,
-  ) -> Result<(), ArbiterCoreError> {
-    for action in actions.get_actions() {
-      match action {
-        Action::StateChange(location, state) => {
-          if let Err(e) = self.state_change_sender.send((location.clone(), state.clone())).await {
-            return Err(ArbiterCoreError::DatabaseError(format!(
-              "Failed to send state change: {:?}",
-              e
-            )));
-          }
-        },
-        Action::Message(message) =>
-          if let Err(e) = self.message_sender.send(message.clone()) {
-            return Err(ArbiterCoreError::MessagerError(format!(
-              "Failed to send message: {:?}",
-              e
-            )));
-          },
-      }
-    }
-    Ok(())
-  }
-}
-
 impl<DB: Database> Agent<DB> {
   /// Creates a new [`AgentBuilder`] instance with a specified identifier.
   ///
@@ -136,6 +83,38 @@ impl<DB: Database> Agent<DB> {
   /// build an [`Agent`].
   pub fn builder(id: &str) -> AgentBuilder<DB> {
     AgentBuilder { id: id.to_owned(), behaviors: Vec::new() }
+  }
+
+  /// Execute a list of actions
+  pub async fn execute_actions(
+    &self,
+    actions: crate::machine::Actions<DB>,
+  ) -> Result<(), ArbiterCoreError> {
+    for action in actions.into_vec() {
+      match action {
+        Action::StateChange(location, state) => {
+          if let Err(e) = self.sender.state_change_sender.send((location, state)).await {
+            return Err(ArbiterCoreError::DatabaseError(format!(
+              "Failed to send state change: {:?}",
+              e
+            )));
+          }
+        },
+        // TODO: We should automatically serialize here, but not doing it for now.
+        Action::MessageTo(message) =>
+          if let Err(e) = self.sender.message_sender.send(Message {
+            from: self.id.clone(),
+            to:   message.to,
+            data: message.data,
+          }) {
+            return Err(ArbiterCoreError::MessagerError(format!(
+              "Failed to send message: {:?}",
+              e
+            )));
+          },
+      }
+    }
+    Ok(())
   }
 }
 
@@ -218,7 +197,7 @@ use futures::stream;
 fn create_unified_stream<DB: Database>(
   middleware_receiver: broadcast::Receiver<(DB::Location, DB::State)>,
   messager_receiver: broadcast::Receiver<Message>,
-) -> EventStream<Action<DB>>
+) -> EventStream<Event<DB>>
 where
   DB::Location: Send + Sync + 'static,
   DB::State: Send + Sync + 'static,
@@ -227,7 +206,7 @@ where
     Box::pin(stream::unfold(middleware_receiver, |mut receiver| async move {
       loop {
         match receiver.recv().await {
-          Ok((location, state)) => return Some((Action::StateChange(location, state), receiver)),
+          Ok((location, state)) => return Some((Event::StateChange(location, state), receiver)),
           Err(broadcast::error::RecvError::Closed) => return None,
           Err(broadcast::error::RecvError::Lagged(_)) => {},
         }
@@ -237,7 +216,11 @@ where
   let messager_stream = Box::pin(stream::unfold(messager_receiver, |mut receiver| async move {
     loop {
       match receiver.recv().await {
-        Ok(message) => return Some((Action::Message(message), receiver)),
+        Ok(message) =>
+          return Some((
+            Event::MessageFrom(MessageFrom { from: message.from, data: message.data }),
+            receiver,
+          )),
         Err(broadcast::error::RecvError::Closed) => return None,
         Err(broadcast::error::RecvError::Lagged(_)) => {},
       }

@@ -222,7 +222,7 @@ impl<DB: Database> World<DB> {
 
         // Execute startup actions if provided
         if let Some(actions) = startup_actions {
-          if let Err(e) = agent.sender.execute_actions(actions).await {
+          if let Err(e) = agent.execute_actions(actions).await {
             error!("Failed to execute startup actions for behavior {}: {:?}", behavior_id, e);
           }
         }
@@ -257,7 +257,7 @@ impl<DB: Database> World<DB> {
 
                       // Execute any final actions before halting
                       if let Some(actions) = actions {
-                        if let Err(e) = sender.execute_actions(actions).await {
+                        if let Err(e) = agent.execute_actions(actions).await {
                           error!(
                             "Failed to execute final actions for behavior {}: {:?}",
                             behavior_id, e
@@ -272,7 +272,7 @@ impl<DB: Database> World<DB> {
                     Ok((crate::machine::ControlFlow::Continue, actions)) => {
                       // Execute actions and continue processing
                       if let Some(actions) = actions {
-                        if let Err(e) = sender.execute_actions(actions).await {
+                        if let Err(e) = agent.execute_actions(actions).await {
                           error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
                         }
                       }

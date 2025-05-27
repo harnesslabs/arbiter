@@ -17,6 +17,17 @@ pub struct Message {
   pub data: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MessageTo {
+  pub to:   To,
+  pub data: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MessageFrom {
+  pub from: String,
+  pub data: String,
+}
 /// The recipient of the message.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum To {

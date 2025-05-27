@@ -8,7 +8,7 @@ use futures::StreamExt;
 use super::*;
 use crate::{
   environment::{Database, Middleware},
-  messager::{Message, Messager},
+  messager::{Message, MessageFrom, MessageTo, Messager},
 };
 
 /// A type alias for a pinned, boxed stream of events.
@@ -22,12 +22,35 @@ use crate::{
 /// * `E`: The type of the items in the stream.
 pub type EventStream<E> = Pin<Box<dyn Stream<Item = E> + Send + Sync>>;
 
+#[derive(Debug)]
 pub enum Action<DB: Database>
 where
   DB::Location: Clone,
   DB::State: Clone, {
   StateChange(DB::Location, DB::State),
-  Message(Message),
+  MessageTo(MessageTo),
+}
+
+#[derive(Debug)]
+pub enum Event<DB: Database>
+where
+  DB::Location: Clone,
+  DB::State: Clone, {
+  StateChange(DB::Location, DB::State),
+  MessageFrom(MessageFrom),
+}
+
+impl<DB: Database> Clone for Event<DB>
+where
+  DB::Location: Clone,
+  DB::State: Clone,
+{
+  fn clone(&self) -> Self {
+    match self {
+      Event::StateChange(location, state) => Event::StateChange(location.clone(), state.clone()),
+      Event::MessageFrom(message) => Event::MessageFrom(message.clone()),
+    }
+  }
 }
 
 impl<DB: Database> Clone for Action<DB>
@@ -38,12 +61,16 @@ where
   fn clone(&self) -> Self {
     match self {
       Action::StateChange(location, state) => Action::StateChange(location.clone(), state.clone()),
-      Action::Message(message) => Action::Message(message.clone()),
+      Action::MessageTo(message) => Action::MessageTo(message.clone()),
     }
   }
 }
 
-pub struct Actions<DB: Database> {
+#[derive(Clone)]
+pub struct Actions<DB: Database>
+where
+  DB::Location: Clone,
+  DB::State: Clone, {
   actions: Vec<Action<DB>>,
 }
 
@@ -52,7 +79,7 @@ impl<DB: Database> Actions<DB> {
 
   pub fn add_action(&mut self, action: Action<DB>) { self.actions.push(action); }
 
-  pub fn get_actions(&self) -> &Vec<Action<DB>> { &self.actions }
+  pub fn into_vec(self) -> Vec<Action<DB>> { self.actions }
 }
 
 /// The message that is used in a [`StateMachine`] to continue or halt its
@@ -68,7 +95,7 @@ pub enum ControlFlow {
 
 /// Filter trait that can convert from unified events to specific event types
 pub trait Filter<DB: Database>: Send + Sync {
-  fn filter(&self, event: Action<DB>) -> bool;
+  fn filter(&self, event: Event<DB>) -> bool;
 }
 
 /// The [`Behavior`] trait is the lowest level functionality that will be used
@@ -92,7 +119,7 @@ where
   /// of events that can lead to actions being taken.
   async fn process_event(
     &mut self,
-    _event: Action<DB>,
+    _event: Event<DB>,
   ) -> Result<(ControlFlow, Option<Actions<DB>>), ArbiterCoreError> {
     Ok((ControlFlow::Halt, None))
   }
