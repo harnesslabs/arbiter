@@ -202,40 +202,37 @@ impl<DB: Database> World<DB> {
 
     let mut tasks = vec![];
 
-    for (agent_id, mut agent) in agents {
+    for (agent_id, agent) in agents {
+      let Agent { id, sender, mut stream, behaviors } = agent;
+
       debug!("Starting agent: {}", agent_id);
 
       // Collect behaviors with their filters and startup actions
       let mut behavior_data = Vec::new();
 
-      for (behavior_idx, mut behavior) in agent.behaviors.into_iter().enumerate() {
-        let behavior_id = format!("{}_{}", agent_id, behavior_idx);
-
+      for (behavior_idx, mut behavior) in behaviors.into_iter().enumerate() {
         // Call startup and get optional filter and actions
         let (filter, startup_actions) = match behavior.startup() {
           Ok((filter, actions)) => (filter, actions),
           Err(e) => {
-            error!("Startup failed for behavior {}: {:?}", behavior_id, e);
+            error!("Startup failed for behavior {}: {:?}", behavior_idx, e);
             continue;
           },
         };
 
         // Execute startup actions if provided
         if let Some(actions) = startup_actions {
-          if let Err(e) = agent.execute_actions(actions).await {
-            error!("Failed to execute startup actions for behavior {}: {:?}", behavior_id, e);
+          if let Err(e) = sender.execute_actions(actions).await {
+            error!("Failed to execute startup actions for behavior {}: {:?}", behavior_idx, e);
           }
         }
 
         // Store behavior data for event processing
-        behavior_data.push((behavior_id, behavior, filter));
+        behavior_data.push((behavior_idx, behavior, filter));
       }
 
       // Create a single task per agent to handle event streaming and routing
       if !behavior_data.is_empty() {
-        let sender = agent.sender.clone();
-        let mut stream = agent.stream;
-
         let agent_task = task::spawn(async move {
           use futures::StreamExt;
 
@@ -257,7 +254,7 @@ impl<DB: Database> World<DB> {
 
                       // Execute any final actions before halting
                       if let Some(actions) = actions {
-                        if let Err(e) = agent.execute_actions(actions).await {
+                        if let Err(e) = sender.execute_actions(actions).await {
                           error!(
                             "Failed to execute final actions for behavior {}: {:?}",
                             behavior_id, e
@@ -272,7 +269,7 @@ impl<DB: Database> World<DB> {
                     Ok((crate::machine::ControlFlow::Continue, actions)) => {
                       // Execute actions and continue processing
                       if let Some(actions) = actions {
-                        if let Err(e) = agent.execute_actions(actions).await {
+                        if let Err(e) = sender.execute_actions(actions).await {
                           error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
                         }
                       }

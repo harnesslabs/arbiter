@@ -48,6 +48,7 @@ pub struct Sender<DB: Database>
 where
   DB::Location: Clone,
   DB::State: Clone, {
+  id:                  String,
   state_change_sender: mpsc::Sender<(DB::Location, DB::State)>,
   message_sender:      broadcast::Sender<Message>,
 }
@@ -59,6 +60,7 @@ where
 {
   fn clone(&self) -> Self {
     Self {
+      id:                  self.id.clone(),
       state_change_sender: self.state_change_sender.clone(),
       message_sender:      self.message_sender.clone(),
     }
@@ -84,7 +86,9 @@ impl<DB: Database> Agent<DB> {
   pub fn builder(id: &str) -> AgentBuilder<DB> {
     AgentBuilder { id: id.to_owned(), behaviors: Vec::new() }
   }
+}
 
+impl<DB: Database> Sender<DB> {
   /// Execute a list of actions
   pub async fn execute_actions(
     &self,
@@ -93,7 +97,7 @@ impl<DB: Database> Agent<DB> {
     for action in actions.into_vec() {
       match action {
         Action::StateChange(location, state) => {
-          if let Err(e) = self.sender.state_change_sender.send((location, state)).await {
+          if let Err(e) = self.state_change_sender.send((location, state)).await {
             return Err(ArbiterCoreError::DatabaseError(format!(
               "Failed to send state change: {:?}",
               e
@@ -102,7 +106,7 @@ impl<DB: Database> Agent<DB> {
         },
         // TODO: We should automatically serialize here, but not doing it for now.
         Action::MessageTo(message) =>
-          if let Err(e) = self.sender.message_sender.send(Message {
+          if let Err(e) = self.message_sender.send(Message {
             from: self.id.clone(),
             to:   message.to,
             data: message.data,
@@ -184,6 +188,7 @@ where
       filters: HashMap::new(),
     };
     let sender = Sender {
+      id:                  self.id.clone(),
       state_change_sender: middleware.sender,
       message_sender:      messager.broadcast_sender,
     };
