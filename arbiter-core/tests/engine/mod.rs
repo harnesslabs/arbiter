@@ -116,3 +116,40 @@ async fn run_parallel() {
   logs_contain("Engaging behavior Some(\"agent1\")");
   logs_contain("Engaging behavior Some(\"agent2\")");
 }
+
+#[tokio::test]
+#[traced_test]
+async fn database_writer_test() {
+  let mut world = World::<HashMap<u8, u8>>::new("database_test_world");
+
+  let agent = Agent::builder("database_agent");
+  let behavior = DatabaseWriter::new(5); // Write 5 times then halt
+  world.add_agent(agent.with_behavior(behavior));
+
+  let final_world = world.run().await.unwrap();
+
+  // Check that the expected database writes were logged
+  logs_contain("DatabaseWriter startup: will write 5 times to database");
+  logs_contain("DatabaseWriter: Wrote key=0, value=0");
+  logs_contain("DatabaseWriter: Wrote key=1, value=10");
+  logs_contain("DatabaseWriter: Wrote key=2, value=20");
+  logs_contain("DatabaseWriter: Wrote key=3, value=30");
+  logs_contain("DatabaseWriter: Wrote key=4, value=40");
+  logs_contain("DatabaseWriter: Completed 5 writes, halting");
+
+  // Verify the database actually contains the expected values
+  let database = final_world.environment.database();
+
+  // Check that all 5 key-value pairs were written correctly
+  assert_eq!(*database.get(&0).unwrap(), 0);
+  assert_eq!(*database.get(&1).unwrap(), 10);
+  assert_eq!(*database.get(&2).unwrap(), 20);
+  assert_eq!(*database.get(&3).unwrap(), 30);
+  assert_eq!(*database.get(&4).unwrap(), 40);
+
+  // Verify the database has exactly 5 entries
+  assert_eq!(database.len(), 5);
+
+  println!("Final world ID: {}", final_world.id);
+  println!("Database contents: {:?}", database);
+}

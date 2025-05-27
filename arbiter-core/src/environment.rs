@@ -96,6 +96,8 @@ impl<DB: Database> InMemoryEnvironment<DB> {
   pub fn middleware(&self) -> Middleware<DB> {
     Middleware { sender: self.tx_sender.clone(), receiver: self.broadcast.subscribe() }
   }
+
+  pub fn database(&self) -> &DB { &self.inner }
 }
 
 #[derive(Debug)]
