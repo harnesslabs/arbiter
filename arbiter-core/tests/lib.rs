@@ -105,8 +105,7 @@ where
       Event::MessageFrom(message) =>
         if message.data == self.receive_data {
           println!("Message matches! Sending response: {}", self.send_data);
-          let message =
-            MessageTo { to: To::All, data: serde_json::to_string(&self.send_data).unwrap() };
+          let message = MessageTo { to: To::All, data: self.send_data.clone() };
           actions.add_action(Action::MessageTo(message));
           self.count += 1;
           println!("Count incremented to: {}", self.count);

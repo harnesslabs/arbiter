@@ -198,72 +198,51 @@ impl<DB: Database> World<DB> {
     let mut tasks = vec![];
 
     for (agent_id, agent) in agents {
-      let Agent { id, sender, mut stream, behaviors } = agent;
+      let Agent { id, sender, mut stream, mut behaviors } = agent;
 
       debug!("Starting agent: {}", id);
 
-      // Collect behaviors with their filters and startup actions
+      // Collect behaviors with filters and startup actions
       let mut behavior_data = Vec::new();
-      for (behavior_idx, mut behavior) in behaviors.into_iter().enumerate() {
-        let (behavior_idx, filter, startup_actions) = match behavior.startup() {
-          Ok((filter, actions)) => {
-            debug!("Startup finished for behavior {}", behavior_idx);
-            (behavior_idx, filter, actions)
-          },
-          Err(e) => {
-            error!("Startup failed for behavior {}: {:?}", behavior_idx, e);
-            continue;
-          },
-        };
 
-        if !startup_actions.is_empty() {
-          if let Err(e) = sender.execute_actions(startup_actions).await {
-            error!("Failed to execute startup actions for behavior {}: {:?}", behavior_idx, e);
-          }
-        }
-
-        if filter.is_some() {
-          behavior_data.push((behavior_idx, behavior, filter));
+      // TODO: We should add more debugging here eventually.
+      for mut behavior in behaviors {
+        match behavior.startup() {
+          Ok((filter, actions)) =>
+            if let Some(filter) = filter {
+              behavior_data.push((behavior, filter));
+              futures::executor::block_on(sender.execute_actions(actions));
+            },
+          Err(e) => panic!("a behavior failed to startup: {:?}", e),
         }
       }
 
-      // Create a single task per agent to handle event streaming and routing
+      // Only create a task if there are behaviors that want to process events
       if behavior_data.is_empty() {
-        // TODO: Set agent to halted.
+        debug!("Agent {} has no processing behaviors, not creating task", agent_id);
       } else {
         let agent_task = task::spawn(async move {
+          debug!("Agent {} has {} processing behaviors", agent_id, behavior_data.len());
+
           // Get the event stream
           let event_stream = stream.stream_mut();
 
-          if behavior_data.is_empty() {
-            debug!("No processing behaviors for agent, exiting event loop");
-            return;
-          }
-
           while let Some(event) = event_stream.next().await {
             // Process each behavior and retain only those that don't halt
-            behavior_data.retain_mut(|(behavior_id, behavior, filter)| {
-              // If filter is None, process no events; if Some(filter), check the filter
-              let should_process = match filter {
-                None => false, // No filter means process no events
-                Some(filter) => filter.filter(&event),
-              };
-
-              if should_process {
-                debug!("Event matched filter for behavior: {}", behavior_id);
+            behavior_data.retain_mut(|(behavior, filter)| {
+              // Check if this behavior's filter matches the event
+              if filter.filter(&event) {
+                debug!("Event matched filter for behavior");
 
                 // Process the event with this behavior
                 match futures::executor::block_on(behavior.process_event(event.clone())) {
                   Ok((crate::machine::ControlFlow::Halt, actions)) => {
-                    debug!("Behavior {} requested halt", behavior_id);
+                    debug!("Behavior requested halt");
 
                     // Execute any final actions before halting
                     if !actions.is_empty() {
                       if let Err(e) = futures::executor::block_on(sender.execute_actions(actions)) {
-                        error!(
-                          "Failed to execute final actions for behavior {}: {:?}",
-                          behavior_id, e
-                        );
+                        error!("Failed to execute final actions for behavior: {:?}", e);
                       }
                     }
 
@@ -274,14 +253,14 @@ impl<DB: Database> World<DB> {
                     // Execute actions and continue processing
                     if !actions.is_empty() {
                       if let Err(e) = futures::executor::block_on(sender.execute_actions(actions)) {
-                        error!("Failed to execute actions for behavior {}: {:?}", behavior_id, e);
+                        error!("Failed to execute actions for behavior: {:?}", e);
                       }
                     }
                     // Return true to keep this behavior
                     true
                   },
                   Err(e) => {
-                    error!("Error processing event for behavior {}: {:?}", behavior_id, e);
+                    error!("Error processing event for behavior: {:?}", e);
                     // Return true to keep this behavior despite the error
                     true
                   },
@@ -292,11 +271,11 @@ impl<DB: Database> World<DB> {
               }
             });
 
-            debug!("{} behaviors remaining after processing event", behavior_data.len());
+            debug!("{} behaviors remaining for agent {}", behavior_data.len(), agent_id);
 
             // If no behaviors remain, exit the event loop
             if behavior_data.is_empty() {
-              debug!("No behaviors remaining for agent, exiting event loop");
+              debug!("No behaviors remaining for agent {}, exiting event loop", agent_id);
               break;
             }
           }
