@@ -9,11 +9,9 @@ version = "0.1.0"
 serde = { workspace = true, features = [
     "derive",
 ] } # TODO: We should likely use a zero-copy serialization lib for speed.
-serde_json = { version = "1.0" } # TODO: This is just for testing really, we can use any serailization eventually.
 toml = "0.8"
 
 # Async
-async-stream.workspace = true
 async-trait.workspace = true
 futures.workspace = true
 tokio = { workspace = true, features = [
