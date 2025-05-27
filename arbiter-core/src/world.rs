@@ -26,10 +26,10 @@ pub struct World<DB: Database> {
   pub id: String,
 
   /// The agents in the world.
-  pub agents: Option<HashMap<String, Agent<DB>>>,
+  pub agents: HashMap<String, Agent<DB>>,
 
   /// The environment for the world.
-  pub environment: Option<InMemoryEnvironment<DB>>,
+  pub environment: InMemoryEnvironment<DB>,
 
   /// The messaging layer for the world.
   pub messager: Messager,
@@ -40,8 +40,8 @@ impl<DB: Database> World<DB> {
   pub fn new(id: &str) -> Self {
     Self {
       id:          id.to_owned(),
-      agents:      Some(HashMap::new()),
-      environment: Some(InMemoryEnvironment::new(10).unwrap()),
+      agents:      HashMap::new(),
+      environment: InMemoryEnvironment::new(10).unwrap(),
       messager:    Messager::new(),
     }
   }
@@ -157,11 +157,11 @@ impl<DB: Database> World<DB> {
     DB::Location: Send + Sync + 'static,
     DB::State: Send + Sync + 'static, {
     let id = agent_builder.id.clone();
-    let middleware = self.environment.as_ref().unwrap().middleware();
+    let middleware = self.environment.middleware();
     let messager = self.messager.for_agent(&id);
     let agent =
       agent_builder.build(middleware, messager).expect("Failed to build agent from AgentBuilder");
-    self.agents.as_mut().unwrap().insert(id.to_owned(), agent);
+    self.agents.insert(id.to_owned(), agent);
   }
 
   /// Executes all agents and their behaviors concurrently within the world.
@@ -178,26 +178,21 @@ impl<DB: Database> World<DB> {
   /// Returns an error if no agents are found in the world, possibly
   /// indicating that the world has already been run or that no agents
   /// were added prior to execution.
-  pub async fn run(&mut self) -> Result<(), ArbiterCoreError>
+  pub async fn run(self) -> Result<(), ArbiterCoreError>
   where
     DB: Database + 'static,
     DB::Location: Send + Sync + Clone + 'static,
     DB::State: Send + Sync + Clone + 'static, {
-    let agents = match self.agents.take() {
-      Some(agents) => agents,
-      None =>
-        return Err(ArbiterCoreError::WorldError(
-          "No agents found. Has the world already been ran?".to_owned(),
-        )),
-    };
+    // Get the agents
+    let agents = self.agents;
+    if agents.is_empty() {
+      return Err(ArbiterCoreError::WorldError(
+        "No agents found. Has the world already been ran?".to_owned(),
+      ));
+    }
 
-    // Start the environment task
-    let environment = self.environment.take().unwrap();
-    let _environment_task = task::spawn(async move {
-      if let Err(e) = environment.run().await {
-        error!("Environment task failed: {:?}", e);
-      }
-    });
+    // Start the environment
+    let shutdown_tx = self.environment.run().await.unwrap();
 
     let mut tasks = vec![];
 

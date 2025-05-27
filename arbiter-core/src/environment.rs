@@ -1,6 +1,7 @@
 use std::{collections::HashMap, hash::Hash};
 
 use futures::{stream, Stream};
+use tokio::sync::oneshot;
 
 use super::*;
 
@@ -61,25 +62,36 @@ pub struct InMemoryEnvironment<DB: Database> {
   tx_sender:   mpsc::Sender<(DB::Location, DB::State)>,
   tx_receiver: mpsc::Receiver<(DB::Location, DB::State)>,
   broadcast:   broadcast::Sender<(DB::Location, DB::State)>,
+  shutdown_tx: Option<oneshot::Sender<()>>,
+  shutdown_rx: oneshot::Receiver<()>,
 }
 
 impl<DB: Database> InMemoryEnvironment<DB> {
   pub fn new(capacity: usize) -> Result<Self, DB::Error> {
     let (tx_sender, tx_receiver) = mpsc::channel(capacity);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
     Ok(Self {
       inner: DB::new()?,
       tx_sender,
       tx_receiver,
       broadcast: broadcast::Sender::new(capacity),
+      shutdown_tx: Some(shutdown_tx),
+      shutdown_rx,
     })
   }
 
-  pub async fn run(mut self) -> Result<(), DB::Error> {
-    while let Some((k, v)) = self.tx_receiver.recv().await {
-      self.inner.set(k.clone(), v.clone()).unwrap();
-      self.broadcast.send((k, v));
-    }
-    Ok(())
+  pub async fn run(mut self) -> Result<oneshot::Sender<()>, DB::Error>
+  where
+    DB: 'static,
+    DB::Location: Send + Sync + 'static,
+    DB::State: Send + Sync + 'static, {
+    tokio::spawn(async move {
+      while let Some((k, v)) = self.tx_receiver.recv().await {
+        self.inner.set(k.clone(), v.clone()).unwrap();
+        self.broadcast.send((k, v));
+      }
+    });
+    Ok(self.shutdown_tx.take().unwrap())
   }
 
   pub fn middleware(&self) -> Middleware<DB> {
