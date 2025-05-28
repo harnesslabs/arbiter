@@ -1,11 +1,17 @@
+use std::collections::HashMap;
+
+use actix::prelude::*;
+
 use super::*;
 use crate::{
   environment::{Database, Middleware},
+  error::ArbiterCoreError,
   machine::{Action, Behavior, ConfigurableBehavior, Event, EventStream, Filter},
-  messager::{Message, MessageFrom, Messager},
+  messager::{Message, MessageFrom, MessageTo},
+  time::{SimulationTime, Tick, TimeSubscriber},
 };
 
-pub struct Agent<DB: Database> {
+pub struct Agent<DB: Database + 'static> {
   pub id: String,
 
   pub stream: Stream<DB>,
@@ -13,13 +19,96 @@ pub struct Agent<DB: Database> {
   pub sender: Sender<DB>,
 
   pub(crate) behaviors: Vec<Box<dyn Behavior<DB>>>,
+
+  pub(crate) time_subscriber: TimeSubscriber,
+
+  middleware: Middleware<DB>,
 }
 
-impl<DB: Database> Agent<DB> {
-  // TODO: Used to create from a config basically
+impl<DB: Database + 'static> Actor for Agent<DB>
+where
+  DB::Location: Send + Sync,
+  DB::State: Send + Sync,
+{
+  type Context = Context<Self>;
+
+  fn started(&mut self, _ctx: &mut Context<Self>) {
+    // Initialize agent with default time subscriber
+    self.time_subscriber = TimeSubscriber::new();
+  }
+}
+
+#[derive(Message)]
+#[rtype(result = "Result<(), ArbiterCoreError>")]
+pub struct ExecuteActions<DB: Database + 'static>(pub Vec<Action<DB>>);
+
+impl<DB: Database + 'static> Handler<ExecuteActions<DB>> for Agent<DB>
+where
+  DB::Location: Send + Sync,
+  DB::State: Send + Sync,
+{
+  type Result = Result<(), ArbiterCoreError>;
+
+  fn handle(&mut self, msg: ExecuteActions<DB>, _ctx: &mut Context<Self>) -> Self::Result {
+    for action in msg.0 {
+      match action {
+        Action::StateChange(location, state) => {
+          if let Err(e) = self.middleware.sender.try_send((location, state)) {
+            return Err(ArbiterCoreError::DatabaseError(format!(
+              "Failed to send state change: {:?}",
+              e
+            )));
+          }
+        },
+        Action::MessageTo(msg) => {
+          if let Err(e) = self.middleware.broadcast_sender.send(Message {
+            from: self.id.clone(),
+            to:   msg.to,
+            data: msg.data,
+          }) {
+            return Err(ArbiterCoreError::MessagerError(format!(
+              "Failed to send message: {:?}",
+              e
+            )));
+          }
+        },
+      }
+    }
+    Ok(())
+  }
+}
+
+// Implement Tick handling for time-aware behaviors
+impl<DB: Database + 'static> Handler<Tick> for Agent<DB>
+where
+  DB::Location: Send + Sync,
+  DB::State: Send + Sync,
+{
+  type Result = ();
+
+  fn handle(&mut self, msg: Tick, ctx: &mut Context<Self>) {
+    self.time_subscriber.last_tick = Some(msg.0.clone());
+
+    // Process behaviors with the new tick
+    for behavior in &mut self.behaviors {
+      if let Ok((_, actions)) = behavior.process_tick(msg.0.clone()) {
+        // Execute actions resulting from the tick
+        ctx.notify(ExecuteActions(actions.into_vec()));
+      }
+    }
+  }
+}
+
+impl<DB: Database + 'static> Agent<DB>
+where
+  DB::Location: Send + Sync,
+  DB::State: Send + Sync,
+{
   pub fn builder(id: &str) -> AgentBuilder<DB> {
     AgentBuilder { id: id.to_owned(), behaviors: Vec::new() }
   }
+
+  pub fn current_time(&self) -> Option<SimulationTime> { self.time_subscriber.last_tick.clone() }
 }
 
 pub struct AgentBuilder<DB: Database> {
@@ -30,8 +119,8 @@ pub struct AgentBuilder<DB: Database> {
 impl<DB> AgentBuilder<DB>
 where
   DB: Database + 'static,
-  DB::Location: Send + Sync + 'static,
-  DB::State: Send + Sync + 'static,
+  DB::Location: Send + Sync,
+  DB::State: Send + Sync,
 {
   pub fn with_behavior<B: Behavior<DB> + 'static>(mut self, behavior: B) -> Self {
     self.behaviors.push(Box::new(behavior));
@@ -46,24 +135,37 @@ where
     self
   }
 
-  pub fn build(
-    self,
-    middleware: Middleware<DB>,
-    messager: Messager,
-  ) -> Result<Agent<DB>, ArbiterCoreError> {
+  pub fn build(self, middleware: Middleware<DB>) -> Result<Agent<DB>, ArbiterCoreError> {
     Ok(Agent {
-      id:        self.id.clone(),
-      sender:    Sender {
+      id: self.id.clone(),
+      sender: Sender {
         id:                  self.id,
-        state_change_sender: middleware.sender,
-        message_sender:      messager.broadcast_sender,
+        state_change_sender: middleware.sender.clone(),
+        message_sender:      middleware.broadcast_sender.clone(),
       },
-      stream:    Stream {
-        stream:  create_unified_stream(middleware.receiver, messager.broadcast_receiver),
+      stream: Stream {
+        stream:  create_unified_stream(
+          middleware.receiver.resubscribe(),
+          middleware.broadcast_receiver.resubscribe(),
+        ),
         filters: HashMap::new(),
       },
       behaviors: self.behaviors,
+      time_subscriber: TimeSubscriber::new(),
+      middleware,
     })
+  }
+}
+
+pub struct Stream<DB: Database> {
+  stream:  EventStream<Event<DB>>,
+  filters: HashMap<String, Box<dyn Filter<DB>>>,
+}
+
+impl<DB: Database> Clone for Stream<DB> {
+  fn clone(&self) -> Self {
+    // Create a new empty stream since we can't clone the dynamic Stream
+    Self { stream: Box::pin(futures::stream::empty()), filters: HashMap::new() }
   }
 }
 
@@ -71,6 +173,16 @@ pub struct Sender<DB: Database> {
   id:                  String,
   state_change_sender: mpsc::Sender<(DB::Location, DB::State)>,
   message_sender:      broadcast::Sender<Message>,
+}
+
+impl<DB: Database> Clone for Sender<DB> {
+  fn clone(&self) -> Self {
+    Self {
+      id:                  self.id.clone(),
+      state_change_sender: self.state_change_sender.clone(),
+      message_sender:      self.message_sender.clone(),
+    }
+  }
 }
 
 impl<DB: Database> Sender<DB> {
@@ -89,8 +201,7 @@ impl<DB: Database> Sender<DB> {
             )));
           }
         },
-        // TODO: We should automatically serialize here, but not doing it for now.
-        Action::MessageTo(message) =>
+        Action::MessageTo(message) => {
           if let Err(e) = self.message_sender.send(Message {
             from: self.id.clone(),
             to:   message.to,
@@ -100,16 +211,12 @@ impl<DB: Database> Sender<DB> {
               "Failed to send message: {:?}",
               e
             )));
-          },
+          }
+        },
       }
     }
     Ok(())
   }
-}
-
-pub struct Stream<DB: Database> {
-  stream:  EventStream<Event<DB>>,
-  filters: HashMap<String, Box<dyn Filter<DB>>>,
 }
 
 impl<DB: Database> Stream<DB> {

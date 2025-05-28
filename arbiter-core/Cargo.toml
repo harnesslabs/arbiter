@@ -5,6 +5,12 @@ name    = "arbiter-core"
 version = "0.1.0"
 
 [dependencies]
+# Actor framework
+actix = "0.13"
+
+# Time management
+chrono = { version = "0.4", features = ["serde"] }
+
 # Serialization
 serde = { workspace = true, features = [
     "derive",
@@ -18,11 +24,13 @@ tokio = { workspace = true, features = [
     "macros",
     "sync",
     "rt",
+    "time",
 ] } # NOTE: Minimal requirements for release build. We should make sure we can build in both release and tests pass in debug. This set of features will also work with wasm.
 
 # Error and logging
 thiserror.workspace = true
 tracing.workspace   = true
+actix-rt = "2.10.0"
 
 [dev-dependencies]
 arbiter-macros = { workspace = true }

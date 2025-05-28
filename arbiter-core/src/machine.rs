@@ -3,10 +3,13 @@
 
 use std::pin::Pin;
 
+use actix::prelude::*;
+
 use super::*;
 use crate::{
   environment::Database,
   messager::{MessageFrom, MessageTo},
+  time::SimulationTime,
 };
 
 /// A type alias for a pinned, boxed stream of events.
@@ -30,6 +33,7 @@ pub enum Action<DB: Database> {
 pub enum Event<DB: Database> {
   StateChange(DB::Location, DB::State),
   MessageFrom(MessageFrom),
+  Tick(SimulationTime),
 }
 
 impl<DB: Database> Clone for Event<DB>
@@ -41,6 +45,7 @@ where
     match self {
       Self::StateChange(location, state) => Self::StateChange(location.clone(), state.clone()),
       Self::MessageFrom(message) => Self::MessageFrom(message.clone()),
+      Self::Tick(time) => Self::Tick(time.clone()),
     }
   }
 }
@@ -88,8 +93,8 @@ pub trait Filter<DB: Database>: Send {
 pub trait Behavior<DB>: Send
 where
   DB: Database + 'static,
-  DB::Location: Send + Sync + 'static,
-  DB::State: Send + Sync + 'static, {
+  DB::Location: Send + Sync,
+  DB::State: Send + Sync, {
   fn startup(&mut self) -> Result<(Option<Box<dyn Filter<DB>>>, Actions<DB>), ArbiterCoreError> {
     Ok((None, Actions::new()))
   }
@@ -98,7 +103,14 @@ where
     &mut self,
     _event: Event<DB>,
   ) -> Result<(ControlFlow, Actions<DB>), ArbiterCoreError> {
-    Ok((ControlFlow::Halt, Actions::new()))
+    Ok((ControlFlow::Continue, Actions::new()))
+  }
+
+  fn process_tick(
+    &mut self,
+    _time: SimulationTime,
+  ) -> Result<(ControlFlow, Actions<DB>), ArbiterCoreError> {
+    Ok((ControlFlow::Continue, Actions::new()))
   }
 }
 

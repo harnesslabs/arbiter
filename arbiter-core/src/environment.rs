@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
+use tokio::sync::{broadcast, mpsc};
+
 use super::*;
 use crate::machine::{Event, EventStream};
 
-pub trait Database: Sized + Send {
-  type Location: Clone;
-  type State: Clone;
+pub trait Database: Send + Sync + 'static + Sized {
+  type Location: Send + Sync + Clone + std::fmt::Debug + std::hash::Hash + Eq;
+  type State: Send + Sync + Clone + std::fmt::Debug + Eq;
   type Error: Debug;
   fn new() -> Result<Self, Self::Error>;
   fn get(&self, location: Self::Location) -> Result<&Self::State, Self::Error>;
@@ -19,8 +21,8 @@ pub trait Environment<DB: Database>: Sized {
 
 impl<K, V> Database for HashMap<K, V>
 where
-  K: Eq + Hash + Clone + Send,
-  V: Clone + Send,
+  K: Eq + Hash + Clone + Send + Sync + std::fmt::Debug + 'static,
+  V: Clone + Send + Sync + std::fmt::Debug + Eq + 'static,
 {
   type Error = Box<dyn std::error::Error>;
   type Location = K;
@@ -29,7 +31,7 @@ where
   fn new() -> Result<Self, Self::Error> { Ok(HashMap::new()) }
 
   fn get(&self, location: Self::Location) -> Result<&Self::State, Self::Error> {
-    Ok(self.get(&location).unwrap())
+    self.get(&location).ok_or_else(|| "Key not found".into())
   }
 
   fn set(&mut self, location: Self::Location, state: Self::State) -> Result<(), Self::Error> {
@@ -56,26 +58,31 @@ impl Database for () {
 
 #[derive(Debug)]
 pub struct InMemoryEnvironment<DB: Database> {
-  inner:       DB,
-  tx_sender:   mpsc::Sender<(DB::Location, DB::State)>,
-  tx_receiver: mpsc::Receiver<(DB::Location, DB::State)>,
-  broadcast:   broadcast::Sender<(DB::Location, DB::State)>,
+  inner:               DB,
+  tx_sender:           mpsc::Sender<(DB::Location, DB::State)>,
+  tx_receiver:         mpsc::Receiver<(DB::Location, DB::State)>,
+  pub state_broadcast: broadcast::Sender<(DB::Location, DB::State)>,
+  message_broadcast:   broadcast::Sender<crate::messager::Message>,
 }
 
 impl<DB: Database> InMemoryEnvironment<DB> {
   pub fn new(capacity: usize) -> Result<Self, DB::Error> {
     let (tx_sender, tx_receiver) = mpsc::channel(capacity);
-    Ok(Self {
-      inner: DB::new()?,
-      tx_sender,
-      tx_receiver,
-      broadcast: broadcast::Sender::new(capacity),
-    })
+    let (state_broadcast, _) = broadcast::channel(capacity);
+    let (message_broadcast, _) = broadcast::channel(capacity);
+
+    Ok(Self { inner: DB::new()?, tx_sender, tx_receiver, state_broadcast, message_broadcast })
   }
 
   pub fn with_database(database: DB, capacity: usize) -> Self {
     let (tx_sender, tx_receiver) = mpsc::channel(capacity);
-    Self { inner: database, tx_sender, tx_receiver, broadcast: broadcast::Sender::new(capacity) }
+    Self {
+      inner: database,
+      tx_sender,
+      tx_receiver,
+      state_broadcast: broadcast::Sender::new(capacity),
+      message_broadcast: broadcast::Sender::new(capacity),
+    }
   }
 
   pub fn run(mut self) -> Result<task::JoinHandle<DB>, DB::Error>
@@ -86,7 +93,7 @@ impl<DB: Database> InMemoryEnvironment<DB> {
     let task = tokio::spawn(async move {
       while let Some((k, v)) = self.tx_receiver.recv().await {
         self.inner.set(k.clone(), v.clone()).unwrap();
-        let _ = self.broadcast.send((k, v));
+        let _ = self.state_broadcast.send((k, v));
       }
       self.inner
     });
@@ -94,7 +101,12 @@ impl<DB: Database> InMemoryEnvironment<DB> {
   }
 
   pub fn middleware(&self) -> Middleware<DB> {
-    Middleware { sender: self.tx_sender.clone(), receiver: self.broadcast.subscribe() }
+    Middleware {
+      sender:             self.tx_sender.clone(),
+      receiver:           self.state_broadcast.subscribe(),
+      broadcast_sender:   self.message_broadcast.clone(),
+      broadcast_receiver: self.message_broadcast.subscribe(),
+    }
   }
 
   pub fn database(&self) -> &DB { &self.inner }
@@ -102,13 +114,20 @@ impl<DB: Database> InMemoryEnvironment<DB> {
 
 #[derive(Debug)]
 pub struct Middleware<DB: Database> {
-  pub sender:   mpsc::Sender<(DB::Location, DB::State)>,
-  pub receiver: broadcast::Receiver<(DB::Location, DB::State)>,
+  pub sender:             mpsc::Sender<(DB::Location, DB::State)>,
+  pub receiver:           broadcast::Receiver<(DB::Location, DB::State)>,
+  pub broadcast_sender:   broadcast::Sender<crate::messager::Message>,
+  pub broadcast_receiver: broadcast::Receiver<crate::messager::Message>,
 }
 
 impl<DB: Database> Clone for Middleware<DB> {
   fn clone(&self) -> Self {
-    Self { sender: self.sender.clone(), receiver: self.receiver.resubscribe() }
+    Self {
+      sender:             self.sender.clone(),
+      receiver:           self.receiver.resubscribe(),
+      broadcast_sender:   self.broadcast_sender.clone(),
+      broadcast_receiver: self.broadcast_receiver.resubscribe(),
+    }
   }
 }
 

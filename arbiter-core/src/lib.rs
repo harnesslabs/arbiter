@@ -6,7 +6,7 @@ use tokio::{
   sync::{broadcast, mpsc},
   task,
 };
-use tracing::{debug, error, info};
+use tracing::error;
 
 use crate::error::ArbiterCoreError;
 
@@ -15,5 +15,12 @@ pub mod environment;
 pub mod error;
 pub mod machine;
 pub mod messager;
+pub mod time;
 pub mod universe;
 pub mod world;
+
+// Re-export commonly used types
+pub use agent::Agent;
+pub use environment::Database;
+pub use machine::{Action, Behavior, Event};
+pub use time::{SimulationTime, Tick, TimeKeeper};

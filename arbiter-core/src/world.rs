@@ -1,11 +1,15 @@
-use std::{fs::File, io::Read};
+use std::{collections::HashMap, fs::File, io::Read};
+
+use tokio::sync::{broadcast, mpsc};
+use tracing::info;
 
 use super::*;
 use crate::{
   agent::{Agent, AgentBuilder},
-  environment::{Database, InMemoryEnvironment},
+  environment::{Database, Environment, InMemoryEnvironment, Middleware},
+  error::ArbiterCoreError,
   machine::ConfigurableBehavior,
-  messager::Messager,
+  messager::{Message, Messager},
 };
 
 pub struct World<DB: Database> {
@@ -25,7 +29,7 @@ where
     Self {
       id:          id.to_owned(),
       agents:      HashMap::new(),
-      environment: InMemoryEnvironment::new(1000).unwrap(),
+      environment: InMemoryEnvironment::new(32).unwrap(),
       messager:    Messager::new(),
     }
   }
@@ -62,135 +66,66 @@ where
   }
 
   pub fn add_agent(&mut self, agent_builder: AgentBuilder<DB>) {
-    let id = agent_builder.id.clone();
-    let middleware = self.environment.middleware();
-    let messager = self.messager.for_agent(&id);
-    let agent =
-      agent_builder.build(middleware, messager).expect("Failed to build agent from AgentBuilder");
-    self.agents.insert(id.to_owned(), agent);
+    let (state_tx, _) = mpsc::channel(32);
+    let (broadcast_tx, broadcast_rx) = broadcast::channel::<Message>(32);
+
+    let middleware = Middleware {
+      sender:             state_tx,
+      receiver:           self.environment.state_broadcast.subscribe(),
+      broadcast_sender:   broadcast_tx,
+      broadcast_receiver: broadcast_rx,
+    };
+
+    let agent = agent_builder.build(middleware).expect("Failed to build agent from AgentBuilder");
+    self.agents.insert(agent.id.clone(), agent);
   }
 
-  // TODO: Make this return a world, or env, or db or something that contains the sim data.
   pub async fn run(mut self) -> Result<Self, ArbiterCoreError> {
-    // Get the agents
-    let agents = std::mem::take(&mut self.agents);
-    if agents.is_empty() {
-      return Err(ArbiterCoreError::WorldError(
-        "No agents found. Has the world already been ran?".to_owned(),
-      ));
-    }
+    info!("Running world {}", self.id);
 
-    // Start the environment and get the shutdown sender
-    let environment_task = self.environment.run().unwrap();
+    let mut handles = Vec::new();
+    let mut agents = std::mem::take(&mut self.agents);
 
-    let mut tasks = vec![];
+    for (_, agent) in agents.drain() {
+      let id = agent.id.clone();
+      let sender = agent.sender.clone();
+      let mut behaviors = agent.behaviors;
+      let mut stream = agent.stream;
 
-    for (agent_id, agent) in agents {
-      let Agent { id, sender, mut stream, behaviors } = agent;
+      handles.push(tokio::spawn(async move {
+        info!("Starting agent {}", id);
 
-      debug!("Starting agent: {}", id);
+        for behavior in behaviors.iter_mut() {
+          let (filter, actions) = behavior.startup()?;
 
-      // Collect behaviors with filters and startup actions
-      let mut behavior_data = Vec::new();
+          if let Some(filter) = filter {
+            stream.add_filter(id.clone(), filter);
+          }
 
-      // TODO: We should add more debugging here eventually.
-      for mut behavior in behaviors {
-        match behavior.startup() {
-          Ok((filter, actions)) =>
-            if let Some(filter) = filter {
-              behavior_data.push((behavior, filter));
-              futures::executor::block_on(sender.execute_actions(actions));
-            },
-          Err(e) => panic!("a behavior failed to startup: {e:?}"),
+          sender.execute_actions(actions).await?;
         }
-      }
 
-      // Only create a task if there are behaviors that want to process events
-      if behavior_data.is_empty() {
-        debug!("Agent {} has no processing behaviors, not creating task", agent_id);
-      } else {
-        let agent_task = task::spawn(async move {
-          debug!("Agent {} has {} processing behaviors", agent_id, behavior_data.len());
+        while let Some(event) = stream.stream_mut().next().await {
+          for behavior in behaviors.iter_mut() {
+            let (control_flow, actions) = behavior.process_event(event.clone()).await?;
+            sender.execute_actions(actions).await?;
 
-          // Get the event stream
-          let event_stream = stream.stream_mut();
-
-          while let Some(event) = event_stream.next().await {
-            // Process each behavior and retain only those that don't halt
-            behavior_data.retain_mut(|(behavior, filter)| {
-              // Check if this behavior's filter matches the event
-              if filter.filter(&event) {
-                debug!("Event matched filter for behavior");
-
-                // Process the event with this behavior
-                match futures::executor::block_on(behavior.process_event(event.clone())) {
-                  Ok((crate::machine::ControlFlow::Halt, actions)) => {
-                    debug!("Behavior requested halt");
-
-                    // Execute any final actions before halting
-                    if !actions.is_empty() {
-                      if let Err(e) = futures::executor::block_on(sender.execute_actions(actions)) {
-                        error!("Failed to execute final actions for behavior: {:?}", e);
-                      }
-                    }
-
-                    // Return false to remove this behavior
-                    false
-                  },
-                  Ok((crate::machine::ControlFlow::Continue, actions)) => {
-                    // Execute actions and continue processing
-                    if !actions.is_empty() {
-                      if let Err(e) = futures::executor::block_on(sender.execute_actions(actions)) {
-                        error!("Failed to execute actions for behavior: {:?}", e);
-                      }
-                    }
-                    // Return true to keep this behavior
-                    true
-                  },
-                  Err(e) => {
-                    error!("Error processing event for behavior: {:?}", e);
-                    // Return true to keep this behavior despite the error
-                    true
-                  },
-                }
-              } else {
-                // Event didn't match filter, keep the behavior
-                true
-              }
-            });
-
-            debug!("{} behaviors remaining for agent {}", behavior_data.len(), agent_id);
-
-            // If no behaviors remain, exit the event loop
-            if behavior_data.is_empty() {
-              debug!("No behaviors remaining for agent {}, exiting event loop", agent_id);
+            if matches!(control_flow, crate::machine::ControlFlow::Halt) {
+              info!("Behavior halted for agent {}", id);
               break;
             }
           }
+        }
 
-          debug!("Event stream ended for agent: {}", agent_id);
-        });
-
-        tasks.push(agent_task);
-      }
+        Ok::<(), ArbiterCoreError>(())
+      }));
     }
 
-    // Await the completion of all tasks
-    join_all(tasks).await;
-
-    // Wait for the environment task to complete and get the final database
-    debug!("All agent tasks completed, waiting for environment task to complete");
-    match environment_task.await {
-      Ok(final_database) => {
-        // Reconstruct the environment with the final database state
-        self.environment = InMemoryEnvironment::with_database(final_database, 1000);
-      },
-      Err(e) => {
-        panic!("Environment task failed: {e:?}");
-      },
+    for handle in handles {
+      handle.await??;
     }
 
-    // Return the world with its final state
+    self.agents = agents;
     Ok(self)
   }
 }
