@@ -2,12 +2,23 @@ use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
   marker::PhantomData,
+  sync::{Arc, Mutex, MutexGuard},
 };
 
 use crate::{
   agent::{Agent, AgentContainer, AgentState},
   handler::{Handler, HandlerWrapper, MessageHandler},
 };
+
+pub struct Domain {
+  pub runtime: Arc<Mutex<Runtime>>,
+}
+
+impl Domain {
+  pub fn new() -> Self { Self { runtime: Arc::new(Mutex::new(Runtime::new())) } }
+
+  pub fn as_mut(&mut self) -> MutexGuard<'_, Runtime> { self.runtime.lock().unwrap() }
+}
 
 // Enhanced runtime with agent lifecycle management and mailboxes
 pub struct Runtime {

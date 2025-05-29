@@ -13,7 +13,7 @@ use std::{
 use arbiter_core::{
   agent::{Agent, AgentState},
   handler::Handler,
-  runtime::Runtime,
+  runtime::{Domain, Runtime},
 };
 use gloo_timers::future::TimeoutFuture;
 use js_sys;
@@ -77,17 +77,11 @@ pub struct UpdatePosition {
   pub position: Position,
 }
 
-/// Message to tick the simulation (move agents)
+/// Message to tick the simulation (move agents) - enriched with leader positions
 #[derive(Clone, Debug)]
-pub struct Tick;
-
-/// Message to get current position
-#[derive(Clone, Debug)]
-pub struct GetPosition;
-
-/// Reply containing position
-#[derive(Clone, Debug)]
-pub struct PositionReply(pub Position);
+pub struct Tick {
+  pub leader_positions: Vec<(String, Position)>,
+}
 
 /// Message to render all agents
 #[derive(Clone, Debug)]
@@ -95,7 +89,7 @@ pub struct RenderAll {
   pub agent_positions: Vec<(String, Position, AgentType)>,
 }
 
-/// Message to register an agent type with renderer
+/// Message to register an agent type with canvas
 #[derive(Clone, Debug)]
 pub struct RegisterAgentType {
   pub agent_id:   String,
@@ -110,192 +104,16 @@ pub struct LeaderPositions {
 
 // === AGENT IMPLEMENTATIONS ===
 
-/// Leader agent with random movement
+/// Canvas agent that manages world state and rendering
 #[derive(Clone)]
-pub struct LeaderAgent {
-  pub id:                  String,
-  pub position:            Position,
-  pub canvas_width:        f64,
-  pub canvas_height:       f64,
-  pub speed:               f64,
-  pub current_direction:   f64,
-  pub direction_steps:     u32,
-  pub max_direction_steps: u32,
-}
-
-impl LeaderAgent {
-  pub fn new(id: String, canvas_width: f64, canvas_height: f64, x: f64, y: f64) -> Self {
-    Self {
-      id,
-      position: Position::new(x, y),
-      canvas_width,
-      canvas_height,
-      speed: 3.0,
-      current_direction: random() * 2.0 * std::f64::consts::PI,
-      direction_steps: 0,
-      max_direction_steps: (30 + (random() * 50.0) as u32),
-    }
-  }
-
-  fn update_direction(&mut self) {
-    if self.direction_steps >= self.max_direction_steps {
-      let direction_change = (random() - 0.5) * std::f64::consts::PI;
-      self.current_direction += direction_change;
-      self.current_direction = self.current_direction % (2.0 * std::f64::consts::PI);
-      self.direction_steps = 0;
-      self.max_direction_steps = 30 + (random() * 70.0) as u32;
-    }
-  }
-
-  fn move_agent(&mut self) {
-    self.update_direction();
-
-    let dx = self.current_direction.cos() * self.speed;
-    let dy = self.current_direction.sin() * self.speed;
-
-    let mut new_pos = Position::new(self.position.x + dx, self.position.y + dy);
-
-    // Bounce off walls
-    let margin = 20.0;
-    if new_pos.x < margin || new_pos.x > self.canvas_width - margin {
-      self.current_direction = std::f64::consts::PI - self.current_direction;
-      new_pos.x = new_pos.x.max(margin).min(self.canvas_width - margin);
-      self.direction_steps = 0;
-    }
-
-    if new_pos.y < margin || new_pos.y > self.canvas_height - margin {
-      self.current_direction = -self.current_direction;
-      new_pos.y = new_pos.y.max(margin).min(self.canvas_height - margin);
-      self.direction_steps = 0;
-    }
-
-    self.position = new_pos;
-    self.direction_steps += 1;
-  }
-}
-
-impl Agent for LeaderAgent {
-  fn on_start(&mut self) { console::log_1(&format!("Leader {} started", self.id).into()); }
-
-  fn on_pause(&mut self) { console::log_1(&format!("Leader {} paused", self.id).into()); }
-
-  fn on_stop(&mut self) { console::log_1(&format!("Leader {} stopped", self.id).into()); }
-
-  fn on_resume(&mut self) { console::log_1(&format!("Leader {} resumed", self.id).into()); }
-}
-
-impl Handler<Tick> for LeaderAgent {
-  type Reply = UpdatePosition;
-
-  fn handle(&mut self, _message: Tick) -> Self::Reply {
-    self.move_agent();
-    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
-  }
-}
-
-impl Handler<GetPosition> for LeaderAgent {
-  type Reply = PositionReply;
-
-  fn handle(&mut self, _message: GetPosition) -> Self::Reply {
-    PositionReply(self.position.clone())
-  }
-}
-
-/// Follower agent that follows leaders
-#[derive(Clone)]
-pub struct FollowerAgent {
-  pub id:               String,
-  pub position:         Position,
-  pub speed:            f64,
-  pub follow_distance:  f64,
-  pub target_leader_id: Option<String>,
-}
-
-impl FollowerAgent {
-  pub fn new(id: String, x: f64, y: f64) -> Self {
-    Self {
-      id,
-      position: Position::new(x, y),
-      speed: 2.0,
-      follow_distance: 40.0,
-      target_leader_id: None,
-    }
-  }
-
-  fn find_closest_leader(&mut self, leader_positions: &[(String, Position)]) {
-    if leader_positions.is_empty() {
-      self.target_leader_id = None;
-      return;
-    }
-
-    let mut closest_distance = f64::INFINITY;
-    let mut closest_leader = None;
-
-    for (leader_id, leader_pos) in leader_positions {
-      let distance = self.position.distance_to(leader_pos);
-      if distance < closest_distance {
-        closest_distance = distance;
-        closest_leader = Some(leader_id.clone());
-      }
-    }
-
-    self.target_leader_id = closest_leader;
-  }
-
-  fn follow_target(&mut self, leader_positions: &[(String, Position)]) {
-    if let Some(target_id) = &self.target_leader_id {
-      for (leader_id, leader_pos) in leader_positions {
-        if leader_id == target_id {
-          let distance = self.position.distance_to(leader_pos);
-          if distance > self.follow_distance {
-            self.position.move_towards(leader_pos, self.speed);
-          }
-          break;
-        }
-      }
-    }
-  }
-}
-
-impl Agent for FollowerAgent {
-  fn on_start(&mut self) { console::log_1(&format!("Follower {} started", self.id).into()); }
-
-  fn on_pause(&mut self) { console::log_1(&format!("Follower {} paused", self.id).into()); }
-
-  fn on_stop(&mut self) { console::log_1(&format!("Follower {} stopped", self.id).into()); }
-
-  fn on_resume(&mut self) { console::log_1(&format!("Follower {} resumed", self.id).into()); }
-}
-
-impl Handler<LeaderPositions> for FollowerAgent {
-  type Reply = UpdatePosition;
-
-  fn handle(&mut self, message: LeaderPositions) -> Self::Reply {
-    self.find_closest_leader(&message.positions);
-    self.follow_target(&message.positions);
-
-    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
-  }
-}
-
-impl Handler<GetPosition> for FollowerAgent {
-  type Reply = PositionReply;
-
-  fn handle(&mut self, _message: GetPosition) -> Self::Reply {
-    PositionReply(self.position.clone())
-  }
-}
-
-/// Renderer agent that manages canvas drawing
-#[derive(Clone)]
-pub struct RendererAgent {
+pub struct Canvas {
   pub canvas_width:    f64,
   pub canvas_height:   f64,
   pub agent_positions: HashMap<String, Position>,
   pub agent_types:     HashMap<String, AgentType>,
 }
 
-impl RendererAgent {
+impl Canvas {
   pub fn new(canvas_width: f64, canvas_height: f64) -> Self {
     Self {
       canvas_width,
@@ -358,19 +176,33 @@ impl RendererAgent {
         .unwrap();
     }
   }
+
+  fn get_leader_positions(&self) -> Vec<(String, Position)> {
+    self
+      .agent_positions
+      .iter()
+      .filter_map(|(id, pos)| {
+        if let Some(AgentType::Leader) = self.agent_types.get(id) {
+          Some((id.clone(), pos.clone()))
+        } else {
+          None
+        }
+      })
+      .collect()
+  }
 }
 
-impl Agent for RendererAgent {
-  fn on_start(&mut self) { console::log_1(&"Renderer started".into()); }
+impl Agent for Canvas {
+  fn on_start(&mut self) { console::log_1(&"Canvas started".into()); }
 
-  fn on_pause(&mut self) { console::log_1(&"Renderer paused".into()); }
+  fn on_pause(&mut self) { console::log_1(&"Canvas paused".into()); }
 
-  fn on_stop(&mut self) { console::log_1(&"Renderer stopped".into()); }
+  fn on_stop(&mut self) { console::log_1(&"Canvas stopped".into()); }
 
-  fn on_resume(&mut self) { console::log_1(&"Renderer resumed".into()); }
+  fn on_resume(&mut self) { console::log_1(&"Canvas resumed".into()); }
 }
 
-impl Handler<UpdatePosition> for RendererAgent {
+impl Handler<UpdatePosition> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
@@ -379,7 +211,7 @@ impl Handler<UpdatePosition> for RendererAgent {
   }
 }
 
-impl Handler<RegisterAgentType> for RendererAgent {
+impl Handler<RegisterAgentType> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: RegisterAgentType) -> Self::Reply {
@@ -388,6 +220,16 @@ impl Handler<RegisterAgentType> for RendererAgent {
     );
     self.agent_types.insert(message.agent_id, message.agent_type);
     self.render();
+  }
+}
+
+impl Handler<Tick> for Canvas {
+  type Reply = Tick;
+
+  fn handle(&mut self, _message: Tick) -> Self::Reply {
+    let leader_positions = self.get_leader_positions();
+    thread::sleep(Duration::from_millis(10));
+    Tick { leader_positions }
   }
 }
 
@@ -445,12 +287,11 @@ impl SimulationStats {
 /// Main simulation structure using arbiter-core
 #[wasm_bindgen]
 pub struct LeaderFollowerSimulation {
-  canvas_width:    f64,
-  canvas_height:   f64,
-  next_id:         u32,
-  runtime:         Arc<Mutex<Runtime>>,
-  agents:          HashMap<String, AgentType>,
-  agent_positions: Arc<Mutex<HashMap<String, Position>>>, // Shared position tracking
+  canvas_width:  f64,
+  canvas_height: f64,
+  next_id:       u32,
+  domain:        Domain,
+  agents:        HashMap<String, AgentType>,
 }
 
 #[wasm_bindgen]
@@ -460,24 +301,26 @@ impl LeaderFollowerSimulation {
   pub fn new(canvas_width: f64, canvas_height: f64) -> Self {
     console_error_panic_hook::set_once();
 
-    let mut runtime = Runtime::new().with_max_iterations(1000);
+    let domain = Domain::new();
 
-    // Create and register renderer
-    let renderer = RendererAgent::new(canvas_width, canvas_height);
-    runtime.add_and_start_agent("renderer".to_string(), renderer.clone());
+    // Create and register core agents
+    let canvas = Canvas::new(canvas_width, canvas_height);
 
-    // Register renderer as handler for the messages it should receive
-    runtime.register_handler::<RendererAgent, RegisterAgentType>(renderer.clone());
-    runtime.register_handler::<RendererAgent, UpdatePosition>(renderer);
+    let mut runtime = domain.as_mut();
 
-    Self {
-      canvas_width,
-      canvas_height,
-      next_id: 0,
-      runtime: Arc::new(Mutex::new(runtime)),
-      agents: HashMap::new(),
-      agent_positions: Arc::new(Mutex::new(HashMap::new())),
-    }
+    // Add and start core agents
+    runtime.add_and_start_agent("canvas".to_string(), canvas.clone());
+
+    // Register handlers for core agents
+    runtime.register_handler::<Canvas, Tick>(canvas.clone());
+    runtime.register_handler::<Canvas, UpdatePosition>(canvas.clone());
+    runtime.register_handler::<Canvas, RegisterAgentType>(canvas);
+
+    runtime.send_message(Tick { leader_positions: Vec::new() });
+
+    runtime.run();
+
+    Self { canvas_width, canvas_height, next_id: 0, domain, agents: HashMap::new() }
   }
 
   /// Add an agent at the specified position
@@ -488,29 +331,26 @@ impl LeaderFollowerSimulation {
 
     let agent_type = if is_leader { AgentType::Leader } else { AgentType::Follower };
 
-    let mut runtime = self.runtime.lock().unwrap();
+    let mut runtime = self.domain.as_mut();
 
     let success = match &agent_type {
       AgentType::Leader => {
-        let leader =
-          LeaderAgent::new(agent_id.clone(), self.canvas_width, self.canvas_height, x, y);
+        let leader = Leader::new(agent_id.clone(), self.canvas_width, self.canvas_height, x, y);
 
         // Register the leader and its handlers
         let registered = runtime.add_and_start_agent(agent_id.clone(), leader.clone());
         if registered {
-          runtime.register_handler::<LeaderAgent, Tick>(leader.clone());
-          runtime.register_handler::<LeaderAgent, GetPosition>(leader);
+          runtime.register_handler::<Leader, Tick>(leader);
         }
         registered
       },
       AgentType::Follower => {
-        let follower = FollowerAgent::new(agent_id.clone(), x, y);
+        let follower = Follower::new(agent_id.clone(), x, y);
 
         // Register the follower and its handlers
         let registered = runtime.add_and_start_agent(agent_id.clone(), follower.clone());
         if registered {
-          runtime.register_handler::<FollowerAgent, LeaderPositions>(follower.clone());
-          runtime.register_handler::<FollowerAgent, GetPosition>(follower);
+          runtime.register_handler::<Follower, Tick>(follower);
         }
         registered
       },
@@ -531,119 +371,15 @@ impl LeaderFollowerSimulation {
       runtime.run();
 
       self.agents.insert(agent_id.clone(), agent_type.clone());
-      {
-        let mut positions = self.agent_positions.lock().unwrap();
-        positions.insert(agent_id.clone(), Position::new(x, y));
-      }
       console::log_1(
         &format!("Added agent {} ({:?}) at ({:.1}, {:.1})", agent_id, agent_type, x, y).into(),
       );
-
-      // Drop the runtime lock before starting animation
-      drop(runtime);
-
-      // Start individual agent animation immediately
-      self.start_agent_animation(agent_id.clone(), agent_type);
 
       agent_id
     } else {
       console::log_1(&format!("Failed to add agent {}", agent_id).into());
       String::new()
     }
-  }
-
-  /// Start animation for a specific agent
-  fn start_agent_animation(&mut self, agent_id: String, agent_type: AgentType) {
-    let runtime_clone = Arc::clone(&self.runtime);
-    let agent_positions_clone = Arc::clone(&self.agent_positions);
-
-    console::log_1(&format!("Starting animation for agent {} ({:?})", agent_id, agent_type).into());
-
-    spawn_local(async move {
-      loop {
-        // Check if agent still exists and is running
-        let agent_state = {
-          let runtime = runtime_clone.lock().unwrap();
-          runtime.get_agent_state(&agent_id)
-        }; // Drop the runtime lock immediately
-
-        let should_continue = match agent_state {
-          Some(AgentState::Running) => {
-            console::log_1(&format!("Agent {} is running", agent_id).into());
-            true
-          },
-          Some(AgentState::Paused) => {
-            console::log_1(&format!("Agent {} is paused, sleeping...", agent_id).into());
-            // Sleep longer when paused, then continue loop
-            TimeoutFuture::new(200).await;
-            continue;
-          },
-          Some(AgentState::Stopped) => {
-            console::log_1(&format!("Agent {} is stopped, exiting animation", agent_id).into());
-            false
-          },
-          None => {
-            console::log_1(&format!("Agent {} not found, exiting animation", agent_id).into());
-            false
-          },
-        };
-
-        if !should_continue {
-          break;
-        }
-
-        match agent_type {
-          AgentType::Leader => {
-            // Update leader position
-            let current_time = js_sys::Date::now();
-            let time = current_time / 1000.0;
-
-            let new_x = 400.0 + (time * 0.5 + agent_id.len() as f64).sin() * 150.0;
-            let new_y = 300.0 + (time * 0.3 + agent_id.len() as f64).cos() * 100.0;
-            let new_x = new_x.max(20.0).min(780.0);
-            let new_y = new_y.max(20.0).min(580.0);
-
-            let new_pos = Position::new(new_x, new_y);
-
-            // Update position tracking (separate mutex lock)
-            {
-              let mut positions = agent_positions_clone.lock().unwrap();
-              positions.insert(agent_id.clone(), new_pos.clone());
-            } // Drop positions lock
-
-            // Send position update to renderer (separate mutex lock)
-            {
-              let mut runtime = runtime_clone.lock().unwrap();
-              runtime
-                .send_message(UpdatePosition { agent_id: agent_id.clone(), position: new_pos });
-              runtime.run();
-            } // Drop runtime lock
-          },
-          AgentType::Follower => {
-            // For followers, we need to get leader positions and follow them
-            let leader_positions = {
-              let positions = agent_positions_clone.lock().unwrap();
-              positions
-                .iter()
-                .filter(|(id, _)| id.starts_with("agent_") && **id != agent_id)
-                .map(|(id, pos)| (id.clone(), pos.clone()))
-                .collect::<Vec<_>>()
-            }; // Drop positions lock
-
-            if !leader_positions.is_empty() {
-              let mut runtime = runtime_clone.lock().unwrap();
-              runtime.send_message(LeaderPositions { positions: leader_positions });
-              runtime.run();
-            } // Drop runtime lock
-          },
-        }
-
-        // Wait before next frame (~20 FPS)
-        TimeoutFuture::new(50).await;
-      }
-
-      console::log_1(&format!("Animation stopped for agent {}", agent_id).into());
-    });
   }
 
   /// Start a specific agent
@@ -713,72 +449,12 @@ impl LeaderFollowerSimulation {
       let success = runtime.remove_agent(agent_id);
       if success {
         self.agents.remove(agent_id);
-        {
-          if let Ok(mut positions) = self.agent_positions.try_lock() {
-            positions.remove(agent_id);
-          }
-        }
         console::log_1(&format!("Removed agent {}", agent_id).into());
       }
       success
     } else {
       console::log_1(&format!("Could not acquire lock to remove agent {}", agent_id).into());
       false
-    }
-  }
-
-  /// Start all agents
-  #[wasm_bindgen]
-  pub fn start_all_agents(&mut self) {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      for agent_id in self.agents.keys() {
-        runtime.start_agent(agent_id);
-      }
-      console::log_1(&"Started all agents".into());
-    } else {
-      console::log_1(&"Could not acquire lock to start all agents".into());
-    }
-  }
-
-  /// Pause all agents
-  #[wasm_bindgen]
-  pub fn pause_all_agents(&mut self) {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      for agent_id in self.agents.keys() {
-        runtime.pause_agent(agent_id);
-      }
-      // Don't pause renderer - it should always be active
-      console::log_1(&"Paused all agents".into());
-    } else {
-      console::log_1(&"Could not acquire lock to pause all agents".into());
-    }
-  }
-
-  /// Resume all agents  
-  #[wasm_bindgen]
-  pub fn resume_all_agents(&mut self) {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      for agent_id in self.agents.keys() {
-        runtime.resume_agent(agent_id);
-      }
-      // Don't need to resume renderer - it was never paused
-      console::log_1(&"Resumed all agents".into());
-    } else {
-      console::log_1(&"Could not acquire lock to resume all agents".into());
-    }
-  }
-
-  /// Stop all agents
-  #[wasm_bindgen]
-  pub fn stop_all_agents(&mut self) {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      for agent_id in self.agents.keys() {
-        runtime.stop_agent(agent_id);
-      }
-      // Don't stop renderer - it should always be active
-      console::log_1(&"Stopped all agents".into());
-    } else {
-      console::log_1(&"Could not acquire lock to stop all agents".into());
     }
   }
 
@@ -791,11 +467,6 @@ impl LeaderFollowerSimulation {
       }
 
       self.agents.clear();
-      {
-        if let Ok(mut positions) = self.agent_positions.try_lock() {
-          positions.clear();
-        }
-      }
       console::log_1(&"Cleared all agents".into());
     } else {
       console::log_1(&"Could not acquire lock to clear agents".into());
@@ -844,7 +515,7 @@ impl LeaderFollowerSimulation {
   #[wasm_bindgen]
   pub fn is_running(&self) -> bool {
     if let Ok(runtime) = self.runtime.try_lock() {
-      !self.agents.is_empty() && runtime.get_agent_state("renderer").is_some()
+      !self.agents.is_empty() && runtime.get_agent_state("canvas").is_some()
     } else {
       false
     }
@@ -905,4 +576,165 @@ pub fn main() {
   console::log_1(
     &"🦀 Leader-Follower Simulation WASM module initialized with Arbiter-Core!".into(),
   );
+}
+
+/// Simple leader agent that moves randomly
+#[derive(Clone)]
+pub struct Leader {
+  pub id:                  String,
+  pub position:            Position,
+  pub canvas_width:        f64,
+  pub canvas_height:       f64,
+  pub speed:               f64,
+  pub current_direction:   f64,
+  pub direction_steps:     u32,
+  pub max_direction_steps: u32,
+}
+
+impl Leader {
+  pub fn new(id: String, canvas_width: f64, canvas_height: f64, x: f64, y: f64) -> Self {
+    Self {
+      id,
+      position: Position::new(x, y),
+      canvas_width,
+      canvas_height,
+      speed: 3.0,
+      current_direction: random() * 2.0 * std::f64::consts::PI,
+      direction_steps: 0,
+      max_direction_steps: (30 + (random() * 50.0) as u32),
+    }
+  }
+
+  fn update_direction(&mut self) {
+    if self.direction_steps >= self.max_direction_steps {
+      let direction_change = (random() - 0.5) * std::f64::consts::PI;
+      self.current_direction += direction_change;
+      self.current_direction = self.current_direction % (2.0 * std::f64::consts::PI);
+      self.direction_steps = 0;
+      self.max_direction_steps = 30 + (random() * 70.0) as u32;
+    }
+  }
+
+  fn move_agent(&mut self) {
+    self.update_direction();
+
+    let dx = self.current_direction.cos() * self.speed;
+    let dy = self.current_direction.sin() * self.speed;
+
+    let mut new_pos = Position::new(self.position.x + dx, self.position.y + dy);
+
+    // Bounce off walls
+    let margin = 20.0;
+    if new_pos.x < margin || new_pos.x > self.canvas_width - margin {
+      self.current_direction = std::f64::consts::PI - self.current_direction;
+      new_pos.x = new_pos.x.max(margin).min(self.canvas_width - margin);
+      self.direction_steps = 0;
+    }
+
+    if new_pos.y < margin || new_pos.y > self.canvas_height - margin {
+      self.current_direction = -self.current_direction;
+      new_pos.y = new_pos.y.max(margin).min(self.canvas_height - margin);
+      self.direction_steps = 0;
+    }
+
+    self.position = new_pos;
+    self.direction_steps += 1;
+  }
+}
+
+impl Agent for Leader {
+  fn on_start(&mut self) { console::log_1(&format!("Leader {} started", self.id).into()); }
+
+  fn on_pause(&mut self) { console::log_1(&format!("Leader {} paused", self.id).into()); }
+
+  fn on_stop(&mut self) { console::log_1(&format!("Leader {} stopped", self.id).into()); }
+
+  fn on_resume(&mut self) { console::log_1(&format!("Leader {} resumed", self.id).into()); }
+}
+
+impl Handler<Tick> for Leader {
+  type Reply = UpdatePosition;
+
+  fn handle(&mut self, _message: Tick) -> Self::Reply {
+    self.move_agent();
+    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
+  }
+}
+
+/// Simple follower agent that follows the closest leader
+#[derive(Clone)]
+pub struct Follower {
+  pub id:               String,
+  pub position:         Position,
+  pub speed:            f64,
+  pub follow_distance:  f64,
+  pub target_leader_id: Option<String>,
+}
+
+impl Follower {
+  pub fn new(id: String, x: f64, y: f64) -> Self {
+    Self {
+      id,
+      position: Position::new(x, y),
+      speed: 2.0,
+      follow_distance: 40.0,
+      target_leader_id: None,
+    }
+  }
+
+  fn find_closest_leader(&mut self, leader_positions: &[(String, Position)]) {
+    if leader_positions.is_empty() {
+      self.target_leader_id = None;
+      return;
+    }
+
+    let mut closest_distance = f64::INFINITY;
+    let mut closest_leader = None;
+
+    for (leader_id, leader_pos) in leader_positions {
+      let distance = self.position.distance_to(leader_pos);
+      if distance < closest_distance {
+        closest_distance = distance;
+        closest_leader = Some(leader_id.clone());
+      }
+    }
+
+    self.target_leader_id = closest_leader;
+  }
+
+  fn follow_target(&mut self, leader_positions: &[(String, Position)]) {
+    if let Some(target_id) = &self.target_leader_id {
+      for (leader_id, leader_pos) in leader_positions {
+        if leader_id == target_id {
+          let distance = self.position.distance_to(leader_pos);
+          if distance > self.follow_distance {
+            self.position.move_towards(leader_pos, self.speed);
+          }
+          break;
+        }
+      }
+    }
+  }
+}
+
+impl Agent for Follower {
+  fn on_start(&mut self) { console::log_1(&format!("Follower {} started", self.id).into()); }
+
+  fn on_pause(&mut self) { console::log_1(&format!("Follower {} paused", self.id).into()); }
+
+  fn on_stop(&mut self) { console::log_1(&format!("Follower {} stopped", self.id).into()); }
+
+  fn on_resume(&mut self) { console::log_1(&format!("Follower {} resumed", self.id).into()); }
+}
+
+impl Handler<Tick> for Follower {
+  type Reply = UpdatePosition;
+
+  fn handle(&mut self, message: Tick) -> Self::Reply {
+    // Use the leader positions from the tick message
+    self.find_closest_leader(&message.leader_positions);
+    self.follow_target(&message.leader_positions);
+
+    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
+  }
 }
