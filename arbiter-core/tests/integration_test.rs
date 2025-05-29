@@ -184,3 +184,150 @@ fn test_context_simple() {
   // result should be ProcessedData(14)
   println!("Context processed message and returned result");
 }
+
+#[test]
+fn test_agent_containers_with_runtime() {
+  println!("\n=== Testing Multiple AgentContainers with Runtime ===");
+
+  // Create multi-capability agents
+  #[derive(Clone)]
+  struct MultiProcessorAgent {
+    name:            String,
+    processed_count: i32,
+  }
+
+  impl Agent for MultiProcessorAgent {}
+
+  // MultiProcessor handles StartProcessing and ValidatedData
+  impl Handler<StartProcessing> for MultiProcessorAgent {
+    type Reply = ProcessedData;
+
+    fn handle(&mut self, message: StartProcessing) -> Self::Reply {
+      self.processed_count += 1;
+      let processed_value = message.0 * 2;
+      println!(
+        "{}: Processing {} -> {} (count: {})",
+        self.name, message.0, processed_value, self.processed_count
+      );
+      ProcessedData(processed_value)
+    }
+  }
+
+  impl Handler<ValidatedData> for MultiProcessorAgent {
+    type Reply = FinalResult;
+
+    fn handle(&mut self, message: ValidatedData) -> Self::Reply {
+      let final_value = message.0 * 3;
+      println!("{}: Finalizing {} -> {}", self.name, message.0, final_value);
+      FinalResult(final_value)
+    }
+  }
+
+  #[derive(Clone)]
+  struct MultiValidatorAgent {
+    name:             String,
+    validation_bonus: i32,
+    log_entries:      Vec<String>,
+  }
+
+  impl Agent for MultiValidatorAgent {}
+
+  // MultiValidator handles ProcessedData and FinalResult
+  impl Handler<ProcessedData> for MultiValidatorAgent {
+    type Reply = ValidatedData;
+
+    fn handle(&mut self, message: ProcessedData) -> Self::Reply {
+      let validated_value = message.0 + self.validation_bonus;
+      println!(
+        "{}: Validating {} -> {} (bonus: {})",
+        self.name, message.0, validated_value, self.validation_bonus
+      );
+      ValidatedData(validated_value)
+    }
+  }
+
+  impl Handler<FinalResult> for MultiValidatorAgent {
+    type Reply = ();
+
+    // Ends the chain
+
+    fn handle(&mut self, message: FinalResult) -> Self::Reply {
+      let log_entry = format!("Final result logged: {}", message.0);
+      println!("{}: {}", self.name, log_entry);
+      self.log_entries.push(log_entry);
+    }
+  }
+
+  // Create agent containers with multiple handlers each
+  let processor =
+    MultiProcessorAgent { name: "MultiProcessor".to_string(), processed_count: 0 };
+
+  let validator = MultiValidatorAgent {
+    name:             "MultiValidator".to_string(),
+    validation_bonus: 5,
+    log_entries:      Vec::new(),
+  };
+
+  let mut processor_container = AgentContainer::new(processor);
+  processor_container.register_handler::<StartProcessing>();
+  processor_container.register_handler::<ValidatedData>();
+
+  let mut validator_container = AgentContainer::new(validator);
+  validator_container.register_handler::<ProcessedData>();
+  validator_container.register_handler::<FinalResult>();
+
+  // Set up runtime and register our containers' handlers
+  let mut runtime = Runtime::new();
+
+  // Extract agents from containers to register as handlers in runtime
+  // (This shows how containers can be used standalone or integrated with runtime)
+
+  // Register MultiProcessor for both message types it handles
+  runtime.register_handler::<MultiProcessorAgent, StartProcessing>(MultiProcessorAgent {
+    name:            "RuntimeProcessor1".to_string(),
+    processed_count: 0,
+  });
+  runtime.register_handler::<MultiProcessorAgent, ValidatedData>(MultiProcessorAgent {
+    name:            "RuntimeProcessor2".to_string(),
+    processed_count: 0,
+  });
+
+  // Register MultiValidator for both message types it handles
+  runtime.register_handler::<MultiValidatorAgent, ProcessedData>(MultiValidatorAgent {
+    name:             "RuntimeValidator1".to_string(),
+    validation_bonus: 5,
+    log_entries:      Vec::new(),
+  });
+  runtime.register_handler::<MultiValidatorAgent, FinalResult>(MultiValidatorAgent {
+    name:             "RuntimeValidator2".to_string(),
+    validation_bonus: 5,
+    log_entries:      Vec::new(),
+  });
+
+  // Test the automatic routing through runtime
+  println!("\n--- Automatic Multi-Agent Pipeline ---");
+  println!("Input: 8");
+  println!("Expected flow:");
+  println!("  8 -> MultiProcessor -> 16");
+  println!("  16 -> MultiValidator -> 21 (16 + 5 bonus)");
+  println!("  21 -> MultiProcessor -> 63 (21 * 3)");
+  println!("  63 -> MultiValidator -> logged");
+
+  let iterations = runtime.send_and_run(StartProcessing(8));
+
+  println!("\nMulti-agent pipeline completed in {} iterations", iterations);
+  assert_eq!(iterations, 4); // 4 message hops through the agents
+  assert!(runtime.is_idle());
+
+  // Test direct container usage (without runtime routing)
+  println!("\n--- Direct Container Usage ---");
+
+  // Process through first container
+  let result1 = processor_container.handle_message(StartProcessing(3));
+  assert!(result1.is_some());
+
+  // The containers maintain their state independently
+  assert_eq!(processor_container.agent().processed_count, 1);
+
+  println!("Direct container processing completed successfully");
+}
