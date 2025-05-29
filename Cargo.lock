@@ -143,11 +143,9 @@ version = "0.1.0"
 dependencies = [
  "arbiter-macros",
  "async-trait",
+ "crossbeam-channel",
  "futures",
- "serde",
- "thiserror 2.0.12",
  "tokio",
- "toml",
  "tracing",
  "tracing-test",
 ]

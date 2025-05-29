@@ -5,24 +5,16 @@ name    = "arbiter-core"
 version = "0.1.0"
 
 [dependencies]
-# Serialization
-serde = { workspace = true, features = [
-    "derive",
-] } # TODO: We should likely use a zero-copy serialization lib for speed.
-toml = "0.8"
+crossbeam-channel = "0.5"
 
 # Async
 async-trait.workspace = true
-futures.workspace = true
-tokio = { workspace = true, features = [
-    "macros",
-    "sync",
-    "rt",
-] } # NOTE: Minimal requirements for release build. We should make sure we can build in both release and tests pass in debug. This set of features will also work with wasm.
+futures.workspace     = true
+tokio                 = { workspace = true, features = ["macros", "sync", "rt"] }
 
 # Error and logging
-thiserror.workspace = true
-tracing.workspace   = true
+
+tracing.workspace = true
 
 [dev-dependencies]
 arbiter-macros = { workspace = true }
