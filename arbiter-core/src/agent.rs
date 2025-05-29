@@ -1,5 +1,9 @@
-use std::sync::{Arc, Mutex};
+use std::{
+  any::Any,
+  sync::{Arc, Mutex},
+};
 
+pub trait Agent: Any {}
 // TODO (autoparallel): This could be generalized to handle different kinds of locking. In which
 // case we'd make this a trait and have a default implementation that uses Arc<Mutex<A>>.
 pub struct Context<A> {
@@ -16,9 +20,9 @@ impl<A> Context<A> {
     f(&mut *guard)
   }
 
-  pub fn handle_with<H>(&self, handler: &H, message: H::Message) -> H::Reply
-  where H: crate::handler::Handler<A> {
-    self.with(|agent| handler.handle(message, agent))
+  pub fn handle_with<M>(&self, message: M) -> <A as crate::handler::Handler<M>>::Reply
+  where A: crate::handler::Handler<M> {
+    self.with(|agent| agent.handle(message))
   }
 }
 
@@ -31,32 +35,31 @@ mod tests {
     state: i32,
   }
 
-  // First handler - increments state using Context
-  pub struct IncrementHandler;
+  impl Agent for TestAgent {}
 
-  impl Handler<TestAgent> for IncrementHandler {
-    type Message = i32;
+  #[derive(Debug)]
+  pub struct Increment(i32);
+  #[derive(Debug)]
+  pub struct Multiply(i32);
+
+  impl Handler<Increment> for TestAgent {
     type Reply = ();
 
-    fn handle(&self, message: Self::Message, agent: &mut TestAgent) -> Self::Reply {
-      println!("Handler 1 - Received message: {message}");
-      agent.state += message;
-      println!("Handler 1 - Updated state: {}", agent.state);
+    fn handle(&mut self, message: Increment) -> Self::Reply {
+      println!("Handler 1 - Received message: {:?}", message);
+      self.state += message.0;
+      println!("Handler 1 - Updated state: {}", self.state);
     }
   }
 
-  // Second handler type for different operations
-  pub struct MultiplyHandler;
-
-  impl Handler<TestAgent> for MultiplyHandler {
-    type Message = i32;
+  impl Handler<Multiply> for TestAgent {
     type Reply = i32;
 
-    fn handle(&self, message: Self::Message, agent: &mut TestAgent) -> Self::Reply {
-      println!("Handler 2 - Multiplying state {} by {}", agent.state, message);
-      agent.state *= message;
-      println!("Handler 2 - Updated state: {}", agent.state);
-      agent.state
+    fn handle(&mut self, message: Multiply) -> Self::Reply {
+      println!("Handler 2 - Multiplying state {} by {}", self.state, message.0);
+      self.state *= message.0;
+      println!("Handler 2 - Updated state: {}", self.state);
+      self.state
     }
   }
 
@@ -65,13 +68,13 @@ mod tests {
     let agent = TestAgent { state: 1 };
     let context = Context::new(agent);
 
-    // Use first handler
-    let handler1 = IncrementHandler;
-    context.handle_with(&handler1, 5);
+    // Use first handler - agent handles Increment messages
+    let increment = Increment(5);
+    context.handle_with(increment);
 
-    // Use second handler on same agent state
-    let handler2 = MultiplyHandler;
-    let result = context.handle_with(&handler2, 3);
+    // Use second handler - agent handles Multiply messages
+    let multiply = Multiply(3);
+    let result = context.handle_with(multiply);
     assert_eq!(result, 18); // (1 + 5) * 3 = 18
 
     // Verify final state
