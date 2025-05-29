@@ -255,6 +255,18 @@ impl Runtime {
     }
   }
 
+  pub fn register_agent_container<A: Agent>(
+    &mut self,
+    name: String,
+    agent: AgentContainer<A>,
+  ) -> bool {
+    if self.agents.contains_key(&name) {
+      return false; // Agent name already exists
+    }
+    self.agents.insert(name, Box::new(agent));
+    true
+  }
+
   pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
     self.max_iterations = max_iterations;
     self

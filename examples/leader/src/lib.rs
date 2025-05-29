@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use arbiter_core::{
-  agent::{Agent, AgentState},
+  agent::{Agent, AgentContainer, AgentState},
   handler::Handler,
   runtime::Domain,
 };
@@ -175,35 +175,22 @@ impl Canvas {
   }
 
   fn get_leader_positions(&self) -> Vec<(String, Position)> {
-    console::log_1(
-      &format!(
-        "Canvas looking for leaders among {} positions and {} types",
-        self.agent_positions.len(),
-        self.agent_types.len()
-      )
-      .into(),
-    );
-
     let leaders: Vec<(String, Position)> = self
       .agent_positions
       .iter()
       .filter_map(|(id, pos)| {
         if let Some(agent_type) = self.agent_types.get(id) {
-          console::log_1(&format!("Canvas checking agent {}: {:?}", id, agent_type).into());
           if matches!(agent_type, AgentType::Leader) {
-            console::log_1(&format!("Canvas found leader {}", id).into());
             Some((id.clone(), pos.clone()))
           } else {
             None
           }
         } else {
-          console::log_1(&format!("Canvas has position for {} but no type registered", id).into());
           None
         }
       })
       .collect();
 
-    console::log_1(&format!("Canvas returning {} leader positions", leaders.len()).into());
     leaders
   }
 }
@@ -232,12 +219,13 @@ impl Handler<RegisterAgentType> for Canvas {
 
   fn handle(&mut self, message: RegisterAgentType) -> Self::Reply {
     console::log_1(
-      &format!("Canvas registering agent {} as {:?}", message.agent_id, message.agent_type).into(),
+      &format!(
+        "✅ Canvas received RegisterAgentType: {} as {:?}",
+        message.agent_id, message.agent_type
+      )
+      .into(),
     );
     self.agent_types.insert(message.agent_id.clone(), message.agent_type.clone());
-    console::log_1(
-      &format!("Canvas now has {} agent types registered", self.agent_types.len()).into(),
-    );
     self.render();
   }
 }
@@ -246,11 +234,7 @@ impl Handler<Tick> for Canvas {
   type Reply = Tick;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
-    console::log_1(&"Canvas handling tick".into());
     let leader_positions = self.get_leader_positions();
-    console::log_1(
-      &format!("Canvas tick returning {} leader positions", leader_positions.len()).into(),
-    );
     Tick { leader_positions }
   }
 }
@@ -279,14 +263,16 @@ impl LeaderFollowerSimulation {
     {
       let mut runtime = domain.as_mut();
 
-      // Add and start core agents
-      runtime.add_and_start_agent("canvas".to_string(), canvas.clone());
-
       // Register handlers for core agents
-      runtime.register_handler::<Canvas, Tick>(canvas.clone());
-      runtime.register_handler::<Canvas, UpdatePosition>(canvas.clone());
-      runtime.register_handler::<Canvas, RegisterAgentType>(canvas);
+      console::log_1(&"Registering Canvas handlers...".into());
+      let mut canvas = AgentContainer::new(canvas);
+      canvas.register_handler::<Tick>();
+      canvas.register_handler::<UpdatePosition>();
+      canvas.register_handler::<RegisterAgentType>();
+      runtime.register_agent_container("canvas".to_string(), canvas);
+      runtime.start_agent("canvas");
 
+      console::log_1(&"Sending initial tick...".into());
       runtime.send_message(Tick { leader_positions: Vec::new() });
 
       runtime.run();
@@ -317,7 +303,6 @@ impl LeaderFollowerSimulation {
           }
         }
 
-        // Wait before next tick (~20 FPS)
         TimeoutFuture::new(10).await;
       }
     });
@@ -335,21 +320,25 @@ impl LeaderFollowerSimulation {
 
     let success = match &agent_type {
       AgentType::Leader => {
+        console::log_1(&format!("Creating Leader agent {}", agent_id).into());
         let leader = Leader::new(agent_id.clone(), self.canvas_width, self.canvas_height, x, y);
 
         // Register the leader and its handlers
         let registered = runtime.add_and_start_agent(agent_id.clone(), leader.clone());
         if registered {
+          console::log_1(&format!("Registering Leader {} for Tick messages", agent_id).into());
           runtime.register_handler::<Leader, Tick>(leader);
         }
         registered
       },
       AgentType::Follower => {
+        console::log_1(&format!("Creating Follower agent {}", agent_id).into());
         let follower = Follower::new(agent_id.clone(), x, y);
 
         // Register the follower and its handlers
         let registered = runtime.add_and_start_agent(agent_id.clone(), follower.clone());
         if registered {
+          console::log_1(&format!("Registering Follower {} for Tick messages", agent_id).into());
           runtime.register_handler::<Follower, Tick>(follower);
         }
         registered
@@ -358,12 +347,18 @@ impl LeaderFollowerSimulation {
 
     if success {
       // Send agent type registration
+      console::log_1(
+        &format!("Sending RegisterAgentType for {}: {:?}", agent_id, agent_type).into(),
+      );
       runtime.send_message(RegisterAgentType {
         agent_id:   agent_id.clone(),
         agent_type: agent_type.clone(),
       });
 
       // Send initial position update
+      console::log_1(
+        &format!("Sending UpdatePosition for {} at ({:.1}, {:.1})", agent_id, x, y).into(),
+      );
       runtime
         .send_message(UpdatePosition { agent_id: agent_id.clone(), position: Position::new(x, y) });
 
@@ -474,7 +469,8 @@ impl Handler<Tick> for Leader {
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
     self.move_agent();
-    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
+    let update = UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() };
+    update
   }
 }
 
@@ -500,13 +496,8 @@ impl Follower {
   }
 
   fn find_closest_leader(&mut self, leader_positions: &[(String, Position)]) {
-    console::log_1(
-      &format!("Follower {} searching through {} leaders", self.id, leader_positions.len()).into(),
-    );
-
     if leader_positions.is_empty() {
       self.target_leader_id = None;
-      console::log_1(&format!("Follower {} found no leaders", self.id).into());
       return;
     }
 
@@ -515,9 +506,6 @@ impl Follower {
 
     for (leader_id, leader_pos) in leader_positions {
       let distance = self.position.distance_to(leader_pos);
-      console::log_1(
-        &format!("Follower {} distance to leader {}: {:.1}", self.id, leader_id, distance).into(),
-      );
       if distance < closest_distance {
         closest_distance = distance;
         closest_leader = Some(leader_id.clone());
@@ -525,46 +513,20 @@ impl Follower {
     }
 
     self.target_leader_id = closest_leader.clone();
-    console::log_1(
-      &format!("Follower {} selected target: {:?}", self.id, self.target_leader_id).into(),
-    );
   }
 
   fn follow_target(&mut self, leader_positions: &[(String, Position)]) {
     if let Some(target_id) = &self.target_leader_id {
-      console::log_1(&format!("Follower {} attempting to follow {}", self.id, target_id).into());
-
       for (leader_id, leader_pos) in leader_positions {
         if leader_id == target_id {
           let distance = self.position.distance_to(leader_pos);
-          console::log_1(
-            &format!(
-              "Follower {} distance to target {}: {:.1} (follow_distance: {:.1})",
-              self.id, target_id, distance, self.follow_distance
-            )
-            .into(),
-          );
 
           if distance > self.follow_distance {
-            let old_pos = self.position.clone();
             self.position.move_towards(leader_pos, self.speed);
-            console::log_1(
-              &format!(
-                "Follower {} moving from ({:.1}, {:.1}) to ({:.1}, {:.1})",
-                self.id, old_pos.x, old_pos.y, self.position.x, self.position.y
-              )
-              .into(),
-            );
-          } else {
-            console::log_1(
-              &format!("Follower {} close enough to leader, not moving", self.id).into(),
-            );
           }
           break;
         }
       }
-    } else {
-      console::log_1(&format!("Follower {} has no target leader", self.id).into());
     }
   }
 }
@@ -583,15 +545,6 @@ impl Handler<Tick> for Follower {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, message: Tick) -> Self::Reply {
-    console::log_1(
-      &format!(
-        "Follower {} received tick with {} leaders",
-        self.id,
-        message.leader_positions.len()
-      )
-      .into(),
-    );
-
     // Use the leader positions from the tick message
     self.find_closest_leader(&message.leader_positions);
     self.follow_target(&message.leader_positions);
