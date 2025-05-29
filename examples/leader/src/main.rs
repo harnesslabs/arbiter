@@ -14,7 +14,7 @@ const HTML_CONTENT: &str = include_str!("../index.html");
 
 #[tokio::main]
 async fn main() {
-  println!("🦀 Starting Vietoris-Rips Demo Server...");
+  println!("🦀 Starting Leader-Follower Demo Server...");
 
   // Serve the main HTML page
   let index = warp::path::end().map(|| warp::reply::html(HTML_CONTENT));

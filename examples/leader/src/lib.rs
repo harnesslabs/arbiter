@@ -162,14 +162,6 @@ impl Canvas {
           },
         }
       }
-
-      // Draw status
-      context.set_fill_style_str("rgba(0, 0, 0, 0.7)");
-      context.set_font("12px monospace");
-      context.set_text_align("left");
-      context
-        .fill_text(&format!("🦀 Arbiter-Core - {} agents", self.agent_positions.len()), 10.0, 20.0)
-        .unwrap();
     }
   }
 
@@ -208,13 +200,6 @@ impl Handler<UpdatePosition> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
-    console::log_1(
-      &format!(
-        "✅ Canvas received UpdatePosition: {} at ({:.1}, {:.1})",
-        message.agent_id, message.position.x, message.position.y
-      )
-      .into(),
-    );
     self.agent_positions.insert(message.agent_id, message.position);
     self.render();
   }
@@ -224,13 +209,6 @@ impl Handler<RegisterAgentType> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: RegisterAgentType) -> Self::Reply {
-    console::log_1(
-      &format!(
-        "✅ Canvas received RegisterAgentType: {} as {:?}",
-        message.agent_id, message.agent_type
-      )
-      .into(),
-    );
     self.agent_types.insert(message.agent_id.clone(), message.agent_type.clone());
     self.render();
   }
@@ -241,7 +219,6 @@ impl Handler<Tick> for Canvas {
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
     let leader_positions = self.get_leader_positions();
-    console::log_1(&format!("✅ Canvas tick: found {} leaders", leader_positions.len()).into());
     Tick { leader_positions }
   }
 }
@@ -249,10 +226,11 @@ impl Handler<Tick> for Canvas {
 /// Main simulation structure using arbiter-core
 #[wasm_bindgen]
 pub struct LeaderFollowerSimulation {
-  canvas_width:  f64,
-  canvas_height: f64,
-  next_id:       u32,
-  domain:        Domain,
+  canvas_width:   f64,
+  canvas_height:  f64,
+  leader_count:   u32,
+  follower_count: u32,
+  domain:         Domain,
 }
 
 #[wasm_bindgen]
@@ -271,7 +249,7 @@ impl LeaderFollowerSimulation {
       let mut runtime = domain.as_mut();
 
       // Register Canvas agent using the new shared agent approach
-      console::log_1(&"Registering Canvas agent and handlers...".into());
+      console::log_1(&"🎨 Initializing Canvas...".into());
       let shared_canvas = AgentContainer::shared(canvas);
 
       // Register the shared agent with the runtime
@@ -290,16 +268,14 @@ impl LeaderFollowerSimulation {
 
       runtime.start_agent("canvas");
 
-      console::log_1(&"Sending initial tick...".into());
       runtime.send_message(Tick { leader_positions: Vec::new() });
-
       runtime.run();
     } // Drop the runtime borrow here
 
     // Start the automatic tick loop to keep agents moving
     Self::start_tick_loop(domain.clone());
 
-    Self { canvas_width, canvas_height, next_id: 0, domain }
+    Self { canvas_width, canvas_height, leader_count: 0, follower_count: 0, domain }
   }
 
   /// Start the automatic tick loop to drive the simulation
@@ -321,7 +297,7 @@ impl LeaderFollowerSimulation {
           }
         }
 
-        TimeoutFuture::new(10).await;
+        TimeoutFuture::new(5).await;
       }
     });
   }
@@ -329,16 +305,18 @@ impl LeaderFollowerSimulation {
   /// Add an agent at the specified position (simulation-specific)
   #[wasm_bindgen]
   pub fn add_agent(&mut self, x: f64, y: f64, is_leader: bool) -> String {
-    let agent_id = format!("agent_{}", self.next_id);
-    self.next_id += 1;
-
-    let agent_type = if is_leader { AgentType::Leader } else { AgentType::Follower };
+    let (agent_id, agent_type) = if is_leader {
+      self.leader_count += 1;
+      (format!("Leader {}", self.leader_count), AgentType::Leader)
+    } else {
+      self.follower_count += 1;
+      (format!("Follower {}", self.follower_count), AgentType::Follower)
+    };
 
     let mut runtime = self.domain.as_mut();
 
     let success = match &agent_type {
       AgentType::Leader => {
-        console::log_1(&format!("Creating Leader agent {}", agent_id).into());
         let leader = Leader::new(agent_id.clone(), self.canvas_width, self.canvas_height, x, y);
 
         // Register the leader using SharedAgent approach
@@ -351,12 +329,11 @@ impl LeaderFollowerSimulation {
           runtime.register_agent_handler(tick_handler);
 
           runtime.start_agent(&agent_id);
-          console::log_1(&format!("Registered Leader {} successfully", agent_id).into());
+          console::log_1(&format!("🔴 {} started", agent_id).into());
         }
         registered
       },
       AgentType::Follower => {
-        console::log_1(&format!("Creating Follower agent {}", agent_id).into());
         let follower = Follower::new(agent_id.clone(), x, y);
 
         // Register the follower using SharedAgent approach
@@ -369,7 +346,7 @@ impl LeaderFollowerSimulation {
           runtime.register_agent_handler(tick_handler);
 
           runtime.start_agent(&agent_id);
-          console::log_1(&format!("Registered Follower {} successfully", agent_id).into());
+          console::log_1(&format!("🔵 {} started", agent_id).into());
         }
         registered
       },
@@ -377,31 +354,21 @@ impl LeaderFollowerSimulation {
 
     if success {
       // Send agent type registration
-      console::log_1(
-        &format!("Sending RegisterAgentType for {}: {:?}", agent_id, agent_type).into(),
-      );
       runtime.send_message(RegisterAgentType {
         agent_id:   agent_id.clone(),
         agent_type: agent_type.clone(),
       });
 
       // Send initial position update
-      console::log_1(
-        &format!("Sending UpdatePosition for {} at ({:.1}, {:.1})", agent_id, x, y).into(),
-      );
       runtime
         .send_message(UpdatePosition { agent_id: agent_id.clone(), position: Position::new(x, y) });
 
       // Process messages to ensure registration and initial drawing happen
       runtime.run();
 
-      console::log_1(
-        &format!("Added agent {} ({:?}) at ({:.1}, {:.1})", agent_id, agent_type, x, y).into(),
-      );
-
       agent_id
     } else {
-      console::log_1(&format!("Failed to add agent {}", agent_id).into());
+      console::log_1(&format!("❌ Failed to add {}", agent_id).into());
       String::new()
     }
   }
