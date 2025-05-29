@@ -5,25 +5,56 @@ use std::{
 };
 
 use crate::{
-  agent::{Agent, AgentContainer},
+  agent::{Agent, AgentContainer, AgentState},
   handler::{Handler, HandlerWrapper, MessageHandler},
 };
 
-// Simple runtime that can hold different types of agents with automatic message routing
+// Enhanced runtime with agent lifecycle management and mailboxes
 pub struct Runtime {
-  agents:         HashMap<String, Box<dyn Any + Send + Sync>>,
-  handlers:       HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
-  message_queue:  VecDeque<Box<dyn Any + Send + Sync>>,
-  max_iterations: usize, // Prevent infinite loops
+  agents:          HashMap<String, Box<dyn RuntimeAgent>>,
+  handlers:        HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
+  message_queue:   VecDeque<Box<dyn Any + Send + Sync>>,
+  agent_mailboxes: HashMap<String, VecDeque<Box<dyn Any + Send + Sync>>>, /* Messages for paused
+                                                                           * agents */
+  max_iterations:  usize, // Prevent infinite loops
+}
+
+// Trait for runtime-manageable agents
+pub trait RuntimeAgent: Send + Sync {
+  fn start(&mut self);
+  fn pause(&mut self);
+  fn stop(&mut self);
+  fn resume(&mut self);
+  fn state(&self) -> AgentState;
+  fn is_active(&self) -> bool;
+  fn agent_type_name(&self) -> &'static str;
+}
+
+// Implement RuntimeAgent for AgentContainer<T>
+impl<A: Agent> RuntimeAgent for AgentContainer<A> {
+  fn start(&mut self) { AgentContainer::start(self); }
+
+  fn pause(&mut self) { AgentContainer::pause(self); }
+
+  fn stop(&mut self) { AgentContainer::stop(self); }
+
+  fn resume(&mut self) { AgentContainer::resume(self); }
+
+  fn state(&self) -> AgentState { self.state().clone() }
+
+  fn is_active(&self) -> bool { AgentContainer::is_active(self) }
+
+  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
 }
 
 impl Runtime {
   pub fn new() -> Self {
     Self {
-      agents:         HashMap::new(),
-      handlers:       HashMap::new(),
-      message_queue:  VecDeque::new(),
-      max_iterations: 1000, // Reasonable default
+      agents:          HashMap::new(),
+      handlers:        HashMap::new(),
+      message_queue:   VecDeque::new(),
+      agent_mailboxes: HashMap::new(),
+      max_iterations:  1000, // Reasonable default
     }
   }
 
@@ -33,9 +64,34 @@ impl Runtime {
   }
 
   // Register any agent that implements the Agent trait
-  pub fn register_agent<A: Agent>(&mut self, name: String, agent: A) {
+  pub fn register_agent<A: Agent>(&mut self, name: String, agent: A) -> bool {
+    if self.agents.contains_key(&name) {
+      return false; // Agent name already exists
+    }
+
     let container = AgentContainer::new(agent);
-    self.agents.insert(name, Box::new(container));
+    self.agents.insert(name.clone(), Box::new(container));
+    self.agent_mailboxes.insert(name, VecDeque::new());
+    true
+  }
+
+  // Add agent and immediately start it
+  pub fn add_and_start_agent<A: Agent>(&mut self, name: String, agent: A) -> bool {
+    if self.register_agent(name.clone(), agent) {
+      self.start_agent(&name)
+    } else {
+      false
+    }
+  }
+
+  // Remove an agent from the runtime
+  pub fn remove_agent(&mut self, name: &str) -> bool {
+    if self.agents.remove(name).is_some() {
+      self.agent_mailboxes.remove(name);
+      true
+    } else {
+      false
+    }
   }
 
   // Register a handler for a specific message type
@@ -76,6 +132,14 @@ impl Runtime {
     }
   }
 
+  // Process mailboxes for resumed agents (simplified for now)
+  fn process_agent_mailboxes(&mut self) {
+    // For now, we'll skip the complex mailbox processing
+    // In a full implementation, this would deliver queued messages to active agents
+    // The challenge is that we need type information to properly route messages
+    // to specific agent handlers, which requires a different architecture
+  }
+
   // Run the runtime - processes all messages until queue is empty or max iterations reached
   pub fn run(&mut self) -> usize {
     let mut iterations = 0;
@@ -90,8 +154,15 @@ impl Runtime {
       if processed {
         iterations += 1;
       }
+
+      // Process agent mailboxes periodically
+      if iterations % 10 == 0 {
+        self.process_agent_mailboxes();
+      }
     }
 
+    // Final mailbox processing
+    self.process_agent_mailboxes();
     iterations
   }
 
@@ -101,23 +172,80 @@ impl Runtime {
     self.run()
   }
 
+  // Agent lifecycle management methods
+  pub fn start_agent(&mut self, name: &str) -> bool {
+    if let Some(agent) = self.agents.get_mut(name) {
+      agent.start();
+      true
+    } else {
+      false
+    }
+  }
+
+  pub fn pause_agent(&mut self, name: &str) -> bool {
+    if let Some(agent) = self.agents.get_mut(name) {
+      agent.pause();
+      true
+    } else {
+      false
+    }
+  }
+
+  pub fn stop_agent(&mut self, name: &str) -> bool {
+    if let Some(agent) = self.agents.get_mut(name) {
+      agent.stop();
+      // Clear the agent's mailbox when stopped
+      if let Some(mailbox) = self.agent_mailboxes.get_mut(name) {
+        mailbox.clear();
+      }
+      true
+    } else {
+      false
+    }
+  }
+
+  pub fn resume_agent(&mut self, name: &str) -> bool {
+    if let Some(agent) = self.agents.get_mut(name) {
+      agent.resume();
+      true
+    } else {
+      false
+    }
+  }
+
+  // Get agent state
+  pub fn get_agent_state(&self, name: &str) -> Option<AgentState> {
+    if let Some(agent) = self.agents.get(name) {
+      Some(agent.state())
+    } else {
+      None
+    }
+  }
+
   // Get list of registered agent names
   pub fn list_agents(&self) -> Vec<&String> { self.agents.keys().collect() }
 
   // Get agent info
   pub fn get_agent_info(&self, name: &str) -> Option<&'static str> {
-    if self.agents.contains_key(name) {
-      Some("Agent") // Simplified for now
+    if let Some(agent) = self.agents.get(name) {
+      Some(agent.agent_type_name())
     } else {
       None
     }
   }
 
   // Check if message queue is empty
-  pub fn is_idle(&self) -> bool { self.message_queue.is_empty() }
+  pub fn is_idle(&self) -> bool {
+    self.message_queue.is_empty() && self.agent_mailboxes.values().all(|mb| mb.is_empty())
+  }
 
   // Get current queue length
   pub fn queue_length(&self) -> usize { self.message_queue.len() }
+
+  // Get total messages in all mailboxes
+  pub fn total_mailbox_messages(&self) -> usize {
+    self.agent_mailboxes.values().map(|mb| mb.len()).sum()
+  }
 }
 
 #[cfg(test)]

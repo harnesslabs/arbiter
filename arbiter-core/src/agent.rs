@@ -4,18 +4,85 @@ use std::{
   sync::{Arc, Mutex},
 };
 
-// Simple trait for things that can be agents
-pub trait Agent: Send + Sync + 'static {}
+// Agent lifecycle states
+#[derive(Debug, Clone, PartialEq)]
+pub enum AgentState {
+  Stopped, // Agent is not processing messages
+  Running, // Agent is actively processing messages
+  Paused,  // Agent is temporarily not processing messages but can be resumed
+}
+
+// Enhanced trait for things that can be agents with lifecycle management
+pub trait Agent: Send + Sync + 'static {
+  // Lifecycle hooks - agents can override these for custom behavior
+  fn on_start(&mut self) {
+    // Default implementation does nothing
+  }
+
+  fn on_pause(&mut self) {
+    // Default implementation does nothing
+  }
+
+  fn on_stop(&mut self) {
+    // Default implementation does nothing
+  }
+
+  fn on_resume(&mut self) {
+    // Default implementation does nothing
+  }
+}
 
 // Container that manages handlers for an agent
 pub struct AgentContainer<A: Agent> {
   agent:               A,
+  state:               AgentState,
   registered_handlers: HashMap<TypeId, bool>, /* TODO: tracks by message type, but we may also
                                                * want to track the response type too. */
 }
 
 impl<A: Agent> AgentContainer<A> {
-  pub fn new(agent: A) -> Self { Self { agent, registered_handlers: HashMap::new() } }
+  pub fn new(agent: A) -> Self {
+    Self {
+      agent,
+      state: AgentState::Stopped, // Agents start in stopped state
+      registered_handlers: HashMap::new(),
+    }
+  }
+
+  // Lifecycle management methods
+  pub fn start(&mut self) {
+    if self.state != AgentState::Running {
+      self.agent.on_start();
+      self.state = AgentState::Running;
+    }
+  }
+
+  pub fn pause(&mut self) {
+    if self.state == AgentState::Running {
+      self.agent.on_pause();
+      self.state = AgentState::Paused;
+    }
+  }
+
+  pub fn stop(&mut self) {
+    if self.state != AgentState::Stopped {
+      self.agent.on_stop();
+      self.state = AgentState::Stopped;
+    }
+  }
+
+  pub fn resume(&mut self) {
+    if self.state == AgentState::Paused {
+      self.agent.on_resume();
+      self.state = AgentState::Running;
+    }
+  }
+
+  // Get current state
+  pub fn state(&self) -> &AgentState { &self.state }
+
+  // Check if agent can process messages
+  pub fn is_active(&self) -> bool { self.state == AgentState::Running }
 
   // Register the agent as a handler for message type M
   pub fn register_handler<M>(&mut self)
@@ -26,12 +93,17 @@ impl<A: Agent> AgentContainer<A> {
     self.registered_handlers.insert(type_id, true);
   }
 
-  // Handle a message by calling the agent's handler directly
+  // Handle a message by calling the agent's handler directly - only if agent is active
   pub fn handle_message<M>(&mut self, message: M) -> Option<Box<dyn Any>>
   where
     A: crate::handler::Handler<M>,
     M: Any + Send + Sync + Clone + 'static,
     A::Reply: 'static, {
+    // Only process messages if agent is running
+    if !self.is_active() {
+      return None;
+    }
+
     let type_id = TypeId::of::<M>();
     if self.registered_handlers.contains_key(&type_id) {
       let reply = self.agent.handle(message);
@@ -116,15 +188,71 @@ mod tests {
     container.register_handler::<Increment>();
     container.register_handler::<Multiply>();
 
-    // Send messages through container
+    // Agent starts in stopped state - messages should be ignored
+    assert_eq!(container.state(), &AgentState::Stopped);
+    assert!(!container.is_active());
+
     let increment = Increment(5);
-    container.handle_message(increment);
+    let result = container.handle_message(increment);
+    assert!(result.is_none()); // Should return None because agent is stopped
+    assert_eq!(container.agent().state, 1); // State should be unchanged
+
+    // Start the agent
+    container.start();
+    assert_eq!(container.state(), &AgentState::Running);
+    assert!(container.is_active());
+
+    // Now messages should be processed
+    let increment = Increment(5);
+    let result = container.handle_message(increment);
+    assert!(result.is_some()); // Should process message now
 
     let multiply = Multiply(3);
     let _result = container.handle_message(multiply);
 
     // Check final state
     assert_eq!(container.agent().state, 18); // (1 + 5) * 3 = 18
+  }
+
+  #[test]
+  fn test_agent_lifecycle() {
+    let test_agent = TestAgent { state: 10 };
+    let mut container = AgentContainer::new(test_agent);
+    container.register_handler::<Increment>();
+
+    // Test lifecycle transitions
+    assert_eq!(container.state(), &AgentState::Stopped);
+
+    // Start agent
+    container.start();
+    assert_eq!(container.state(), &AgentState::Running);
+
+    // Pause agent
+    container.pause();
+    assert_eq!(container.state(), &AgentState::Paused);
+    assert!(!container.is_active()); // Paused agents don't process messages
+
+    // Try to process message while paused
+    let increment = Increment(5);
+    let result = container.handle_message(increment);
+    assert!(result.is_none()); // Should be ignored
+    assert_eq!(container.agent().state, 10); // State unchanged
+
+    // Resume agent
+    container.resume();
+    assert_eq!(container.state(), &AgentState::Running);
+    assert!(container.is_active());
+
+    // Now message should be processed
+    let increment = Increment(5);
+    let result = container.handle_message(increment);
+    assert!(result.is_some());
+    assert_eq!(container.agent().state, 15); // 10 + 5 = 15
+
+    // Stop agent
+    container.stop();
+    assert_eq!(container.state(), &AgentState::Stopped);
+    assert!(!container.is_active());
   }
 
   #[test]
