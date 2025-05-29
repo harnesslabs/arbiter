@@ -176,12 +176,8 @@ fn test_agent_containers_direct() {
   // Test message selectivity
   println!("\n--- Testing Message Selectivity ---");
 
-  // Bank agent should ignore log messages
-  let log_msg = LogMessage("Banking transaction completed".to_string());
-  let bank_log_result = bank_container.handle_message(log_msg.clone());
-  assert!(bank_log_result.is_none());
-
   // Logger agent should handle log messages
+  let log_msg = LogMessage("Banking transaction completed".to_string());
   let logger_result = logger_container.handle_message(log_msg);
   assert!(logger_result.is_some());
 

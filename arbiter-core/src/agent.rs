@@ -12,31 +12,32 @@ pub trait Agent: Send + Sync + 'static {}
 
 // Container that manages handlers for an agent
 pub struct AgentContainer<A: Agent> {
-  agent:    A,
-  handlers: HashMap<TypeId, Box<dyn crate::handler::MessageHandler>>,
+  agent:               A,
+  registered_handlers: HashMap<TypeId, bool>, // Just track which message types are registered
 }
 
 impl<A: Agent> AgentContainer<A> {
-  pub fn new(agent: A) -> Self { Self { agent, handlers: HashMap::new() } }
+  pub fn new(agent: A) -> Self { Self { agent, registered_handlers: HashMap::new() } }
 
-  // Register the agent itself as a handler for message type M
+  // Register the agent as a handler for message type M
   pub fn register_handler<M>(&mut self)
   where
-    A: crate::handler::Handler<M> + Clone,
-    M: Any + Send + Sync + Clone + 'static,
-    A::Reply: Send + Sync + 'static, {
+    A: crate::handler::Handler<M>,
+    M: Any + Send + Sync + Clone + 'static, {
     let type_id = TypeId::of::<M>();
-    let wrapped =
-      crate::handler::HandlerWrapper { handler: self.agent.clone(), _phantom: PhantomData };
-    self.handlers.insert(type_id, Box::new(wrapped));
+    self.registered_handlers.insert(type_id, true);
   }
 
-  // Handle a message by routing to appropriate handler
+  // Handle a message by calling the agent's handler directly
   pub fn handle_message<M>(&mut self, message: M) -> Option<Box<dyn Any>>
-  where M: Any + Send + Sync + Clone + 'static {
+  where
+    A: crate::handler::Handler<M>,
+    M: Any + Send + Sync + Clone + 'static,
+    A::Reply: 'static, {
     let type_id = TypeId::of::<M>();
-    if let Some(handler) = self.handlers.get_mut(&type_id) {
-      Some(handler.handle_message(&message))
+    if self.registered_handlers.contains_key(&type_id) {
+      let reply = self.agent.handle(message);
+      Some(Box::new(reply))
     } else {
       None
     }
