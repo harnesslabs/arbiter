@@ -1,8 +1,9 @@
 use super::*;
+use crate::agent::Context;
 
-pub trait Handler<C> {
+pub trait Handler<A> {
   type Message;
   type Reply;
 
-  fn handle(&self, message: Self::Message, context: &mut C) -> Self::Reply;
+  fn handle(&self, message: Self::Message, context: &Context<A>) -> Self::Reply;
 }
