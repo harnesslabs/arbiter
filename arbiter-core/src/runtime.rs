@@ -1,21 +1,22 @@
 use std::{
   any::{Any, TypeId},
   collections::HashMap,
+  marker::PhantomData,
 };
 
 use crate::{
   agent::{Agent, Context},
-  handler::Handler,
+  handler::{Handler, HandlerWrapper, MessageHandler},
 };
 
 // Simple runtime that can hold different types of agents
 pub struct Runtime {
   agents:   HashMap<String, Box<dyn Any + Send + Sync>>,
-  handlers: HashMap<TypeId, Box<dyn Handler>>,
+  handlers: HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
 }
 
 impl Runtime {
-  pub fn new() -> Self { Self { agents: HashMap::new() } }
+  pub fn new() -> Self { Self { agents: HashMap::new(), handlers: HashMap::new() } }
 
   // Register any agent that implements the Agent trait
   pub fn register_agent<A: Agent + Send + Sync + 'static>(&mut self, name: String, agent: A) {
@@ -23,25 +24,28 @@ impl Runtime {
     self.agents.insert(name, Box::new(context));
   }
 
-  // Send a message to a specific agent
-  pub fn send_message<M: 'static>(&self, agent_name: &str, message: M) -> bool
-  where M: Send + Sync {
-    if let Some(context_box) = self.agents.get(agent_name) {
-      // Try to downcast to Context<A> where A implements Handler<M>
-      // This is a bit tricky since we don't know A at compile time
-      // For now, return true to indicate we found the agent
-      true
-    } else {
-      false
-    }
+  // Register a handler for a specific message type
+  pub fn register_handler<H, M>(&mut self, handler: H)
+  where
+    H: Handler<M> + Send + Sync + 'static,
+    H::Reply: Send + Sync + 'static,
+    M: Any + Clone + Send + Sync + 'static, {
+    let type_id = TypeId::of::<M>();
+    let wrapped = HandlerWrapper { handler, _phantom: PhantomData };
+    self.handlers.entry(type_id).or_insert_with(Vec::new).push(Box::new(wrapped));
   }
 
-  // Broadcast a message to all agents
-  pub fn broadcast_message<M: 'static>(&self, _message: M)
-  where M: Send + Sync + Clone {
-    // For now, just iterate through agents
-    for _context in self.agents.values() {
-      // Would need to try downcasting each one
+  // Send a message to all handlers that can handle this message type
+  pub fn send_message<M: Any + Clone + Send + Sync>(&mut self, message: M) -> bool {
+    let type_id = TypeId::of::<M>();
+    if let Some(handlers) = self.handlers.get_mut(&type_id) {
+      let has_handlers = !handlers.is_empty();
+      for handler in handlers {
+        handler.handle_message(&message);
+      }
+      has_handlers
+    } else {
+      false
     }
   }
 
@@ -117,7 +121,15 @@ mod tests {
 
     runtime.register_agent("counter".to_string(), CounterAgent { total: 0 });
 
-    // For now, just test that we can register agents
+    // Register handlers for message types
+    runtime.register_handler(LogAgent { name: "Handler1".to_string(), message_count: 0 });
+    runtime.register_handler(CounterAgent { total: 0 });
+
+    // Send messages - they'll go to all handlers that can handle this message type
+    let num_msg = NumberMessage { value: 42 };
+    assert!(runtime.send_message(num_msg));
+
+    // Test that we can register agents
     assert_eq!(runtime.list_agents().len(), 2);
     assert!(runtime.get_agent_info("logger").is_some());
     assert!(runtime.get_agent_info("counter").is_some());
