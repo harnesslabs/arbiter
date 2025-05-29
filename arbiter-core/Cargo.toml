@@ -16,7 +16,15 @@ tokio                 = { workspace = true, features = ["macros", "sync", "rt"] 
 
 tracing.workspace = true
 
+# WASM dependencies (optional)
+serde_json   = { version = "1.0", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
 [dev-dependencies]
 arbiter-macros = { workspace = true }
 tokio          = { workspace = true, features = ["macros", "full"] }
 tracing-test   = { workspace = true }
+
+[features]
+default = []
+wasm    = ["wasm-bindgen", "serde_json"]

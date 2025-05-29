@@ -145,9 +145,11 @@ dependencies = [
  "async-trait",
  "crossbeam-channel",
  "futures",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-test",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -5,19 +5,205 @@ use std::{
   sync::{Arc, Mutex, MutexGuard},
 };
 
+#[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
+
 use crate::{
   agent::{Agent, AgentContainer, AgentState},
   handler::{Handler, HandlerWrapper, MessageHandler},
 };
 
+#[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct Domain {
-  pub runtime: Arc<Mutex<Runtime>>,
+  runtime: Arc<Mutex<Runtime>>,
 }
 
 impl Domain {
   pub fn new() -> Self { Self { runtime: Arc::new(Mutex::new(Runtime::new())) } }
 
   pub fn as_mut(&mut self) -> MutexGuard<'_, Runtime> { self.runtime.lock().unwrap() }
+
+  /// Get a reference to the runtime Arc for sharing
+  pub fn runtime(&self) -> &Arc<Mutex<Runtime>> { &self.runtime }
+}
+
+impl Clone for Domain {
+  fn clone(&self) -> Self { Self { runtime: Arc::clone(&self.runtime) } }
+}
+
+#[cfg(feature = "wasm")]
+impl Domain {
+  /// Try to acquire a lock on the runtime (non-blocking)
+  pub fn try_lock(
+    &self,
+  ) -> Result<MutexGuard<'_, Runtime>, std::sync::TryLockError<MutexGuard<'_, Runtime>>> {
+    self.runtime.try_lock()
+  }
+}
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+mod wasm_bindings {
+  use wasm_bindgen::prelude::*;
+
+  use super::*;
+
+  #[wasm_bindgen]
+  impl Domain {
+    /// Create a new Domain for WASM
+    #[wasm_bindgen(constructor)]
+    pub fn new_js() -> Domain { Domain::new() }
+
+    /// Get agent state as string
+    #[wasm_bindgen(js_name = "getAgentState")]
+    pub fn get_agent_state_js(&self, agent_id: &str) -> String {
+      if let Ok(runtime) = self.runtime.try_lock() {
+        match runtime.get_agent_state(agent_id) {
+          Some(state) => format!("{:?}", state),
+          None => "NotFound".to_string(),
+        }
+      } else {
+        "Locked".to_string()
+      }
+    }
+
+    /// Start an agent
+    #[wasm_bindgen(js_name = "startAgent")]
+    pub fn start_agent_js(&mut self, agent_id: &str) -> bool {
+      let mut runtime = self.as_mut();
+      runtime.start_agent(agent_id)
+    }
+
+    /// Pause an agent
+    #[wasm_bindgen(js_name = "pauseAgent")]
+    pub fn pause_agent_js(&mut self, agent_id: &str) -> bool {
+      let mut runtime = self.as_mut();
+      runtime.pause_agent(agent_id)
+    }
+
+    /// Stop an agent
+    #[wasm_bindgen(js_name = "stopAgent")]
+    pub fn stop_agent_js(&mut self, agent_id: &str) -> bool {
+      let mut runtime = self.as_mut();
+      runtime.stop_agent(agent_id)
+    }
+
+    /// Resume an agent
+    #[wasm_bindgen(js_name = "resumeAgent")]
+    pub fn resume_agent_js(&mut self, agent_id: &str) -> bool {
+      let mut runtime = self.as_mut();
+      runtime.resume_agent(agent_id)
+    }
+
+    /// Run the runtime (process messages)
+    #[wasm_bindgen(js_name = "run")]
+    pub fn run_js(&mut self) -> usize {
+      let mut runtime = self.as_mut();
+      runtime.run()
+    }
+
+    /// Get queue length
+    #[wasm_bindgen(js_name = "queueLength")]
+    pub fn queue_length_js(&self) -> usize {
+      if let Ok(runtime) = self.runtime.try_lock() {
+        runtime.queue_length()
+      } else {
+        0
+      }
+    }
+
+    /// Check if runtime is idle
+    #[wasm_bindgen(js_name = "isIdle")]
+    pub fn is_idle_js(&self) -> bool {
+      if let Ok(runtime) = self.runtime.try_lock() {
+        runtime.is_idle()
+      } else {
+        false
+      }
+    }
+
+    /// List all agent names as JSON array
+    #[wasm_bindgen(js_name = "listAgents")]
+    pub fn list_agents_js(&self) -> String {
+      if let Ok(runtime) = self.runtime.try_lock() {
+        let agents = runtime.list_agents();
+        serde_json::to_string(&agents).unwrap_or_else(|_| "[]".to_string())
+      } else {
+        "[]".to_string()
+      }
+    }
+
+    /// Remove an agent
+    #[wasm_bindgen(js_name = "removeAgent")]
+    pub fn remove_agent_js(&mut self, agent_id: &str) -> bool {
+      let mut runtime = self.as_mut();
+      runtime.remove_agent(agent_id)
+    }
+
+    /// Start all agents
+    #[wasm_bindgen(js_name = "startAllAgents")]
+    pub fn start_all_agents_js(&mut self) -> usize {
+      let mut runtime = self.as_mut();
+      runtime.start_all_agents()
+    }
+
+    /// Pause all agents
+    #[wasm_bindgen(js_name = "pauseAllAgents")]
+    pub fn pause_all_agents_js(&mut self) -> usize {
+      let mut runtime = self.as_mut();
+      runtime.pause_all_agents()
+    }
+
+    /// Resume all agents
+    #[wasm_bindgen(js_name = "resumeAllAgents")]
+    pub fn resume_all_agents_js(&mut self) -> usize {
+      let mut runtime = self.as_mut();
+      runtime.resume_all_agents()
+    }
+
+    /// Stop all agents
+    #[wasm_bindgen(js_name = "stopAllAgents")]
+    pub fn stop_all_agents_js(&mut self) -> usize {
+      let mut runtime = self.as_mut();
+      runtime.stop_all_agents()
+    }
+
+    /// Clear all agents
+    #[wasm_bindgen(js_name = "clearAllAgents")]
+    pub fn clear_all_agents_js(&mut self) -> usize {
+      let mut runtime = self.as_mut();
+      runtime.clear_all_agents()
+    }
+
+    /// Get agents by state as JSON array
+    #[wasm_bindgen(js_name = "getAgentsByState")]
+    pub fn get_agents_by_state_js(&self, state_str: &str) -> String {
+      if let Ok(runtime) = self.runtime.try_lock() {
+        let state = match state_str {
+          "Running" => crate::agent::AgentState::Running,
+          "Paused" => crate::agent::AgentState::Paused,
+          "Stopped" => crate::agent::AgentState::Stopped,
+          _ => return "[]".to_string(),
+        };
+        let agents = runtime.get_agents_by_state(state);
+        serde_json::to_string(&agents).unwrap_or_else(|_| "[]".to_string())
+      } else {
+        "[]".to_string()
+      }
+    }
+
+    /// Get agent statistics as JSON
+    #[wasm_bindgen(js_name = "getAgentStats")]
+    pub fn get_agent_stats_js(&self) -> String {
+      if let Ok(runtime) = self.runtime.try_lock() {
+        let stats = runtime.get_agent_stats();
+        format!(
+          "{{\"total\":{},\"running\":{},\"paused\":{},\"stopped\":{}}}",
+          stats.total, stats.running, stats.paused, stats.stopped
+        )
+      } else {
+        "{\"total\":0,\"running\":0,\"paused\":0,\"stopped\":0}".to_string()
+      }
+    }
+  }
 }
 
 // Enhanced runtime with agent lifecycle management and mailboxes
@@ -257,6 +443,97 @@ impl Runtime {
   pub fn total_mailbox_messages(&self) -> usize {
     self.agent_mailboxes.values().map(|mb| mb.len()).sum()
   }
+
+  // === BULK AGENT OPERATIONS ===
+
+  /// Start all registered agents
+  pub fn start_all_agents(&mut self) -> usize {
+    let agent_names: Vec<String> = self.agents.keys().cloned().collect();
+    let mut started = 0;
+    for name in agent_names {
+      if self.start_agent(&name) {
+        started += 1;
+      }
+    }
+    started
+  }
+
+  /// Pause all agents
+  pub fn pause_all_agents(&mut self) -> usize {
+    let agent_names: Vec<String> = self.agents.keys().cloned().collect();
+    let mut paused = 0;
+    for name in agent_names {
+      if self.pause_agent(&name) {
+        paused += 1;
+      }
+    }
+    paused
+  }
+
+  /// Resume all agents
+  pub fn resume_all_agents(&mut self) -> usize {
+    let agent_names: Vec<String> = self.agents.keys().cloned().collect();
+    let mut resumed = 0;
+    for name in agent_names {
+      if self.resume_agent(&name) {
+        resumed += 1;
+      }
+    }
+    resumed
+  }
+
+  /// Stop all agents
+  pub fn stop_all_agents(&mut self) -> usize {
+    let agent_names: Vec<String> = self.agents.keys().cloned().collect();
+    let mut stopped = 0;
+    for name in agent_names {
+      if self.stop_agent(&name) {
+        stopped += 1;
+      }
+    }
+    stopped
+  }
+
+  /// Get agents by state
+  pub fn get_agents_by_state(&self, state: AgentState) -> Vec<String> {
+    self
+      .agents
+      .iter()
+      .filter_map(|(name, agent)| if agent.state() == state { Some(name.clone()) } else { None })
+      .collect()
+  }
+
+  /// Get count of agents by state
+  pub fn count_agents_by_state(&self, state: AgentState) -> usize {
+    self.agents.values().filter(|agent| agent.state() == state).count()
+  }
+
+  /// Get agent statistics
+  pub fn get_agent_stats(&self) -> AgentStats {
+    let total = self.agents.len();
+    let running = self.count_agents_by_state(AgentState::Running);
+    let paused = self.count_agents_by_state(AgentState::Paused);
+    let stopped = self.count_agents_by_state(AgentState::Stopped);
+
+    AgentStats { total, running, paused, stopped }
+  }
+
+  /// Remove all agents
+  pub fn clear_all_agents(&mut self) -> usize {
+    let count = self.agents.len();
+    self.agents.clear();
+    self.agent_mailboxes.clear();
+    count
+  }
+}
+
+/// Statistics about agents in the runtime
+#[derive(Debug, Clone)]
+pub struct AgentStats {
+  pub total:   usize,
+  pub running: usize,
+  pub paused:  usize,
+  pub stopped: usize,
 }
 
 #[cfg(test)]

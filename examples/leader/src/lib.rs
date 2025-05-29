@@ -5,15 +5,12 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use std::{
-  collections::HashMap,
-  sync::{Arc, Mutex},
-};
+use std::collections::HashMap;
 
 use arbiter_core::{
   agent::{Agent, AgentState},
   handler::Handler,
-  runtime::{Domain, Runtime},
+  runtime::Domain,
 };
 use gloo_timers::future::TimeoutFuture;
 use js_sys;
@@ -145,21 +142,21 @@ impl Canvas {
         match agent_type {
           Some(AgentType::Leader) => {
             // Draw leader as red circle
-            context.set_fill_style(&JsValue::from_str("#ff4444"));
+            context.set_fill_style_str("#ff4444");
             context.begin_path();
             context.arc(position.x, position.y, 12.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
             context.fill();
           },
           Some(AgentType::Follower) => {
             // Draw follower as blue circle
-            context.set_fill_style(&JsValue::from_str("#4444ff"));
+            context.set_fill_style_str("#4444ff");
             context.begin_path();
             context.arc(position.x, position.y, 8.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
             context.fill();
           },
           None => {
             // Unknown agent type, draw as gray
-            context.set_fill_style(&JsValue::from_str("#888888"));
+            context.set_fill_style_str("#888888");
             context.begin_path();
             context.arc(position.x, position.y, 6.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
             context.fill();
@@ -168,7 +165,7 @@ impl Canvas {
       }
 
       // Draw status
-      context.set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.7)"));
+      context.set_fill_style_str("rgba(0, 0, 0, 0.7)");
       context.set_font("12px monospace");
       context.set_text_align("left");
       context
@@ -228,60 +225,8 @@ impl Handler<Tick> for Canvas {
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
     let leader_positions = self.get_leader_positions();
-    thread::sleep(Duration::from_millis(10));
     Tick { leader_positions }
   }
-}
-
-/// Statistics about the simulation
-#[wasm_bindgen]
-pub struct SimulationStats {
-  leader_count:   usize,
-  follower_count: usize,
-  total_agents:   usize,
-  running_agents: usize,
-  paused_agents:  usize,
-  stopped_agents: usize,
-}
-
-#[wasm_bindgen]
-impl SimulationStats {
-  #[wasm_bindgen(constructor)]
-  pub fn new(
-    leader_count: usize,
-    follower_count: usize,
-    total_agents: usize,
-    running_agents: usize,
-    paused_agents: usize,
-    stopped_agents: usize,
-  ) -> Self {
-    Self {
-      leader_count,
-      follower_count,
-      total_agents,
-      running_agents,
-      paused_agents,
-      stopped_agents,
-    }
-  }
-
-  #[wasm_bindgen(getter)]
-  pub fn leader_count(&self) -> usize { self.leader_count }
-
-  #[wasm_bindgen(getter)]
-  pub fn follower_count(&self) -> usize { self.follower_count }
-
-  #[wasm_bindgen(getter)]
-  pub fn total_agents(&self) -> usize { self.total_agents }
-
-  #[wasm_bindgen(getter)]
-  pub fn running_agents(&self) -> usize { self.running_agents }
-
-  #[wasm_bindgen(getter)]
-  pub fn paused_agents(&self) -> usize { self.paused_agents }
-
-  #[wasm_bindgen(getter)]
-  pub fn stopped_agents(&self) -> usize { self.stopped_agents }
 }
 
 /// Main simulation structure using arbiter-core
@@ -291,7 +236,6 @@ pub struct LeaderFollowerSimulation {
   canvas_height: f64,
   next_id:       u32,
   domain:        Domain,
-  agents:        HashMap<String, AgentType>,
 }
 
 #[wasm_bindgen]
@@ -301,29 +245,50 @@ impl LeaderFollowerSimulation {
   pub fn new(canvas_width: f64, canvas_height: f64) -> Self {
     console_error_panic_hook::set_once();
 
-    let domain = Domain::new();
+    let mut domain = Domain::new();
 
     // Create and register core agents
     let canvas = Canvas::new(canvas_width, canvas_height);
 
-    let mut runtime = domain.as_mut();
+    {
+      let mut runtime = domain.as_mut();
 
-    // Add and start core agents
-    runtime.add_and_start_agent("canvas".to_string(), canvas.clone());
+      // Add and start core agents
+      runtime.add_and_start_agent("canvas".to_string(), canvas.clone());
 
-    // Register handlers for core agents
-    runtime.register_handler::<Canvas, Tick>(canvas.clone());
-    runtime.register_handler::<Canvas, UpdatePosition>(canvas.clone());
-    runtime.register_handler::<Canvas, RegisterAgentType>(canvas);
+      // Register handlers for core agents
+      runtime.register_handler::<Canvas, Tick>(canvas.clone());
+      runtime.register_handler::<Canvas, UpdatePosition>(canvas.clone());
+      runtime.register_handler::<Canvas, RegisterAgentType>(canvas);
 
-    runtime.send_message(Tick { leader_positions: Vec::new() });
+      runtime.send_message(Tick { leader_positions: Vec::new() });
 
-    runtime.run();
+      runtime.run();
+    } // Drop the runtime borrow here
 
-    Self { canvas_width, canvas_height, next_id: 0, domain, agents: HashMap::new() }
+    // Start the automatic tick loop to keep agents moving
+    Self::start_tick_loop(domain.clone());
+
+    Self { canvas_width, canvas_height, next_id: 0, domain }
   }
 
-  /// Add an agent at the specified position
+  /// Start the automatic tick loop to drive the simulation
+  fn start_tick_loop(domain: Domain) {
+    spawn_local(async move {
+      loop {
+        // Send tick to drive the simulation
+        if let Ok(mut runtime) = domain.runtime().try_lock() {
+          runtime.send_message(Tick { leader_positions: Vec::new() });
+          runtime.run();
+        }
+
+        // Wait before next tick (~20 FPS)
+        TimeoutFuture::new(50).await;
+      }
+    });
+  }
+
+  /// Add an agent at the specified position (simulation-specific)
   #[wasm_bindgen]
   pub fn add_agent(&mut self, x: f64, y: f64, is_leader: bool) -> String {
     let agent_id = format!("agent_{}", self.next_id);
@@ -370,7 +335,6 @@ impl LeaderFollowerSimulation {
       // Process messages to ensure registration and initial drawing happen
       runtime.run();
 
-      self.agents.insert(agent_id.clone(), agent_type.clone());
       console::log_1(
         &format!("Added agent {} ({:?}) at ({:.1}, {:.1})", agent_id, agent_type, x, y).into(),
       );
@@ -382,191 +346,9 @@ impl LeaderFollowerSimulation {
     }
   }
 
-  /// Start a specific agent
-  #[wasm_bindgen]
-  pub fn start_agent(&mut self, agent_id: &str) -> bool {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      let success = runtime.start_agent(agent_id);
-      if success {
-        console::log_1(&format!("Started agent {}", agent_id).into());
-      }
-      success
-    } else {
-      console::log_1(&format!("Could not acquire lock to start agent {}", agent_id).into());
-      false
-    }
-  }
-
-  /// Pause a specific agent
-  #[wasm_bindgen]
-  pub fn pause_agent(&mut self, agent_id: &str) -> bool {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      let success = runtime.pause_agent(agent_id);
-      if success {
-        console::log_1(&format!("Paused agent {}", agent_id).into());
-      }
-      success
-    } else {
-      console::log_1(&format!("Could not acquire lock to pause agent {}", agent_id).into());
-      false
-    }
-  }
-
-  /// Resume a specific agent
-  #[wasm_bindgen]
-  pub fn resume_agent(&mut self, agent_id: &str) -> bool {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      let success = runtime.resume_agent(agent_id);
-      if success {
-        console::log_1(&format!("Resumed agent {}", agent_id).into());
-      }
-      success
-    } else {
-      console::log_1(&format!("Could not acquire lock to resume agent {}", agent_id).into());
-      false
-    }
-  }
-
-  /// Stop a specific agent
-  #[wasm_bindgen]
-  pub fn stop_agent(&mut self, agent_id: &str) -> bool {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      let success = runtime.stop_agent(agent_id);
-      if success {
-        console::log_1(&format!("Stopped agent {}", agent_id).into());
-      }
-      success
-    } else {
-      console::log_1(&format!("Could not acquire lock to stop agent {}", agent_id).into());
-      false
-    }
-  }
-
-  /// Remove a specific agent
-  #[wasm_bindgen]
-  pub fn remove_agent(&mut self, agent_id: &str) -> bool {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      let success = runtime.remove_agent(agent_id);
-      if success {
-        self.agents.remove(agent_id);
-        console::log_1(&format!("Removed agent {}", agent_id).into());
-      }
-      success
-    } else {
-      console::log_1(&format!("Could not acquire lock to remove agent {}", agent_id).into());
-      false
-    }
-  }
-
-  /// Clear all agents and reset simulation
-  #[wasm_bindgen]
-  pub fn clear_agents(&mut self) {
-    if let Ok(mut runtime) = self.runtime.try_lock() {
-      for agent_id in self.agents.keys() {
-        runtime.remove_agent(agent_id);
-      }
-
-      self.agents.clear();
-      console::log_1(&"Cleared all agents".into());
-    } else {
-      console::log_1(&"Could not acquire lock to clear agents".into());
-    }
-  }
-
-  /// Get simulation statistics
-  #[wasm_bindgen]
-  pub fn get_stats(&self) -> SimulationStats {
-    let leader_count = self.agents.values().filter(|t| matches!(t, AgentType::Leader)).count();
-    let follower_count = self.agents.len() - leader_count;
-
-    let mut running_agents = 0;
-    let mut paused_agents = 0;
-    let mut stopped_agents = 0;
-
-    if let Ok(runtime) = self.runtime.try_lock() {
-      for agent_id in self.agents.keys() {
-        match runtime.get_agent_state(agent_id) {
-          Some(AgentState::Running) => running_agents += 1,
-          Some(AgentState::Paused) => paused_agents += 1,
-          Some(AgentState::Stopped) => stopped_agents += 1,
-          None => stopped_agents += 1, // Treat missing agents as stopped
-        }
-      }
-    } else {
-      // If we can't get the lock, treat all agents as stopped
-      stopped_agents = self.agents.len();
-    }
-
-    SimulationStats::new(
-      leader_count,
-      follower_count,
-      self.agents.len(),
-      running_agents,
-      paused_agents,
-      stopped_agents,
-    )
-  }
-
-  /// Get the number of agents
-  #[wasm_bindgen]
-  pub fn agent_count(&self) -> usize { self.agents.len() }
-
-  /// Check if simulation is running
-  #[wasm_bindgen]
-  pub fn is_running(&self) -> bool {
-    if let Ok(runtime) = self.runtime.try_lock() {
-      !self.agents.is_empty() && runtime.get_agent_state("canvas").is_some()
-    } else {
-      false
-    }
-  }
-
-  /// Get list of agent IDs and their states
-  #[wasm_bindgen]
-  pub fn get_agent_list(&self) -> String {
-    if let Ok(runtime) = self.runtime.try_lock() {
-      let mut agents_info = Vec::new();
-
-      for (agent_id, agent_type) in &self.agents {
-        let state = runtime.get_agent_state(agent_id).unwrap_or(AgentState::Stopped);
-        agents_info.push(format!("{}: {:?} ({:?})", agent_id, agent_type, state));
-      }
-
-      agents_info.join("\n")
-    } else {
-      "Could not acquire lock to get agent list".to_string()
-    }
-  }
-
-  /// Get agent IDs as a JSON-compatible string
-  #[wasm_bindgen]
-  pub fn get_agent_ids(&self) -> String {
-    let agent_ids: Vec<&String> = self.agents.keys().collect();
-    format!("[{}]", agent_ids.iter().map(|id| format!("\"{}\"", id)).collect::<Vec<_>>().join(","))
-  }
-
-  /// Get individual agent info as JSON string
-  #[wasm_bindgen]
-  pub fn get_agent_info(&self, agent_id: &str) -> String {
-    if let Ok(runtime) = self.runtime.try_lock() {
-      if let Some(agent_type) = self.agents.get(agent_id) {
-        let state = runtime.get_agent_state(agent_id).unwrap_or(AgentState::Stopped);
-        format!(
-          "{{\"id\":\"{}\",\"type\":\"{:?}\",\"state\":\"{:?}\"}}",
-          agent_id, agent_type, state
-        )
-      } else {
-        "null".to_string()
-      }
-    } else {
-      // If we can't get the lock, return a "busy" state
-      if let Some(agent_type) = self.agents.get(agent_id) {
-        format!("{{\"id\":\"{}\",\"type\":\"{:?}\",\"state\":\"Busy\"}}", agent_id, agent_type)
-      } else {
-        "null".to_string()
-      }
-    }
-  }
+  /// Get direct access to the runtime domain (for advanced control when wasm feature is enabled)
+  #[wasm_bindgen(js_name = "getDomain")]
+  pub fn get_domain(&mut self) -> Domain { self.domain.clone() }
 }
 
 /// Initialize the WASM module
