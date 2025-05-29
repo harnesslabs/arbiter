@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+// TODO (autoparallel): This could be generalized to handle different kinds of locking. In which
+// case we'd make this a trait and have a default implementation that uses Arc<Mutex<A>>.
 pub struct Context<A> {
   agent: Arc<Mutex<A>>,
 }
@@ -36,8 +38,8 @@ mod tests {
     type Message = i32;
     type Reply = ();
 
-    fn handle(&self, message: i32, agent: &mut TestAgent) -> () {
-      println!("Handler 1 - Received message: {}", message);
+    fn handle(&self, message: Self::Message, agent: &mut TestAgent) -> Self::Reply {
+      println!("Handler 1 - Received message: {message}");
       agent.state += message;
       println!("Handler 1 - Updated state: {}", agent.state);
     }
@@ -50,7 +52,7 @@ mod tests {
     type Message = i32;
     type Reply = i32;
 
-    fn handle(&self, message: i32, agent: &mut TestAgent) -> i32 {
+    fn handle(&self, message: Self::Message, agent: &mut TestAgent) -> Self::Reply {
       println!("Handler 2 - Multiplying state {} by {}", agent.state, message);
       agent.state *= message;
       println!("Handler 2 - Updated state: {}", agent.state);
