@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-  agent::{Agent, Context},
+  agent::{Agent, AgentContainer, Context},
   handler::{Handler, HandlerWrapper, MessageHandler},
 };
 
@@ -19,9 +19,9 @@ impl Runtime {
   pub fn new() -> Self { Self { agents: HashMap::new(), handlers: HashMap::new() } }
 
   // Register any agent that implements the Agent trait
-  pub fn register_agent<A: Agent + Send + Sync + 'static>(&mut self, name: String, agent: A) {
-    let context = Context::new(agent);
-    self.agents.insert(name, Box::new(context));
+  pub fn register_agent<A: Agent>(&mut self, name: String, agent: A) {
+    let container = AgentContainer::new(agent);
+    self.agents.insert(name, Box::new(container));
   }
 
   // Register a handler for a specific message type
@@ -77,7 +77,8 @@ mod tests {
     value: i32,
   }
 
-  // Example agent types
+  // Example agent types - simple structs with clear state
+  #[derive(Clone)]
   struct LogAgent {
     name:          String,
     message_count: i32,
@@ -85,6 +86,7 @@ mod tests {
 
   impl Agent for LogAgent {}
 
+  #[derive(Clone)]
   struct CounterAgent {
     total: i32,
   }
@@ -110,10 +112,10 @@ mod tests {
   }
 
   #[test]
-  fn test_runtime_basic() {
+  fn test_runtime_with_containers() {
     let mut runtime = Runtime::new();
 
-    // Register different types of agents
+    // Register different types of agents - they get wrapped in containers automatically
     runtime.register_agent("logger".to_string(), LogAgent {
       name:          "Logger1".to_string(),
       message_count: 0,
@@ -121,7 +123,7 @@ mod tests {
 
     runtime.register_agent("counter".to_string(), CounterAgent { total: 0 });
 
-    // Register handlers for message types
+    // Register standalone handlers for message types
     runtime.register_handler(LogAgent { name: "Handler1".to_string(), message_count: 0 });
     runtime.register_handler(CounterAgent { total: 0 });
 

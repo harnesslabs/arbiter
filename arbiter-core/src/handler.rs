@@ -12,15 +12,16 @@ pub trait Handler<M> {
   fn handle(&mut self, message: M) -> Self::Reply;
 }
 
+// Type-erased handler trait
 pub trait MessageHandler: Send + Sync {
   fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any>;
   fn message_type_id(&self) -> TypeId;
 }
 
 // Wrapper to make Handler<M> work as MessageHandler
-pub(crate) struct HandlerWrapper<H, M> {
-  pub(crate) handler:  H,
-  pub(crate) _phantom: PhantomData<M>,
+pub struct HandlerWrapper<H, M> {
+  pub handler:  H,
+  pub _phantom: PhantomData<M>,
 }
 
 impl<H, M> MessageHandler for HandlerWrapper<H, M>
