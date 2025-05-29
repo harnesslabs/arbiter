@@ -16,6 +16,7 @@ use arbiter_core::{
   runtime::Runtime,
 };
 use gloo_timers::future::TimeoutFuture;
+use js_sys;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -449,6 +450,7 @@ pub struct LeaderFollowerSimulation {
   next_id:                 u32,
   runtime:                 Arc<Mutex<Runtime>>,
   agents:                  HashMap<String, AgentType>,
+  agent_positions:         HashMap<String, Position>, // Track current positions
   is_running:              bool,
   simulation_loop_running: bool,
   is_paused:               bool,
@@ -477,6 +479,7 @@ impl LeaderFollowerSimulation {
       next_id: 0,
       runtime: Arc::new(Mutex::new(runtime)),
       agents: HashMap::new(),
+      agent_positions: HashMap::new(),
       is_running: false,
       simulation_loop_running: false,
       is_paused: false,
@@ -534,6 +537,7 @@ impl LeaderFollowerSimulation {
       runtime.run();
 
       self.agents.insert(agent_id.clone(), agent_type.clone());
+      self.agent_positions.insert(agent_id.clone(), Position::new(x, y));
       console::log_1(
         &format!("Added agent {} ({:?}) at ({:.1}, {:.1})", agent_id, agent_type, x, y).into(),
       );
@@ -596,6 +600,7 @@ impl LeaderFollowerSimulation {
     let success = runtime.remove_agent(agent_id);
     if success {
       self.agents.remove(agent_id);
+      self.agent_positions.remove(agent_id);
       console::log_1(&format!("Removed agent {}", agent_id).into());
     }
     success
@@ -665,6 +670,7 @@ impl LeaderFollowerSimulation {
     // Start simulation loop
     let runtime_clone = Arc::clone(&self.runtime);
     let agents_clone = self.agents.clone();
+    let mut agent_positions = self.agent_positions.clone();
 
     spawn_local(async move {
       while {
@@ -675,17 +681,76 @@ impl LeaderFollowerSimulation {
         };
         should_continue
       } {
-        // Send tick messages to all leader agents
-        {
+        // Step 1: Send tick messages to all leader agents and collect position updates
+        let position_updates = {
           let mut runtime = runtime_clone.lock().unwrap();
 
+          // Send tick to leaders
           for (agent_id, agent_type) in &agents_clone {
             if *agent_type == AgentType::Leader {
               runtime.send_message(Tick);
             }
           }
 
-          // Process all the tick messages
+          // Process leader movements - this will generate UpdatePosition messages
+          runtime.run();
+
+          // For now, we'll simulate getting the position updates
+          // In a real implementation, we'd need to collect the actual replies
+          let mut updates = Vec::new();
+          for (agent_id, agent_type) in &agents_clone {
+            if *agent_type == AgentType::Leader {
+              if let Some(current_pos) = agent_positions.get(agent_id) {
+                // Simulate leader movement (this is a temporary solution)
+                let time = (js_sys::Date::now() / 1000.0) as f64;
+                let speed = 3.0;
+                let new_x = 400.0 + (time * 0.5 + agent_id.len() as f64).sin() * 150.0;
+                let new_y = 300.0 + (time * 0.3 + agent_id.len() as f64).cos() * 100.0;
+                let new_x = new_x.max(20.0).min(780.0);
+                let new_y = new_y.max(20.0).min(580.0);
+
+                let new_pos = Position::new(new_x, new_y);
+                updates.push((agent_id.clone(), new_pos));
+              }
+            }
+          }
+          updates
+        };
+
+        // Update our position tracking
+        for (agent_id, new_pos) in &position_updates {
+          agent_positions.insert(agent_id.clone(), new_pos.clone());
+
+          // Send position update to renderer
+          let mut runtime = runtime_clone.lock().unwrap();
+          runtime
+            .send_message(UpdatePosition { agent_id: agent_id.clone(), position: new_pos.clone() });
+        }
+
+        // Step 2: Collect leader positions and send to followers
+        {
+          let mut runtime = runtime_clone.lock().unwrap();
+
+          // Collect current leader positions from our tracking
+          let mut leader_positions = Vec::new();
+          for (agent_id, agent_type) in &agents_clone {
+            if *agent_type == AgentType::Leader {
+              if let Some(pos) = agent_positions.get(agent_id) {
+                leader_positions.push((agent_id.clone(), pos.clone()));
+              }
+            }
+          }
+
+          // Send leader positions to all followers
+          if !leader_positions.is_empty() {
+            for (agent_id, agent_type) in &agents_clone {
+              if *agent_type == AgentType::Follower {
+                runtime.send_message(LeaderPositions { positions: leader_positions.clone() });
+              }
+            }
+          }
+
+          // Process follower movements and rendering
           runtime.run();
         }
 
@@ -775,6 +840,7 @@ impl LeaderFollowerSimulation {
     }
 
     self.agents.clear();
+    self.agent_positions.clear();
     console::log_1(&"Cleared all agents".into());
   }
 
