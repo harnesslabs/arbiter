@@ -13,6 +13,11 @@ impl<A> Context<A> {
     let mut guard = self.agent.lock().unwrap();
     f(&mut *guard)
   }
+
+  pub fn handle_with<H>(&self, handler: &H, message: H::Message) -> H::Reply
+  where H: crate::handler::Handler<A> {
+    self.with(|agent| handler.handle(message, agent))
+  }
 }
 
 #[cfg(test)]
@@ -31,12 +36,10 @@ mod tests {
     type Message = i32;
     type Reply = ();
 
-    fn handle(&self, message: i32, context: &Context<TestAgent>) -> () {
-      context.with(|agent| {
-        println!("Handler 1 - Received message: {}", message);
-        agent.state += message;
-        println!("Handler 1 - Updated state: {}", agent.state);
-      });
+    fn handle(&self, message: i32, agent: &mut TestAgent) -> () {
+      println!("Handler 1 - Received message: {}", message);
+      agent.state += message;
+      println!("Handler 1 - Updated state: {}", agent.state);
     }
   }
 
@@ -47,28 +50,26 @@ mod tests {
     type Message = i32;
     type Reply = i32;
 
-    fn handle(&self, message: i32, context: &Context<TestAgent>) -> i32 {
-      context.with(|agent| {
-        println!("Handler 2 - Multiplying state {} by {}", agent.state, message);
-        agent.state *= message;
-        println!("Handler 2 - Updated state: {}", agent.state);
-        agent.state
-      })
+    fn handle(&self, message: i32, agent: &mut TestAgent) -> i32 {
+      println!("Handler 2 - Multiplying state {} by {}", agent.state, message);
+      agent.state *= message;
+      println!("Handler 2 - Updated state: {}", agent.state);
+      agent.state
     }
   }
 
   #[test]
   fn test_agent_multiple_handlers() {
     let agent = TestAgent { state: 1 };
-    let context = Context::new(agent); // Using Context::new instead of into_context
+    let context = Context::new(agent);
 
     // Use first handler
     let handler1 = IncrementHandler;
-    handler1.handle(5, &context);
+    context.handle_with(&handler1, 5);
 
     // Use second handler on same agent state
     let handler2 = MultiplyHandler;
-    let result = handler2.handle(3, &context);
+    let result = context.handle_with(&handler2, 3);
     assert_eq!(result, 18); // (1 + 5) * 3 = 18
 
     // Verify final state

@@ -5,5 +5,5 @@ pub trait Handler<A> {
   type Message;
   type Reply;
 
-  fn handle(&self, message: Self::Message, context: &Context<A>) -> Self::Reply;
+  fn handle(&self, message: Self::Message, agent: &mut A) -> Self::Reply;
 }
