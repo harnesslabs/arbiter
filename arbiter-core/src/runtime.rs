@@ -227,19 +227,68 @@ pub trait RuntimeAgent: Send + Sync {
   fn agent_type_name(&self) -> &'static str;
 }
 
+// Wrapper for shared agents to implement RuntimeAgent
+struct SharedAgentWrapper<A: Agent> {
+  shared_agent: crate::agent::SharedAgent<A>,
+}
+
+impl<A: Agent> RuntimeAgent for SharedAgentWrapper<A> {
+  fn start(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.start();
+    }
+  }
+
+  fn pause(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.pause();
+    }
+  }
+
+  fn stop(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.stop();
+    }
+  }
+
+  fn resume(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.resume();
+    }
+  }
+
+  fn state(&self) -> AgentState {
+    if let Ok(container) = self.shared_agent.lock() {
+      container.state().clone()
+    } else {
+      AgentState::Stopped
+    }
+  }
+
+  fn is_active(&self) -> bool {
+    if let Ok(container) = self.shared_agent.lock() {
+      container.is_active()
+    } else {
+      false
+    }
+  }
+
+  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
+}
+
 // Implement RuntimeAgent for AgentContainer<T>
-impl<A: Agent> RuntimeAgent for AgentContainer<A> {
-  fn start(&mut self) { AgentContainer::start(self); }
+impl<A: Agent> RuntimeAgent for crate::agent::AgentContainer<A> {
+  fn start(&mut self) { crate::agent::AgentContainer::start(self); }
 
-  fn pause(&mut self) { AgentContainer::pause(self); }
+  fn pause(&mut self) { crate::agent::AgentContainer::pause(self); }
 
-  fn stop(&mut self) { AgentContainer::stop(self); }
+  fn stop(&mut self) { crate::agent::AgentContainer::stop(self); }
 
-  fn resume(&mut self) { AgentContainer::resume(self); }
+  fn resume(&mut self) { crate::agent::AgentContainer::resume(self); }
 
   fn state(&self) -> AgentState { self.state().clone() }
 
-  fn is_active(&self) -> bool { AgentContainer::is_active(self) }
+  fn is_active(&self) -> bool { crate::agent::AgentContainer::is_active(self) }
 
   fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
 }
@@ -255,18 +304,6 @@ impl Runtime {
     }
   }
 
-  pub fn register_agent_container<A: Agent>(
-    &mut self,
-    name: String,
-    agent: AgentContainer<A>,
-  ) -> bool {
-    if self.agents.contains_key(&name) {
-      return false; // Agent name already exists
-    }
-    self.agents.insert(name, Box::new(agent));
-    true
-  }
-
   pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
     self.max_iterations = max_iterations;
     self
@@ -278,8 +315,27 @@ impl Runtime {
       return false; // Agent name already exists
     }
 
-    let container = AgentContainer::new(agent);
+    let container = crate::agent::AgentContainer::new(agent);
     self.agents.insert(name.clone(), Box::new(container));
+    self.agent_mailboxes.insert(name, VecDeque::new());
+    true
+  }
+
+  // Register a shared agent (for when you need to create handlers for it)
+  pub fn register_shared_agent<A: Agent>(
+    &mut self,
+    name: String,
+    shared_agent: crate::agent::SharedAgent<A>,
+  ) -> bool {
+    if self.agents.contains_key(&name) {
+      return false; // Agent name already exists
+    }
+
+    // We need to extract the container to register as RuntimeAgent
+    // This is a bit tricky with the shared ownership, but we can clone the Arc
+    // and create a wrapper that delegates to the shared agent
+    let wrapper = SharedAgentWrapper { shared_agent };
+    self.agents.insert(name.clone(), Box::new(wrapper));
     self.agent_mailboxes.insert(name, VecDeque::new());
     true
   }
@@ -312,6 +368,16 @@ impl Runtime {
     let type_id = TypeId::of::<M>();
     let wrapped = HandlerWrapper { handler, _phantom: PhantomData };
     self.handlers.entry(type_id).or_insert_with(Vec::new).push(Box::new(wrapped));
+  }
+
+  // Register an agent handler for a specific message type
+  pub fn register_agent_handler<A, M>(&mut self, handler: crate::agent::AgentHandler<A, M>)
+  where
+    A: Agent + Handler<M>,
+    M: Clone + Send + Sync + 'static,
+    A::Reply: Send + Sync + 'static, {
+    let type_id = TypeId::of::<M>();
+    self.handlers.entry(type_id).or_insert_with(Vec::new).push(Box::new(handler));
   }
 
   // Send a message - adds to queue for processing

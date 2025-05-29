@@ -1,8 +1,9 @@
 use std::{
-  any::{Any, TypeId},
-  collections::HashMap,
+  any::Any,
   sync::{Arc, Mutex},
 };
+
+use crate::handler::{Handler, MessageHandler};
 
 // Agent lifecycle states
 #[derive(Debug, Clone, PartialEq)]
@@ -32,12 +33,13 @@ pub trait Agent: Send + Sync + 'static {
   }
 }
 
+// Shared wrapper for an agent with thread-safe access
+pub type SharedAgent<A> = Arc<Mutex<AgentContainer<A>>>;
+
 // Container that manages handlers for an agent
 pub struct AgentContainer<A: Agent> {
-  agent:               A,
-  state:               AgentState,
-  registered_handlers: HashMap<TypeId, bool>, /* TODO: tracks by message type, but we may also
-                                               * want to track the response type too. */
+  agent: A,
+  state: AgentState,
 }
 
 impl<A: Agent> AgentContainer<A> {
@@ -45,9 +47,11 @@ impl<A: Agent> AgentContainer<A> {
     Self {
       agent,
       state: AgentState::Stopped, // Agents start in stopped state
-      registered_handlers: HashMap::new(),
     }
   }
+
+  // Create a shared version wrapped in Arc<Mutex<>>
+  pub fn shared(agent: A) -> SharedAgent<A> { Arc::new(Mutex::new(Self::new(agent))) }
 
   // Lifecycle management methods
   pub fn start(&mut self) {
@@ -84,40 +88,48 @@ impl<A: Agent> AgentContainer<A> {
   // Check if agent can process messages
   pub fn is_active(&self) -> bool { self.state == AgentState::Running }
 
-  // Register the agent as a handler for message type M
-  pub fn register_handler<M>(&mut self)
-  where
-    A: crate::handler::Handler<M>,
-    M: Any + Send + Sync + Clone + 'static, {
-    let type_id = TypeId::of::<M>();
-    self.registered_handlers.insert(type_id, true);
-  }
-
-  // Handle a message by calling the agent's handler directly - only if agent is active
-  pub fn handle_message<M>(&mut self, message: M) -> Option<Box<dyn Any>>
-  where
-    A: crate::handler::Handler<M>,
-    M: Any + Send + Sync + Clone + 'static,
-    A::Reply: 'static, {
-    // Only process messages if agent is running
-    if !self.is_active() {
-      return None;
-    }
-
-    let type_id = TypeId::of::<M>();
-    if self.registered_handlers.contains_key(&type_id) {
-      let reply = self.agent.handle(message);
-      Some(Box::new(reply))
-    } else {
-      None
-    }
-  }
-
   // Get mutable access to the underlying agent
   pub fn agent_mut(&mut self) -> &mut A { &mut self.agent }
 
   // Get immutable access to the underlying agent
   pub fn agent(&self) -> &A { &self.agent }
+}
+
+// Handler wrapper that delegates to an agent's handler implementation
+pub struct AgentHandler<A, M>
+where
+  A: Agent + Handler<M>,
+  M: Clone + Send + Sync + 'static, {
+  agent:    SharedAgent<A>,
+  _phantom: std::marker::PhantomData<M>,
+}
+
+impl<A, M> AgentHandler<A, M>
+where
+  A: Agent + Handler<M>,
+  M: Clone + Send + Sync + 'static,
+{
+  pub fn new(agent: SharedAgent<A>) -> Self { Self { agent, _phantom: std::marker::PhantomData } }
+}
+
+impl<A, M> MessageHandler for AgentHandler<A, M>
+where
+  A: Agent + Handler<M>,
+  M: Clone + Send + Sync + 'static,
+  A::Reply: Send + Sync + 'static,
+{
+  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any + Send + Sync> {
+    if let Some(typed_message) = message.downcast_ref::<M>() {
+      if let Ok(mut container) = self.agent.lock() {
+        // Only process if agent is active
+        if container.is_active() {
+          let reply = container.agent_mut().handle(typed_message.clone());
+          return Box::new(reply);
+        }
+      }
+    }
+    Box::new(())
+  }
 }
 
 // TODO (autoparallel): This could be generalized to handle different kinds of locking. In which
@@ -179,80 +191,110 @@ mod tests {
   }
 
   #[test]
-  fn test_agent_container() {
+  fn test_agent_handlers() {
     // Create simple agent
     let test_agent = TestAgent { state: 1 };
+    let shared_agent = AgentContainer::shared(test_agent);
 
-    // Wrap in container and register handlers
-    let mut container = AgentContainer::new(test_agent);
-    container.register_handler::<Increment>();
-    container.register_handler::<Multiply>();
+    // Create handlers for different message types
+    let mut increment_handler = AgentHandler::<TestAgent, Increment>::new(shared_agent.clone());
+    let mut multiply_handler = AgentHandler::<TestAgent, Multiply>::new(shared_agent.clone());
 
     // Agent starts in stopped state - messages should be ignored
-    assert_eq!(container.state(), &AgentState::Stopped);
-    assert!(!container.is_active());
+    {
+      let container = shared_agent.lock().unwrap();
+      assert_eq!(container.state(), &AgentState::Stopped);
+      assert!(!container.is_active());
+    }
 
     let increment = Increment(5);
-    let result = container.handle_message(increment);
-    assert!(result.is_none()); // Should return None because agent is stopped
-    assert_eq!(container.agent().state, 1); // State should be unchanged
+    let result = increment_handler.handle_message(&increment);
+    // Should return () because agent is stopped
+    {
+      let container = shared_agent.lock().unwrap();
+      assert_eq!(container.agent().state, 1); // State should be unchanged
+    }
 
     // Start the agent
-    container.start();
-    assert_eq!(container.state(), &AgentState::Running);
-    assert!(container.is_active());
+    {
+      let mut container = shared_agent.lock().unwrap();
+      container.start();
+      assert_eq!(container.state(), &AgentState::Running);
+      assert!(container.is_active());
+    }
 
     // Now messages should be processed
     let increment = Increment(5);
-    let result = container.handle_message(increment);
-    assert!(result.is_some()); // Should process message now
+    let _result = increment_handler.handle_message(&increment);
 
     let multiply = Multiply(3);
-    let _result = container.handle_message(multiply);
+    let _result = multiply_handler.handle_message(&multiply);
 
     // Check final state
-    assert_eq!(container.agent().state, 18); // (1 + 5) * 3 = 18
+    {
+      let container = shared_agent.lock().unwrap();
+      assert_eq!(container.agent().state, 18); // (1 + 5) * 3 = 18
+    }
   }
 
   #[test]
   fn test_agent_lifecycle() {
     let test_agent = TestAgent { state: 10 };
-    let mut container = AgentContainer::new(test_agent);
-    container.register_handler::<Increment>();
+    let shared_agent = AgentContainer::shared(test_agent);
+    let mut increment_handler = AgentHandler::<TestAgent, Increment>::new(shared_agent.clone());
 
     // Test lifecycle transitions
-    assert_eq!(container.state(), &AgentState::Stopped);
+    {
+      let container = shared_agent.lock().unwrap();
+      assert_eq!(container.state(), &AgentState::Stopped);
+    }
 
     // Start agent
-    container.start();
-    assert_eq!(container.state(), &AgentState::Running);
+    {
+      let mut container = shared_agent.lock().unwrap();
+      container.start();
+      assert_eq!(container.state(), &AgentState::Running);
+    }
 
     // Pause agent
-    container.pause();
-    assert_eq!(container.state(), &AgentState::Paused);
-    assert!(!container.is_active()); // Paused agents don't process messages
+    {
+      let mut container = shared_agent.lock().unwrap();
+      container.pause();
+      assert_eq!(container.state(), &AgentState::Paused);
+      assert!(!container.is_active()); // Paused agents don't process messages
+    }
 
     // Try to process message while paused
     let increment = Increment(5);
-    let result = container.handle_message(increment);
-    assert!(result.is_none()); // Should be ignored
-    assert_eq!(container.agent().state, 10); // State unchanged
+    let _result = increment_handler.handle_message(&increment);
+    {
+      let container = shared_agent.lock().unwrap();
+      assert_eq!(container.agent().state, 10); // State unchanged
+    }
 
     // Resume agent
-    container.resume();
-    assert_eq!(container.state(), &AgentState::Running);
-    assert!(container.is_active());
+    {
+      let mut container = shared_agent.lock().unwrap();
+      container.resume();
+      assert_eq!(container.state(), &AgentState::Running);
+      assert!(container.is_active());
+    }
 
     // Now message should be processed
     let increment = Increment(5);
-    let result = container.handle_message(increment);
-    assert!(result.is_some());
-    assert_eq!(container.agent().state, 15); // 10 + 5 = 15
+    let _result = increment_handler.handle_message(&increment);
+    {
+      let container = shared_agent.lock().unwrap();
+      assert_eq!(container.agent().state, 15); // 10 + 5 = 15
+    }
 
     // Stop agent
-    container.stop();
-    assert_eq!(container.state(), &AgentState::Stopped);
-    assert!(!container.is_active());
+    {
+      let mut container = shared_agent.lock().unwrap();
+      container.stop();
+      assert_eq!(container.state(), &AgentState::Stopped);
+      assert!(!container.is_active());
+    }
   }
 
   #[test]

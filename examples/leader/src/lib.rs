@@ -8,12 +8,11 @@
 use std::collections::HashMap;
 
 use arbiter_core::{
-  agent::{Agent, AgentContainer, AgentState},
+  agent::{Agent, AgentContainer, AgentHandler, SharedAgent},
   handler::Handler,
   runtime::Domain,
 };
 use gloo_timers::future::TimeoutFuture;
-use js_sys;
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
@@ -209,6 +208,13 @@ impl Handler<UpdatePosition> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
+    console::log_1(
+      &format!(
+        "✅ Canvas received UpdatePosition: {} at ({:.1}, {:.1})",
+        message.agent_id, message.position.x, message.position.y
+      )
+      .into(),
+    );
     self.agent_positions.insert(message.agent_id, message.position);
     self.render();
   }
@@ -235,6 +241,7 @@ impl Handler<Tick> for Canvas {
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
     let leader_positions = self.get_leader_positions();
+    console::log_1(&format!("✅ Canvas tick: found {} leaders", leader_positions.len()).into());
     Tick { leader_positions }
   }
 }
@@ -263,13 +270,24 @@ impl LeaderFollowerSimulation {
     {
       let mut runtime = domain.as_mut();
 
-      // Register handlers for core agents
-      console::log_1(&"Registering Canvas handlers...".into());
-      let mut canvas = AgentContainer::new(canvas);
-      canvas.register_handler::<Tick>();
-      canvas.register_handler::<UpdatePosition>();
-      canvas.register_handler::<RegisterAgentType>();
-      runtime.register_agent_container("canvas".to_string(), canvas);
+      // Register Canvas agent using the new shared agent approach
+      console::log_1(&"Registering Canvas agent and handlers...".into());
+      let shared_canvas = AgentContainer::shared(canvas);
+
+      // Register the shared agent with the runtime
+      runtime.register_shared_agent("canvas".to_string(), shared_canvas.clone());
+
+      // Create and register individual handlers for each message type
+      let tick_handler = AgentHandler::<Canvas, Tick>::new(shared_canvas.clone());
+      let update_position_handler =
+        AgentHandler::<Canvas, UpdatePosition>::new(shared_canvas.clone());
+      let register_agent_type_handler =
+        AgentHandler::<Canvas, RegisterAgentType>::new(shared_canvas.clone());
+
+      runtime.register_agent_handler(tick_handler);
+      runtime.register_agent_handler(update_position_handler);
+      runtime.register_agent_handler(register_agent_type_handler);
+
       runtime.start_agent("canvas");
 
       console::log_1(&"Sending initial tick...".into());
@@ -323,11 +341,17 @@ impl LeaderFollowerSimulation {
         console::log_1(&format!("Creating Leader agent {}", agent_id).into());
         let leader = Leader::new(agent_id.clone(), self.canvas_width, self.canvas_height, x, y);
 
-        // Register the leader and its handlers
-        let registered = runtime.add_and_start_agent(agent_id.clone(), leader.clone());
+        // Register the leader using SharedAgent approach
+        let shared_leader = AgentContainer::shared(leader);
+        let registered = runtime.register_shared_agent(agent_id.clone(), shared_leader.clone());
+
         if registered {
-          console::log_1(&format!("Registering Leader {} for Tick messages", agent_id).into());
-          runtime.register_handler::<Leader, Tick>(leader);
+          // Create and register handler for Tick messages
+          let tick_handler = AgentHandler::<Leader, Tick>::new(shared_leader);
+          runtime.register_agent_handler(tick_handler);
+
+          runtime.start_agent(&agent_id);
+          console::log_1(&format!("Registered Leader {} successfully", agent_id).into());
         }
         registered
       },
@@ -335,11 +359,17 @@ impl LeaderFollowerSimulation {
         console::log_1(&format!("Creating Follower agent {}", agent_id).into());
         let follower = Follower::new(agent_id.clone(), x, y);
 
-        // Register the follower and its handlers
-        let registered = runtime.add_and_start_agent(agent_id.clone(), follower.clone());
+        // Register the follower using SharedAgent approach
+        let shared_follower = AgentContainer::shared(follower);
+        let registered = runtime.register_shared_agent(agent_id.clone(), shared_follower.clone());
+
         if registered {
-          console::log_1(&format!("Registering Follower {} for Tick messages", agent_id).into());
-          runtime.register_handler::<Follower, Tick>(follower);
+          // Create and register handler for Tick messages
+          let tick_handler = AgentHandler::<Follower, Tick>::new(shared_follower);
+          runtime.register_agent_handler(tick_handler);
+
+          runtime.start_agent(&agent_id);
+          console::log_1(&format!("Registered Follower {} successfully", agent_id).into());
         }
         registered
       },
