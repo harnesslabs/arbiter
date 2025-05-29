@@ -276,14 +276,23 @@ impl LeaderFollowerSimulation {
   fn start_tick_loop(domain: Domain) {
     spawn_local(async move {
       loop {
-        // Send tick to drive the simulation
-        if let Ok(mut runtime) = domain.runtime().try_lock() {
-          runtime.send_message(Tick { leader_positions: Vec::new() });
-          runtime.run();
+        // Only send ticks if there are agents (other than canvas)
+        if let Ok(runtime) = domain.runtime().try_lock() {
+          let agent_count = runtime.get_agent_stats().total;
+
+          if agent_count > 1 {
+            // More than just the canvas
+            drop(runtime); // Release the lock before sending message
+
+            if let Ok(mut runtime) = domain.runtime().try_lock() {
+              runtime.send_message(Tick { leader_positions: Vec::new() });
+              runtime.run();
+            }
+          }
         }
 
         // Wait before next tick (~20 FPS)
-        TimeoutFuture::new(50).await;
+        TimeoutFuture::new(10).await;
       }
     });
   }
@@ -380,28 +389,28 @@ impl Leader {
       position: Position::new(x, y),
       canvas_width,
       canvas_height,
-      speed: 3.0,
+      speed: 1.0,
       current_direction: random() * 2.0 * std::f64::consts::PI,
       direction_steps: 0,
-      max_direction_steps: (30 + (random() * 50.0) as u32),
+      max_direction_steps: (100 + (random() * 100.0) as u32),
     }
   }
 
   fn update_direction(&mut self) {
     if self.direction_steps >= self.max_direction_steps {
-      let direction_change = (random() - 0.5) * std::f64::consts::PI;
+      let direction_change = (random() - 0.5) * 0.5;
       self.current_direction += direction_change;
       self.current_direction = self.current_direction % (2.0 * std::f64::consts::PI);
       self.direction_steps = 0;
-      self.max_direction_steps = 30 + (random() * 70.0) as u32;
+      self.max_direction_steps = 100 + (random() * 100.0) as u32;
     }
   }
 
   fn move_agent(&mut self) {
     self.update_direction();
 
-    let dx = self.current_direction.cos() * self.speed;
-    let dy = self.current_direction.sin() * self.speed;
+    let dx = self.current_direction.cos() * self.speed / 100.0;
+    let dy = self.current_direction.sin() * self.speed / 100.0;
 
     let mut new_pos = Position::new(self.position.x + dx, self.position.y + dy);
 
@@ -458,8 +467,8 @@ impl Follower {
     Self {
       id,
       position: Position::new(x, y),
-      speed: 2.0,
-      follow_distance: 40.0,
+      speed: 0.8,
+      follow_distance: 50.0,
       target_leader_id: None,
     }
   }
