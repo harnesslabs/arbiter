@@ -1,14 +1,11 @@
-use std::{any::Any, collections::HashMap};
-
-// Common message trait that all messages must implement
-pub trait Message: Send + Sync {
-  fn as_any(&self) -> &dyn Any;
-  fn message_type(&self) -> &'static str;
-}
+use std::{
+  any::{Any, TypeId},
+  collections::HashMap,
+};
 
 // Agent trait that can receive any message
 pub trait Agent: Send + Sync {
-  fn handle_message(&mut self, message: &dyn Message);
+  fn handle_message(&mut self, message: &dyn Any);
   fn agent_type(&self) -> &'static str;
 }
 
@@ -25,8 +22,8 @@ impl Runtime {
     self.agents.insert(name, agent);
   }
 
-  // Send a message to a specific agent
-  pub fn send_message(&mut self, agent_name: &str, message: &dyn Message) -> bool {
+  // Send a message to a specific agent (message must be Any + Send + Sync)
+  pub fn send_message<T: Any + Send + Sync>(&mut self, agent_name: &str, message: &T) -> bool {
     if let Some(agent) = self.agents.get_mut(agent_name) {
       agent.handle_message(message);
       true
@@ -36,7 +33,7 @@ impl Runtime {
   }
 
   // Broadcast a message to all agents
-  pub fn broadcast_message(&mut self, message: &dyn Message) {
+  pub fn broadcast_message<T: Any + Send + Sync>(&mut self, message: &T) {
     for agent in self.agents.values_mut() {
       agent.handle_message(message);
     }
@@ -55,27 +52,15 @@ impl Runtime {
 mod tests {
   use super::*;
 
-  // Example message types
+  // Example message types - just regular structs!
   #[derive(Debug)]
   struct TextMessage {
     content: String,
   }
 
-  impl Message for TextMessage {
-    fn as_any(&self) -> &dyn Any { self }
-
-    fn message_type(&self) -> &'static str { "TextMessage" }
-  }
-
   #[derive(Debug)]
   struct NumberMessage {
     value: i32,
-  }
-
-  impl Message for NumberMessage {
-    fn as_any(&self) -> &dyn Any { self }
-
-    fn message_type(&self) -> &'static str { "NumberMessage" }
   }
 
   // Example agent types
@@ -85,20 +70,22 @@ mod tests {
   }
 
   impl Agent for LogAgent {
-    fn handle_message(&mut self, message: &dyn Message) {
+    fn handle_message(&mut self, message: &dyn Any) {
       self.message_count += 1;
 
-      // Handle different message types
-      if let Some(text_msg) = message.as_any().downcast_ref::<TextMessage>() {
-        println!("LogAgent '{}' received text: {}", self.name, text_msg.content);
-      } else if let Some(num_msg) = message.as_any().downcast_ref::<NumberMessage>() {
-        println!("LogAgent '{}' received number: {}", self.name, num_msg.value);
+      // Handle different message types using TypeId
+      let type_id = message.type_id();
+
+      if type_id == TypeId::of::<TextMessage>() {
+        if let Some(text_msg) = message.downcast_ref::<TextMessage>() {
+          println!("LogAgent '{}' received text: {}", self.name, text_msg.content);
+        }
+      } else if type_id == TypeId::of::<NumberMessage>() {
+        if let Some(num_msg) = message.downcast_ref::<NumberMessage>() {
+          println!("LogAgent '{}' received number: {}", self.name, num_msg.value);
+        }
       } else {
-        println!(
-          "LogAgent '{}' received unknown message type: {}",
-          self.name,
-          message.message_type()
-        );
+        println!("LogAgent '{}' received unknown message type: {:?}", self.name, type_id);
       }
     }
 
@@ -110,9 +97,9 @@ mod tests {
   }
 
   impl Agent for CounterAgent {
-    fn handle_message(&mut self, message: &dyn Message) {
+    fn handle_message(&mut self, message: &dyn Any) {
       // Only handle number messages
-      if let Some(num_msg) = message.as_any().downcast_ref::<NumberMessage>() {
+      if let Some(num_msg) = message.downcast_ref::<NumberMessage>() {
         self.total += num_msg.value;
         println!("CounterAgent total is now: {}", self.total);
       }
