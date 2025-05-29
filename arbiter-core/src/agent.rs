@@ -1,12 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 pub struct Context<A> {
-  agent: A,
+  agent: Arc<Mutex<A>>,
 }
 
 // Default implementation of Context for Arc<Mutex<Agent>>
 impl<A> Context<A> {
-  pub fn new(agent: A) -> Self { Self { agent } }
+  pub fn new(agent: A) -> Self { Self { agent: Arc::new(Mutex::new(agent)) } }
 
   pub fn with<F, R>(&self, f: F) -> R
   where F: FnOnce(&mut A) -> R {
