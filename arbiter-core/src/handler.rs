@@ -12,10 +12,9 @@ pub trait Handler<M> {
   fn handle(&mut self, message: M) -> Self::Reply;
 }
 
-// Type-erased handler trait
+// Trait object for handling any message type
 pub trait MessageHandler: Send + Sync {
-  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any>;
-  fn message_type_id(&self) -> TypeId;
+  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any + Send + Sync>;
 }
 
 // Wrapper to make Handler<M> work as MessageHandler
@@ -30,7 +29,7 @@ where
   M: Any + Clone + Send + Sync,
   H::Reply: Send + Sync + 'static,
 {
-  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any> {
+  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any + Send + Sync> {
     if let Some(typed_message) = message.downcast_ref::<M>() {
       let reply = self.handler.handle(typed_message.clone());
       Box::new(reply)
@@ -39,6 +38,4 @@ where
       Box::new(())
     }
   }
-
-  fn message_type_id(&self) -> TypeId { TypeId::of::<M>() }
 }

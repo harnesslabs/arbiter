@@ -1,22 +1,36 @@
 use std::{
   any::{Any, TypeId},
-  collections::HashMap,
+  collections::{HashMap, VecDeque},
   marker::PhantomData,
 };
 
 use crate::{
-  agent::{Agent, AgentContainer, Context},
+  agent::{Agent, AgentContainer},
   handler::{Handler, HandlerWrapper, MessageHandler},
 };
 
-// Simple runtime that can hold different types of agents
+// Simple runtime that can hold different types of agents with automatic message routing
 pub struct Runtime {
-  agents:   HashMap<String, Box<dyn Any + Send + Sync>>,
-  handlers: HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
+  agents:         HashMap<String, Box<dyn Any + Send + Sync>>,
+  handlers:       HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
+  message_queue:  VecDeque<Box<dyn Any + Send + Sync>>,
+  max_iterations: usize, // Prevent infinite loops
 }
 
 impl Runtime {
-  pub fn new() -> Self { Self { agents: HashMap::new(), handlers: HashMap::new() } }
+  pub fn new() -> Self {
+    Self {
+      agents:         HashMap::new(),
+      handlers:       HashMap::new(),
+      message_queue:  VecDeque::new(),
+      max_iterations: 1000, // Reasonable default
+    }
+  }
+
+  pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
+    self.max_iterations = max_iterations;
+    self
+  }
 
   // Register any agent that implements the Agent trait
   pub fn register_agent<A: Agent>(&mut self, name: String, agent: A) {
@@ -35,18 +49,56 @@ impl Runtime {
     self.handlers.entry(type_id).or_insert_with(Vec::new).push(Box::new(wrapped));
   }
 
-  // Send a message to all handlers that can handle this message type
-  pub fn send_message<M: Any + Clone + Send + Sync>(&mut self, message: M) -> bool {
-    let type_id = TypeId::of::<M>();
+  // Send a message - adds to queue for processing
+  pub fn send_message<M: Any + Clone + Send + Sync + 'static>(&mut self, message: M) {
+    self.message_queue.push_back(Box::new(message));
+  }
+
+  // Process a single message and add any replies to the queue
+  fn process_message(&mut self, message: Box<dyn Any + Send + Sync>) -> bool {
+    let type_id = (&*message).type_id();
+
     if let Some(handlers) = self.handlers.get_mut(&type_id) {
-      let has_handlers = !handlers.is_empty();
+      let mut processed = false;
       for handler in handlers {
-        handler.handle_message(&message);
+        let reply = handler.handle_message(&*message);
+
+        // Add the reply to the message queue for further processing
+        // Skip () replies as they indicate no further processing needed
+        if (&*reply).type_id() != TypeId::of::<()>() {
+          self.message_queue.push_back(reply);
+        }
+        processed = true;
       }
-      has_handlers
+      processed
     } else {
       false
     }
+  }
+
+  // Run the runtime - processes all messages until queue is empty or max iterations reached
+  pub fn run(&mut self) -> usize {
+    let mut iterations = 0;
+
+    while let Some(message) = self.message_queue.pop_front() {
+      if iterations >= self.max_iterations {
+        println!("Warning: Maximum iterations ({}) reached, stopping runtime", self.max_iterations);
+        break;
+      }
+
+      let processed = self.process_message(message);
+      if processed {
+        iterations += 1;
+      }
+    }
+
+    iterations
+  }
+
+  // Send a message and immediately run until completion
+  pub fn send_and_run<M: Any + Clone + Send + Sync + 'static>(&mut self, message: M) -> usize {
+    self.send_message(message);
+    self.run()
   }
 
   // Get list of registered agent names
@@ -60,6 +112,12 @@ impl Runtime {
       None
     }
   }
+
+  // Check if message queue is empty
+  pub fn is_idle(&self) -> bool { self.message_queue.is_empty() }
+
+  // Get current queue length
+  pub fn queue_length(&self) -> usize { self.message_queue.len() }
 }
 
 #[cfg(test)]
@@ -129,7 +187,7 @@ mod tests {
 
     // Send messages - they'll go to all handlers that can handle this message type
     let num_msg = NumberMessage { value: 42 };
-    assert!(runtime.send_message(num_msg));
+    runtime.send_message(num_msg);
 
     // Test that we can register agents
     assert_eq!(runtime.list_agents().len(), 2);

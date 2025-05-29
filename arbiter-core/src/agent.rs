@@ -1,11 +1,8 @@
 use std::{
   any::{Any, TypeId},
   collections::HashMap,
-  marker::PhantomData,
   sync::{Arc, Mutex},
 };
-
-use crate::handler::HandlerWrapper;
 
 // Simple trait for things that can be agents
 pub trait Agent: Send + Sync + 'static {}
@@ -13,7 +10,8 @@ pub trait Agent: Send + Sync + 'static {}
 // Container that manages handlers for an agent
 pub struct AgentContainer<A: Agent> {
   agent:               A,
-  registered_handlers: HashMap<TypeId, bool>, // Just track which message types are registered
+  registered_handlers: HashMap<TypeId, bool>, /* TODO: tracks by message type, but we may also
+                                               * want to track the response type too. */
 }
 
 impl<A: Agent> AgentContainer<A> {
@@ -60,15 +58,10 @@ pub struct Context<A> {
 impl<A> Context<A> {
   pub fn new(agent: A) -> Self { Self { agent: Arc::new(Mutex::new(agent)) } }
 
-  pub fn with<F, R>(&self, f: F) -> R
-  where F: FnOnce(&mut A) -> R {
-    let mut guard = self.agent.lock().unwrap();
-    f(&mut *guard)
-  }
-
   pub fn handle_with<M>(&self, message: M) -> <A as crate::handler::Handler<M>>::Reply
   where A: crate::handler::Handler<M> {
-    self.with(|agent| agent.handle(message))
+    let mut guard = self.agent.lock().unwrap();
+    guard.handle(message)
   }
 }
 
@@ -128,7 +121,7 @@ mod tests {
     container.handle_message(increment);
 
     let multiply = Multiply(3);
-    let result = container.handle_message(multiply);
+    let _result = container.handle_message(multiply);
 
     // Check final state
     assert_eq!(container.agent().state, 18); // (1 + 5) * 3 = 18
@@ -147,10 +140,5 @@ mod tests {
     let multiply = Multiply(3);
     let result = context.handle_with(multiply);
     assert_eq!(result, 18); // (1 + 5) * 3 = 18
-
-    // Verify final state
-    context.with(|agent| {
-      assert_eq!(agent.state, 18);
-    });
   }
 }

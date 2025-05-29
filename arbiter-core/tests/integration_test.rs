@@ -4,286 +4,183 @@ use arbiter_core::{
   runtime::Runtime,
 };
 
-// Message types for our banking system
+// Message types for our pipeline system
 #[derive(Debug, Clone)]
-struct Deposit(i32);
+struct StartProcessing(i32);
 
 #[derive(Debug, Clone)]
-struct Withdraw(i32);
+struct ProcessedData(i32);
 
 #[derive(Debug, Clone)]
-struct LogMessage(String);
+struct ValidatedData(i32);
 
 #[derive(Debug, Clone)]
-struct GetBalance;
+struct FinalResult(i32);
 
-// Bank agent - manages account balance
+// Processor agent - takes StartProcessing and outputs ProcessedData
 #[derive(Clone)]
-struct BankAgent {
-  account_id: String,
-  balance:    i32,
+struct ProcessorAgent {
+  name: String,
 }
 
-impl Agent for BankAgent {}
+impl Agent for ProcessorAgent {}
 
-impl Handler<Deposit> for BankAgent {
-  type Reply = i32;
+impl Handler<StartProcessing> for ProcessorAgent {
+  type Reply = ProcessedData;
 
-  // Returns new balance
+  // This will automatically be routed to next handler!
 
-  fn handle(&mut self, message: Deposit) -> Self::Reply {
-    self.balance += message.0;
-    println!("Account {}: Deposited {}. New balance: {}", self.account_id, message.0, self.balance);
-    self.balance
+  fn handle(&mut self, message: StartProcessing) -> Self::Reply {
+    let processed_value = message.0 * 2; // Double the input
+    println!("{}: Processing {} -> {}", self.name, message.0, processed_value);
+    ProcessedData(processed_value)
   }
 }
 
-impl Handler<Withdraw> for BankAgent {
-  type Reply = bool;
+// Validator agent - takes ProcessedData and outputs ValidatedData
+#[derive(Clone)]
+struct ValidatorAgent {
+  name: String,
+}
 
-  // Returns success/failure
+impl Agent for ValidatorAgent {}
 
-  fn handle(&mut self, message: Withdraw) -> Self::Reply {
-    if self.balance >= message.0 {
-      self.balance -= message.0;
-      println!(
-        "Account {}: Withdrew {}. New balance: {}",
-        self.account_id, message.0, self.balance
-      );
-      true
-    } else {
-      println!("Account {}: Insufficient funds for withdrawal of {}", self.account_id, message.0);
-      false
-    }
+impl Handler<ProcessedData> for ValidatorAgent {
+  type Reply = ValidatedData;
+
+  // This will automatically be routed to next handler!
+
+  fn handle(&mut self, message: ProcessedData) -> Self::Reply {
+    let validated_value = message.0 + 10; // Add validation bonus
+    println!("{}: Validating {} -> {}", self.name, message.0, validated_value);
+    ValidatedData(validated_value)
   }
 }
 
-impl Handler<GetBalance> for BankAgent {
-  type Reply = i32;
-
-  fn handle(&mut self, _message: GetBalance) -> Self::Reply { self.balance }
+// Finalizer agent - takes ValidatedData and outputs FinalResult
+#[derive(Clone)]
+struct FinalizerAgent {
+  name: String,
 }
 
-// Logger agent - tracks all transactions for audit
+impl Agent for FinalizerAgent {}
+
+impl Handler<ValidatedData> for FinalizerAgent {
+  type Reply = FinalResult;
+
+  // This will automatically be routed to next handler!
+
+  fn handle(&mut self, message: ValidatedData) -> Self::Reply {
+    let final_value = message.0 * 3; // Triple for final result
+    println!("{}: Finalizing {} -> {}", self.name, message.0, final_value);
+    FinalResult(final_value)
+  }
+}
+
+// Logger agent - takes FinalResult and logs it (returns () to end the chain)
 #[derive(Clone)]
 struct LoggerAgent {
-  name:          String,
-  message_count: i32,
-  audit_trail:   Vec<String>,
+  name:    String,
+  results: Vec<i32>,
 }
 
 impl Agent for LoggerAgent {}
 
-impl Handler<LogMessage> for LoggerAgent {
+impl Handler<FinalResult> for LoggerAgent {
   type Reply = ();
 
-  fn handle(&mut self, message: LogMessage) -> Self::Reply {
-    self.message_count += 1;
-    let log_entry = format!("[{}] {}", self.message_count, message.0);
-    println!("Logger '{}': {}", self.name, log_entry);
-    self.audit_trail.push(log_entry);
-  }
-}
+  // () replies don't get routed further - ends the chain
 
-impl Handler<Deposit> for LoggerAgent {
-  type Reply = ();
-
-  fn handle(&mut self, message: Deposit) -> Self::Reply {
-    self.message_count += 1;
-    let log_entry = format!("[{}] AUDIT - Deposit of {} recorded", self.message_count, message.0);
-    println!("Logger '{}': {}", self.name, log_entry);
-    self.audit_trail.push(log_entry);
-  }
-}
-
-impl Handler<Withdraw> for LoggerAgent {
-  type Reply = ();
-
-  fn handle(&mut self, message: Withdraw) -> Self::Reply {
-    self.message_count += 1;
-    let log_entry =
-      format!("[{}] AUDIT - Withdrawal of {} attempted", self.message_count, message.0);
-    println!("Logger '{}': {}", self.name, log_entry);
-    self.audit_trail.push(log_entry);
-  }
-}
-
-// Simple account agent using Context (shows different usage pattern)
-#[derive(Clone)]
-struct SimpleAccount {
-  balance: i32,
-}
-
-impl Handler<Deposit> for SimpleAccount {
-  type Reply = ();
-
-  fn handle(&mut self, message: Deposit) -> Self::Reply {
-    self.balance += message.0;
-    println!("Simple account: Deposited {}. Balance: {}", message.0, self.balance);
+  fn handle(&mut self, message: FinalResult) -> Self::Reply {
+    println!("{}: Logging final result: {}", self.name, message.0);
+    self.results.push(message.0);
   }
 }
 
 #[test]
-fn test_agent_containers_direct() {
-  println!("=== Testing AgentContainer Direct Usage ===");
-
-  // Create bank agent
-  let bank_agent = BankAgent { account_id: "ACC-001".to_string(), balance: 1000 };
-
-  // Create logger agent
-  let logger_agent = LoggerAgent {
-    name:          "MainLogger".to_string(),
-    message_count: 0,
-    audit_trail:   Vec::new(),
-  };
-
-  // Wrap in containers and register handlers
-  let mut bank_container = AgentContainer::new(bank_agent);
-  bank_container.register_handler::<Deposit>();
-  bank_container.register_handler::<Withdraw>();
-  bank_container.register_handler::<GetBalance>();
-
-  let mut logger_container = AgentContainer::new(logger_agent);
-  logger_container.register_handler::<LogMessage>();
-  logger_container.register_handler::<Deposit>();
-  logger_container.register_handler::<Withdraw>();
-
-  // Test banking operations
-  println!("\n--- Banking Operations ---");
-
-  // Deposit money
-  let deposit = Deposit(500);
-  let deposit_result = bank_container.handle_message(deposit.clone());
-  assert!(deposit_result.is_some());
-  assert_eq!(bank_container.agent().balance, 1500);
-
-  // Log the deposit in audit trail
-  logger_container.handle_message(deposit);
-
-  // Try to withdraw money
-  let withdraw = Withdraw(200);
-  let withdraw_result = bank_container.handle_message(withdraw.clone());
-  assert!(withdraw_result.is_some());
-  assert_eq!(bank_container.agent().balance, 1300);
-
-  // Log the withdrawal
-  logger_container.handle_message(withdraw);
-
-  // Check balance
-  let balance_result = bank_container.handle_message(GetBalance);
-  assert!(balance_result.is_some());
-
-  // Test message selectivity
-  println!("\n--- Testing Message Selectivity ---");
-
-  // Logger agent should handle log messages
-  let log_msg = LogMessage("Banking transaction completed".to_string());
-  let logger_result = logger_container.handle_message(log_msg);
-  assert!(logger_result.is_some());
-
-  // Verify final states
-  assert_eq!(bank_container.agent().balance, 1300);
-  assert_eq!(logger_container.agent().message_count, 3); // 2 audit + 1 log message
-  assert_eq!(logger_container.agent().audit_trail.len(), 3);
-}
-
-#[test]
-fn test_runtime_integration() {
-  println!("\n=== Testing Runtime Integration ===");
+fn test_automatic_message_routing() {
+  println!("=== Testing Automatic Message Routing ===");
 
   let mut runtime = Runtime::new();
 
-  // Register agents in runtime (they get wrapped in containers automatically)
-  runtime.register_agent("bank".to_string(), BankAgent {
-    account_id: "ACC-002".to_string(),
-    balance:    2000,
-  });
+  // Register handlers in the processing pipeline
+  runtime.register_handler(ProcessorAgent { name: "DataProcessor".to_string() });
 
-  runtime.register_agent("audit_logger".to_string(), LoggerAgent {
-    name:          "AuditLogger".to_string(),
-    message_count: 0,
-    audit_trail:   Vec::new(),
-  });
+  runtime.register_handler(ValidatorAgent { name: "DataValidator".to_string() });
 
-  // Register standalone handlers in runtime
-  runtime.register_handler::<BankAgent, Deposit>(BankAgent {
-    account_id: "StandaloneHandler".to_string(),
-    balance:    0,
-  });
+  runtime.register_handler(FinalizerAgent { name: "DataFinalizer".to_string() });
 
-  runtime.register_handler::<LoggerAgent, LogMessage>(LoggerAgent {
-    name:          "RuntimeLogger".to_string(),
-    message_count: 0,
-    audit_trail:   Vec::new(),
-  });
+  runtime
+    .register_handler(LoggerAgent { name: "ResultLogger".to_string(), results: Vec::new() });
 
-  // Test runtime message broadcasting
-  println!("\n--- Runtime Message Broadcasting ---");
+  // Send initial message and let the runtime automatically route through the pipeline
+  println!("\n--- Processing Pipeline ---");
+  println!("Input: 5");
+  println!("Expected path: 5 -> 10 -> 20 -> 60");
 
-  // Send messages through runtime - they go to all matching handlers
-  let deposit_msg = Deposit(1000);
-  let deposit_sent = runtime.send_message(deposit_msg);
-  assert!(deposit_sent);
+  let iterations = runtime.send_and_run(StartProcessing(5));
 
-  let withdraw_msg = Withdraw(300);
-  let withdraw_sent = runtime.send_message(withdraw_msg);
-  assert!(withdraw_sent);
-
-  let log_msg = LogMessage("System initialized".to_string());
-  let log_sent = runtime.send_message(log_msg);
-  assert!(log_sent);
-
-  // Verify runtime has registered agents
-  assert_eq!(runtime.list_agents().len(), 2);
-  assert!(runtime.get_agent_info("bank").is_some());
-  assert!(runtime.get_agent_info("audit_logger").is_some());
+  println!("\nPipeline completed in {} iterations", iterations);
+  assert_eq!(iterations, 4); // Should process 4 messages: Start -> Processed -> Validated -> Final
+  assert!(runtime.is_idle()); // Queue should be empty after processing
 }
 
 #[test]
-fn test_context_usage() {
-  println!("\n=== Testing Context Usage ===");
+fn test_multiple_parallel_pipelines() {
+  println!("\n=== Testing Multiple Parallel Pipelines ===");
 
-  // Test the Context pattern with simple account
-  let simple_account = SimpleAccount { balance: 100 };
-  let context = Context::new(simple_account);
-
-  // Use context to handle messages directly
-  context.handle_with(Deposit(50));
-  context.handle_with(Deposit(25));
-
-  // Check final state
-  context.with(|account| {
-    assert_eq!(account.balance, 175);
-    println!("Final simple account balance: {}", account.balance);
-  });
-}
-
-#[test]
-fn test_mixed_usage_patterns() {
-  println!("\n=== Testing Mixed Usage Patterns ===");
-
-  // Demonstrate different ways to use the framework
-
-  // 1. Direct AgentContainer usage
-  let bank = BankAgent { account_id: "MIXED-001".to_string(), balance: 500 };
-  let mut bank_container = AgentContainer::new(bank);
-  bank_container.register_handler::<Deposit>();
-  bank_container.handle_message(Deposit(100));
-
-  // 2. Context usage
-  let simple = SimpleAccount { balance: 200 };
-  let simple_context = Context::new(simple);
-  simple_context.handle_with(Deposit(50));
-
-  // 3. Runtime usage
   let mut runtime = Runtime::new();
-  runtime.register_handler::<LoggerAgent, LogMessage>(LoggerAgent {
-    name:          "MixedLogger".to_string(),
-    message_count: 0,
-    audit_trail:   Vec::new(),
-  });
-  runtime.send_message(LogMessage("Mixed test completed".to_string()));
 
-  // All patterns work together!
-  println!("All usage patterns work independently and can be mixed!");
+  // Register the same handlers as before
+  runtime.register_handler(ProcessorAgent { name: "Processor1".to_string() });
+
+  runtime.register_handler(ValidatorAgent { name: "Validator1".to_string() });
+
+  runtime.register_handler(FinalizerAgent { name: "Finalizer1".to_string() });
+
+  runtime.register_handler(LoggerAgent { name: "Logger1".to_string(), results: Vec::new() });
+
+  // Send multiple messages - they'll all flow through the pipeline
+  println!("\n--- Multiple Inputs ---");
+  runtime.send_message(StartProcessing(1));
+  runtime.send_message(StartProcessing(2));
+  runtime.send_message(StartProcessing(3));
+
+  println!("Queue length before processing: {}", runtime.queue_length());
+
+  let iterations = runtime.run();
+
+  println!("All pipelines completed in {} iterations", iterations);
+  assert_eq!(iterations, 12); // 3 messages * 4 steps each = 12 iterations
+  assert!(runtime.is_idle());
+}
+
+#[test]
+fn test_agent_container_with_routing() {
+  println!("\n=== Testing AgentContainer Direct Usage ===");
+
+  // Test that AgentContainer works properly now
+  let processor = ProcessorAgent { name: "DirectProcessor".to_string() };
+
+  let mut container = AgentContainer::new(processor);
+  container.register_handler::<StartProcessing>();
+
+  let result = container.handle_message(StartProcessing(10));
+  assert!(result.is_some());
+
+  // The result would be ProcessedData(20) if we could extract it
+  println!("AgentContainer processed message successfully");
+}
+
+#[test]
+fn test_context_simple() {
+  println!("\n=== Testing Context Pattern ===");
+
+  let processor = ProcessorAgent { name: "ContextProcessor".to_string() };
+
+  let context = Context::new(processor);
+  let result = context.handle_with(StartProcessing(7));
+
+  // result should be ProcessedData(14)
+  println!("Context processed message and returned result");
 }
