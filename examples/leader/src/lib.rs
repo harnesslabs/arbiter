@@ -445,15 +445,12 @@ impl SimulationStats {
 /// Main simulation structure using arbiter-core
 #[wasm_bindgen]
 pub struct LeaderFollowerSimulation {
-  canvas_width:            f64,
-  canvas_height:           f64,
-  next_id:                 u32,
-  runtime:                 Arc<Mutex<Runtime>>,
-  agents:                  HashMap<String, AgentType>,
-  agent_positions:         HashMap<String, Position>, // Track current positions
-  is_running:              bool,
-  simulation_loop_running: bool,
-  is_paused:               bool,
+  canvas_width:    f64,
+  canvas_height:   f64,
+  next_id:         u32,
+  runtime:         Arc<Mutex<Runtime>>,
+  agents:          HashMap<String, AgentType>,
+  agent_positions: Arc<Mutex<HashMap<String, Position>>>, // Shared position tracking
 }
 
 #[wasm_bindgen]
@@ -479,10 +476,7 @@ impl LeaderFollowerSimulation {
       next_id: 0,
       runtime: Arc::new(Mutex::new(runtime)),
       agents: HashMap::new(),
-      agent_positions: HashMap::new(),
-      is_running: false,
-      simulation_loop_running: false,
-      is_paused: false,
+      agent_positions: Arc::new(Mutex::new(HashMap::new())),
     }
   }
 
@@ -537,10 +531,19 @@ impl LeaderFollowerSimulation {
       runtime.run();
 
       self.agents.insert(agent_id.clone(), agent_type.clone());
-      self.agent_positions.insert(agent_id.clone(), Position::new(x, y));
+      {
+        let mut positions = self.agent_positions.lock().unwrap();
+        positions.insert(agent_id.clone(), Position::new(x, y));
+      }
       console::log_1(
         &format!("Added agent {} ({:?}) at ({:.1}, {:.1})", agent_id, agent_type, x, y).into(),
       );
+
+      // Drop the runtime lock before starting animation
+      drop(runtime);
+
+      // Start individual agent animation immediately
+      self.start_agent_animation(agent_id.clone(), agent_type);
 
       agent_id
     } else {
@@ -549,253 +552,255 @@ impl LeaderFollowerSimulation {
     }
   }
 
+  /// Start animation for a specific agent
+  fn start_agent_animation(&mut self, agent_id: String, agent_type: AgentType) {
+    let runtime_clone = Arc::clone(&self.runtime);
+    let agent_positions_clone = Arc::clone(&self.agent_positions);
+
+    console::log_1(&format!("Starting animation for agent {} ({:?})", agent_id, agent_type).into());
+
+    spawn_local(async move {
+      loop {
+        // Check if agent still exists and is running
+        let agent_state = {
+          let runtime = runtime_clone.lock().unwrap();
+          runtime.get_agent_state(&agent_id)
+        }; // Drop the runtime lock immediately
+
+        let should_continue = match agent_state {
+          Some(AgentState::Running) => {
+            console::log_1(&format!("Agent {} is running", agent_id).into());
+            true
+          },
+          Some(AgentState::Paused) => {
+            console::log_1(&format!("Agent {} is paused, sleeping...", agent_id).into());
+            // Sleep longer when paused, then continue loop
+            TimeoutFuture::new(200).await;
+            continue;
+          },
+          Some(AgentState::Stopped) => {
+            console::log_1(&format!("Agent {} is stopped, exiting animation", agent_id).into());
+            false
+          },
+          None => {
+            console::log_1(&format!("Agent {} not found, exiting animation", agent_id).into());
+            false
+          },
+        };
+
+        if !should_continue {
+          break;
+        }
+
+        match agent_type {
+          AgentType::Leader => {
+            // Update leader position
+            let current_time = js_sys::Date::now();
+            let time = current_time / 1000.0;
+
+            let new_x = 400.0 + (time * 0.5 + agent_id.len() as f64).sin() * 150.0;
+            let new_y = 300.0 + (time * 0.3 + agent_id.len() as f64).cos() * 100.0;
+            let new_x = new_x.max(20.0).min(780.0);
+            let new_y = new_y.max(20.0).min(580.0);
+
+            let new_pos = Position::new(new_x, new_y);
+
+            // Update position tracking (separate mutex lock)
+            {
+              let mut positions = agent_positions_clone.lock().unwrap();
+              positions.insert(agent_id.clone(), new_pos.clone());
+            } // Drop positions lock
+
+            // Send position update to renderer (separate mutex lock)
+            {
+              let mut runtime = runtime_clone.lock().unwrap();
+              runtime
+                .send_message(UpdatePosition { agent_id: agent_id.clone(), position: new_pos });
+              runtime.run();
+            } // Drop runtime lock
+          },
+          AgentType::Follower => {
+            // For followers, we need to get leader positions and follow them
+            let leader_positions = {
+              let positions = agent_positions_clone.lock().unwrap();
+              positions
+                .iter()
+                .filter(|(id, _)| id.starts_with("agent_") && **id != agent_id)
+                .map(|(id, pos)| (id.clone(), pos.clone()))
+                .collect::<Vec<_>>()
+            }; // Drop positions lock
+
+            if !leader_positions.is_empty() {
+              let mut runtime = runtime_clone.lock().unwrap();
+              runtime.send_message(LeaderPositions { positions: leader_positions });
+              runtime.run();
+            } // Drop runtime lock
+          },
+        }
+
+        // Wait before next frame (~20 FPS)
+        TimeoutFuture::new(50).await;
+      }
+
+      console::log_1(&format!("Animation stopped for agent {}", agent_id).into());
+    });
+  }
+
   /// Start a specific agent
   #[wasm_bindgen]
   pub fn start_agent(&mut self, agent_id: &str) -> bool {
-    let mut runtime = self.runtime.lock().unwrap();
-    let success = runtime.start_agent(agent_id);
-    if success {
-      console::log_1(&format!("Started agent {}", agent_id).into());
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      let success = runtime.start_agent(agent_id);
+      if success {
+        console::log_1(&format!("Started agent {}", agent_id).into());
+      }
+      success
+    } else {
+      console::log_1(&format!("Could not acquire lock to start agent {}", agent_id).into());
+      false
     }
-    success
   }
 
   /// Pause a specific agent
   #[wasm_bindgen]
   pub fn pause_agent(&mut self, agent_id: &str) -> bool {
-    let mut runtime = self.runtime.lock().unwrap();
-    let success = runtime.pause_agent(agent_id);
-    if success {
-      console::log_1(&format!("Paused agent {}", agent_id).into());
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      let success = runtime.pause_agent(agent_id);
+      if success {
+        console::log_1(&format!("Paused agent {}", agent_id).into());
+      }
+      success
+    } else {
+      console::log_1(&format!("Could not acquire lock to pause agent {}", agent_id).into());
+      false
     }
-    success
   }
 
   /// Resume a specific agent
   #[wasm_bindgen]
   pub fn resume_agent(&mut self, agent_id: &str) -> bool {
-    let mut runtime = self.runtime.lock().unwrap();
-    let success = runtime.resume_agent(agent_id);
-    if success {
-      console::log_1(&format!("Resumed agent {}", agent_id).into());
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      let success = runtime.resume_agent(agent_id);
+      if success {
+        console::log_1(&format!("Resumed agent {}", agent_id).into());
+      }
+      success
+    } else {
+      console::log_1(&format!("Could not acquire lock to resume agent {}", agent_id).into());
+      false
     }
-    success
   }
 
   /// Stop a specific agent
   #[wasm_bindgen]
   pub fn stop_agent(&mut self, agent_id: &str) -> bool {
-    let mut runtime = self.runtime.lock().unwrap();
-    let success = runtime.stop_agent(agent_id);
-    if success {
-      console::log_1(&format!("Stopped agent {}", agent_id).into());
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      let success = runtime.stop_agent(agent_id);
+      if success {
+        console::log_1(&format!("Stopped agent {}", agent_id).into());
+      }
+      success
+    } else {
+      console::log_1(&format!("Could not acquire lock to stop agent {}", agent_id).into());
+      false
     }
-    success
   }
 
   /// Remove a specific agent
   #[wasm_bindgen]
   pub fn remove_agent(&mut self, agent_id: &str) -> bool {
-    let mut runtime = self.runtime.lock().unwrap();
-    let success = runtime.remove_agent(agent_id);
-    if success {
-      self.agents.remove(agent_id);
-      self.agent_positions.remove(agent_id);
-      console::log_1(&format!("Removed agent {}", agent_id).into());
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      let success = runtime.remove_agent(agent_id);
+      if success {
+        self.agents.remove(agent_id);
+        {
+          if let Ok(mut positions) = self.agent_positions.try_lock() {
+            positions.remove(agent_id);
+          }
+        }
+        console::log_1(&format!("Removed agent {}", agent_id).into());
+      }
+      success
+    } else {
+      console::log_1(&format!("Could not acquire lock to remove agent {}", agent_id).into());
+      false
     }
-    success
   }
 
   /// Start all agents
   #[wasm_bindgen]
   pub fn start_all_agents(&mut self) {
-    let mut runtime = self.runtime.lock().unwrap();
-    for agent_id in self.agents.keys() {
-      runtime.start_agent(agent_id);
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      for agent_id in self.agents.keys() {
+        runtime.start_agent(agent_id);
+      }
+      console::log_1(&"Started all agents".into());
+    } else {
+      console::log_1(&"Could not acquire lock to start all agents".into());
     }
-    console::log_1(&"Started all agents".into());
   }
 
   /// Pause all agents
   #[wasm_bindgen]
   pub fn pause_all_agents(&mut self) {
-    let mut runtime = self.runtime.lock().unwrap();
-    for agent_id in self.agents.keys() {
-      runtime.pause_agent(agent_id);
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      for agent_id in self.agents.keys() {
+        runtime.pause_agent(agent_id);
+      }
+      // Don't pause renderer - it should always be active
+      console::log_1(&"Paused all agents".into());
+    } else {
+      console::log_1(&"Could not acquire lock to pause all agents".into());
     }
-    // Don't pause renderer - it should always be active
-    console::log_1(&"Paused all agents".into());
   }
 
   /// Resume all agents  
   #[wasm_bindgen]
   pub fn resume_all_agents(&mut self) {
-    let mut runtime = self.runtime.lock().unwrap();
-    for agent_id in self.agents.keys() {
-      runtime.resume_agent(agent_id);
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      for agent_id in self.agents.keys() {
+        runtime.resume_agent(agent_id);
+      }
+      // Don't need to resume renderer - it was never paused
+      console::log_1(&"Resumed all agents".into());
+    } else {
+      console::log_1(&"Could not acquire lock to resume all agents".into());
     }
-    // Don't need to resume renderer - it was never paused
-    console::log_1(&"Resumed all agents".into());
   }
 
   /// Stop all agents
   #[wasm_bindgen]
   pub fn stop_all_agents(&mut self) {
-    let mut runtime = self.runtime.lock().unwrap();
-    for agent_id in self.agents.keys() {
-      runtime.stop_agent(agent_id);
-    }
-    // Don't stop renderer - it should always be active
-    console::log_1(&"Stopped all agents".into());
-  }
-
-  /// Start the simulation loop
-  #[wasm_bindgen]
-  pub fn start_simulation(&mut self) {
-    if self.simulation_loop_running {
-      return;
-    }
-
-    if self.agents.is_empty() {
-      console::log_1(&"No agents to simulate".into());
-      return;
-    }
-
-    console::log_1(&"Starting arbiter-core simulation...".into());
-    self.simulation_loop_running = true;
-
-    // Start all agents
-    self.start_all_agents();
-
-    // Start simulation loop
-    let runtime_clone = Arc::clone(&self.runtime);
-    let agents_clone = self.agents.clone();
-    let mut agent_positions = self.agent_positions.clone();
-
-    spawn_local(async move {
-      while {
-        let should_continue = {
-          let runtime = runtime_clone.lock().unwrap();
-          // Continue if we have agents and the simulation should be running
-          !agents_clone.is_empty()
-        };
-        should_continue
-      } {
-        // Step 1: Send tick messages to all leader agents and collect position updates
-        let position_updates = {
-          let mut runtime = runtime_clone.lock().unwrap();
-
-          // Send tick to leaders
-          for (agent_id, agent_type) in &agents_clone {
-            if *agent_type == AgentType::Leader {
-              runtime.send_message(Tick);
-            }
-          }
-
-          // Process leader movements - this will generate UpdatePosition messages
-          runtime.run();
-
-          // For now, we'll simulate getting the position updates
-          // In a real implementation, we'd need to collect the actual replies
-          let mut updates = Vec::new();
-          for (agent_id, agent_type) in &agents_clone {
-            if *agent_type == AgentType::Leader {
-              if let Some(current_pos) = agent_positions.get(agent_id) {
-                // Simulate leader movement (this is a temporary solution)
-                let time = (js_sys::Date::now() / 1000.0) as f64;
-                let speed = 3.0;
-                let new_x = 400.0 + (time * 0.5 + agent_id.len() as f64).sin() * 150.0;
-                let new_y = 300.0 + (time * 0.3 + agent_id.len() as f64).cos() * 100.0;
-                let new_x = new_x.max(20.0).min(780.0);
-                let new_y = new_y.max(20.0).min(580.0);
-
-                let new_pos = Position::new(new_x, new_y);
-                updates.push((agent_id.clone(), new_pos));
-              }
-            }
-          }
-          updates
-        };
-
-        // Update our position tracking
-        for (agent_id, new_pos) in &position_updates {
-          agent_positions.insert(agent_id.clone(), new_pos.clone());
-
-          // Send position update to renderer
-          let mut runtime = runtime_clone.lock().unwrap();
-          runtime
-            .send_message(UpdatePosition { agent_id: agent_id.clone(), position: new_pos.clone() });
-        }
-
-        // Step 2: Collect leader positions and send to followers
-        {
-          let mut runtime = runtime_clone.lock().unwrap();
-
-          // Collect current leader positions from our tracking
-          let mut leader_positions = Vec::new();
-          for (agent_id, agent_type) in &agents_clone {
-            if *agent_type == AgentType::Leader {
-              if let Some(pos) = agent_positions.get(agent_id) {
-                leader_positions.push((agent_id.clone(), pos.clone()));
-              }
-            }
-          }
-
-          // Send leader positions to all followers
-          if !leader_positions.is_empty() {
-            for (agent_id, agent_type) in &agents_clone {
-              if *agent_type == AgentType::Follower {
-                runtime.send_message(LeaderPositions { positions: leader_positions.clone() });
-              }
-            }
-          }
-
-          // Process follower movements and rendering
-          runtime.run();
-        }
-
-        // Wait before next iteration
-        TimeoutFuture::new(50).await; // 50ms interval (~20 FPS)
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      for agent_id in self.agents.keys() {
+        runtime.stop_agent(agent_id);
       }
-    });
-
-    self.is_running = true;
-    console::log_1(&"Simulation loop started!".into());
-  }
-
-  /// Stop the simulation
-  #[wasm_bindgen]
-  pub fn stop_simulation(&mut self) {
-    self.simulation_loop_running = false;
-    self.is_running = false;
-    self.is_paused = false;
-    self.stop_all_agents();
-    console::log_1(&"Simulation stopped".into());
-  }
-
-  /// Pause the simulation
-  #[wasm_bindgen]
-  pub fn pause_simulation(&mut self) {
-    if self.is_running && !self.is_paused {
-      self.is_paused = true;
-      self.pause_all_agents();
-      console::log_1(&"Simulation paused".into());
+      // Don't stop renderer - it should always be active
+      console::log_1(&"Stopped all agents".into());
+    } else {
+      console::log_1(&"Could not acquire lock to stop all agents".into());
     }
   }
 
-  /// Resume the simulation
+  /// Clear all agents and reset simulation
   #[wasm_bindgen]
-  pub fn resume_simulation(&mut self) {
-    if self.is_running && self.is_paused {
-      self.is_paused = false;
-      self.resume_all_agents();
-      console::log_1(&"Simulation resumed".into());
+  pub fn clear_agents(&mut self) {
+    if let Ok(mut runtime) = self.runtime.try_lock() {
+      for agent_id in self.agents.keys() {
+        runtime.remove_agent(agent_id);
+      }
+
+      self.agents.clear();
+      {
+        if let Ok(mut positions) = self.agent_positions.try_lock() {
+          positions.clear();
+        }
+      }
+      console::log_1(&"Cleared all agents".into());
+    } else {
+      console::log_1(&"Could not acquire lock to clear agents".into());
     }
   }
-
-  /// Check if simulation is paused
-  #[wasm_bindgen]
-  pub fn is_paused(&self) -> bool { self.is_paused }
 
   /// Get simulation statistics
   #[wasm_bindgen]
@@ -807,8 +812,7 @@ impl LeaderFollowerSimulation {
     let mut paused_agents = 0;
     let mut stopped_agents = 0;
 
-    {
-      let runtime = self.runtime.lock().unwrap();
+    if let Ok(runtime) = self.runtime.try_lock() {
       for agent_id in self.agents.keys() {
         match runtime.get_agent_state(agent_id) {
           Some(AgentState::Running) => running_agents += 1,
@@ -817,6 +821,9 @@ impl LeaderFollowerSimulation {
           None => stopped_agents += 1, // Treat missing agents as stopped
         }
       }
+    } else {
+      // If we can't get the lock, treat all agents as stopped
+      stopped_agents = self.agents.len();
     }
 
     SimulationStats::new(
@@ -829,41 +836,35 @@ impl LeaderFollowerSimulation {
     )
   }
 
-  /// Clear all agents and reset simulation
-  #[wasm_bindgen]
-  pub fn clear_agents(&mut self) {
-    self.stop_simulation();
-
-    let mut runtime = self.runtime.lock().unwrap();
-    for agent_id in self.agents.keys() {
-      runtime.remove_agent(agent_id);
-    }
-
-    self.agents.clear();
-    self.agent_positions.clear();
-    console::log_1(&"Cleared all agents".into());
-  }
-
   /// Get the number of agents
   #[wasm_bindgen]
   pub fn agent_count(&self) -> usize { self.agents.len() }
 
   /// Check if simulation is running
   #[wasm_bindgen]
-  pub fn is_running(&self) -> bool { self.is_running }
+  pub fn is_running(&self) -> bool {
+    if let Ok(runtime) = self.runtime.try_lock() {
+      !self.agents.is_empty() && runtime.get_agent_state("renderer").is_some()
+    } else {
+      false
+    }
+  }
 
   /// Get list of agent IDs and their states
   #[wasm_bindgen]
   pub fn get_agent_list(&self) -> String {
-    let runtime = self.runtime.lock().unwrap();
-    let mut agents_info = Vec::new();
+    if let Ok(runtime) = self.runtime.try_lock() {
+      let mut agents_info = Vec::new();
 
-    for (agent_id, agent_type) in &self.agents {
-      let state = runtime.get_agent_state(agent_id).unwrap_or(AgentState::Stopped);
-      agents_info.push(format!("{}: {:?} ({:?})", agent_id, agent_type, state));
+      for (agent_id, agent_type) in &self.agents {
+        let state = runtime.get_agent_state(agent_id).unwrap_or(AgentState::Stopped);
+        agents_info.push(format!("{}: {:?} ({:?})", agent_id, agent_type, state));
+      }
+
+      agents_info.join("\n")
+    } else {
+      "Could not acquire lock to get agent list".to_string()
     }
-
-    agents_info.join("\n")
   }
 
   /// Get agent IDs as a JSON-compatible string
@@ -876,12 +877,23 @@ impl LeaderFollowerSimulation {
   /// Get individual agent info as JSON string
   #[wasm_bindgen]
   pub fn get_agent_info(&self, agent_id: &str) -> String {
-    let runtime = self.runtime.lock().unwrap();
-    if let Some(agent_type) = self.agents.get(agent_id) {
-      let state = runtime.get_agent_state(agent_id).unwrap_or(AgentState::Stopped);
-      format!("{{\"id\":\"{}\",\"type\":\"{:?}\",\"state\":\"{:?}\"}}", agent_id, agent_type, state)
+    if let Ok(runtime) = self.runtime.try_lock() {
+      if let Some(agent_type) = self.agents.get(agent_id) {
+        let state = runtime.get_agent_state(agent_id).unwrap_or(AgentState::Stopped);
+        format!(
+          "{{\"id\":\"{}\",\"type\":\"{:?}\",\"state\":\"{:?}\"}}",
+          agent_id, agent_type, state
+        )
+      } else {
+        "null".to_string()
+      }
     } else {
-      "null".to_string()
+      // If we can't get the lock, return a "busy" state
+      if let Some(agent_type) = self.agents.get(agent_id) {
+        format!("{{\"id\":\"{}\",\"type\":\"{:?}\",\"state\":\"Busy\"}}", agent_id, agent_type)
+      } else {
+        "null".to_string()
+      }
     }
   }
 }
