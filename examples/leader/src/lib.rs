@@ -92,6 +92,16 @@ pub struct RegisterAgentType {
   pub agent_type: AgentType,
 }
 
+/// Message to remove an agent from canvas tracking
+#[derive(Clone, Debug)]
+pub struct RemoveAgent {
+  pub agent_id: String,
+}
+
+/// Message to clear all agents from canvas tracking
+#[derive(Clone, Debug)]
+pub struct ClearAllAgents;
+
 /// Message containing leader positions for followers
 #[derive(Clone, Debug)]
 pub struct LeaderPositions {
@@ -131,10 +141,14 @@ impl Canvas {
 
   fn render(&self) {
     if let Some(context) = self.get_canvas_context() {
-      // Clear canvas
+      // Clear any existing drawings first
       context.clear_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
 
-      // Draw agents
+      // Fill with white background
+      context.set_fill_style_str("#ffffff");
+      context.fill_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
+
+      // Draw agents (if any)
       for (agent_id, position) in &self.agent_positions {
         let agent_type = self.agent_types.get(agent_id);
 
@@ -214,6 +228,40 @@ impl Handler<RegisterAgentType> for Canvas {
   }
 }
 
+impl Handler<RemoveAgent> for Canvas {
+  type Reply = ();
+
+  fn handle(&mut self, message: RemoveAgent) -> Self::Reply {
+    self.agent_positions.remove(&message.agent_id);
+    self.agent_types.remove(&message.agent_id);
+    self.render();
+  }
+}
+
+impl Handler<ClearAllAgents> for Canvas {
+  type Reply = ();
+
+  fn handle(&mut self, _message: ClearAllAgents) -> Self::Reply {
+    console::log_1(&"🎨 Canvas clearing all agents".into());
+
+    // Clear all agent tracking data
+    self.agent_positions.clear();
+    self.agent_types.clear();
+
+    console::log_1(
+      &format!(
+        "🎨 Canvas cleared - {} positions, {} types",
+        self.agent_positions.len(),
+        self.agent_types.len()
+      )
+      .into(),
+    );
+
+    // Re-render to show empty canvas
+    self.render();
+  }
+}
+
 impl Handler<Tick> for Canvas {
   type Reply = Tick;
 
@@ -261,10 +309,15 @@ impl LeaderFollowerSimulation {
         AgentHandler::<Canvas, UpdatePosition>::new(shared_canvas.clone());
       let register_agent_type_handler =
         AgentHandler::<Canvas, RegisterAgentType>::new(shared_canvas.clone());
+      let remove_agent_handler = AgentHandler::<Canvas, RemoveAgent>::new(shared_canvas.clone());
+      let clear_all_agents_handler =
+        AgentHandler::<Canvas, ClearAllAgents>::new(shared_canvas.clone());
 
       runtime.register_agent_handler(tick_handler);
       runtime.register_agent_handler(update_position_handler);
       runtime.register_agent_handler(register_agent_type_handler);
+      runtime.register_agent_handler(remove_agent_handler);
+      runtime.register_agent_handler(clear_all_agents_handler);
 
       runtime.start_agent("canvas");
 
@@ -376,6 +429,64 @@ impl LeaderFollowerSimulation {
   /// Get direct access to the runtime domain (for advanced control when wasm feature is enabled)
   #[wasm_bindgen(js_name = "getDomain")]
   pub fn get_domain(&mut self) -> Domain { self.domain.clone() }
+
+  /// Remove an agent and notify Canvas
+  #[wasm_bindgen(js_name = "removeAgent")]
+  pub fn remove_agent(&mut self, agent_id: &str) -> bool {
+    let mut runtime = self.domain.as_mut();
+
+    // Remove from domain
+    let success = runtime.remove_agent(agent_id);
+
+    if success {
+      // Send RemoveAgent message to Canvas
+      runtime.send_message(RemoveAgent { agent_id: agent_id.to_string() });
+
+      // Process messages to ensure Canvas gets the removal notification
+      runtime.run();
+
+      console::log_1(&format!("🗑️ {} removed", agent_id).into());
+    }
+
+    success
+  }
+
+  /// Clear all agents and notify Canvas
+  #[wasm_bindgen(js_name = "clearAllAgents")]
+  pub fn clear_all_agents(&mut self) -> usize {
+    let mut runtime = self.domain.as_mut();
+
+    // Get list of all agents and filter out canvas
+    let all_agents = runtime.list_agents();
+    let user_agents: Vec<String> =
+      all_agents.into_iter().filter(|id| *id != "canvas").cloned().collect();
+
+    let agent_count = user_agents.len();
+
+    // First, stop all agents
+    for agent_id in &user_agents {
+      runtime.stop_agent(agent_id);
+    }
+
+    // Then remove each agent from runtime
+    for agent_id in &user_agents {
+      runtime.remove_agent(agent_id);
+    }
+
+    // Send a single message to Canvas to clear all visual representations
+    runtime.send_message(ClearAllAgents);
+
+    // Reset agent counters
+    self.leader_count = 0;
+    self.follower_count = 0;
+
+    // Process messages to ensure Canvas gets the clear notification
+    runtime.run();
+
+    console::log_1(&"🧹 All agents cleared".into());
+
+    agent_count
+  }
 }
 
 /// Initialize the WASM module
