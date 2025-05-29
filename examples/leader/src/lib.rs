@@ -175,17 +175,36 @@ impl Canvas {
   }
 
   fn get_leader_positions(&self) -> Vec<(String, Position)> {
-    self
+    console::log_1(
+      &format!(
+        "Canvas looking for leaders among {} positions and {} types",
+        self.agent_positions.len(),
+        self.agent_types.len()
+      )
+      .into(),
+    );
+
+    let leaders: Vec<(String, Position)> = self
       .agent_positions
       .iter()
       .filter_map(|(id, pos)| {
-        if let Some(AgentType::Leader) = self.agent_types.get(id) {
-          Some((id.clone(), pos.clone()))
+        if let Some(agent_type) = self.agent_types.get(id) {
+          console::log_1(&format!("Canvas checking agent {}: {:?}", id, agent_type).into());
+          if matches!(agent_type, AgentType::Leader) {
+            console::log_1(&format!("Canvas found leader {}", id).into());
+            Some((id.clone(), pos.clone()))
+          } else {
+            None
+          }
         } else {
+          console::log_1(&format!("Canvas has position for {} but no type registered", id).into());
           None
         }
       })
-      .collect()
+      .collect();
+
+    console::log_1(&format!("Canvas returning {} leader positions", leaders.len()).into());
+    leaders
   }
 }
 
@@ -213,9 +232,12 @@ impl Handler<RegisterAgentType> for Canvas {
 
   fn handle(&mut self, message: RegisterAgentType) -> Self::Reply {
     console::log_1(
-      &format!("Registering agent {} as {:?}", message.agent_id, message.agent_type).into(),
+      &format!("Canvas registering agent {} as {:?}", message.agent_id, message.agent_type).into(),
     );
-    self.agent_types.insert(message.agent_id, message.agent_type);
+    self.agent_types.insert(message.agent_id.clone(), message.agent_type.clone());
+    console::log_1(
+      &format!("Canvas now has {} agent types registered", self.agent_types.len()).into(),
+    );
     self.render();
   }
 }
@@ -224,7 +246,11 @@ impl Handler<Tick> for Canvas {
   type Reply = Tick;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
+    console::log_1(&"Canvas handling tick".into());
     let leader_positions = self.get_leader_positions();
+    console::log_1(
+      &format!("Canvas tick returning {} leader positions", leader_positions.len()).into(),
+    );
     Tick { leader_positions }
   }
 }
@@ -389,7 +415,7 @@ impl Leader {
       position: Position::new(x, y),
       canvas_width,
       canvas_height,
-      speed: 1.0,
+      speed: 0.01,
       current_direction: random() * 2.0 * std::f64::consts::PI,
       direction_steps: 0,
       max_direction_steps: (100 + (random() * 100.0) as u32),
@@ -409,8 +435,8 @@ impl Leader {
   fn move_agent(&mut self) {
     self.update_direction();
 
-    let dx = self.current_direction.cos() * self.speed / 100.0;
-    let dy = self.current_direction.sin() * self.speed / 100.0;
+    let dx = self.current_direction.cos() * self.speed;
+    let dy = self.current_direction.sin() * self.speed;
 
     let mut new_pos = Position::new(self.position.x + dx, self.position.y + dy);
 
@@ -467,15 +493,20 @@ impl Follower {
     Self {
       id,
       position: Position::new(x, y),
-      speed: 0.8,
+      speed: 0.008,
       follow_distance: 50.0,
       target_leader_id: None,
     }
   }
 
   fn find_closest_leader(&mut self, leader_positions: &[(String, Position)]) {
+    console::log_1(
+      &format!("Follower {} searching through {} leaders", self.id, leader_positions.len()).into(),
+    );
+
     if leader_positions.is_empty() {
       self.target_leader_id = None;
+      console::log_1(&format!("Follower {} found no leaders", self.id).into());
       return;
     }
 
@@ -484,26 +515,56 @@ impl Follower {
 
     for (leader_id, leader_pos) in leader_positions {
       let distance = self.position.distance_to(leader_pos);
+      console::log_1(
+        &format!("Follower {} distance to leader {}: {:.1}", self.id, leader_id, distance).into(),
+      );
       if distance < closest_distance {
         closest_distance = distance;
         closest_leader = Some(leader_id.clone());
       }
     }
 
-    self.target_leader_id = closest_leader;
+    self.target_leader_id = closest_leader.clone();
+    console::log_1(
+      &format!("Follower {} selected target: {:?}", self.id, self.target_leader_id).into(),
+    );
   }
 
   fn follow_target(&mut self, leader_positions: &[(String, Position)]) {
     if let Some(target_id) = &self.target_leader_id {
+      console::log_1(&format!("Follower {} attempting to follow {}", self.id, target_id).into());
+
       for (leader_id, leader_pos) in leader_positions {
         if leader_id == target_id {
           let distance = self.position.distance_to(leader_pos);
+          console::log_1(
+            &format!(
+              "Follower {} distance to target {}: {:.1} (follow_distance: {:.1})",
+              self.id, target_id, distance, self.follow_distance
+            )
+            .into(),
+          );
+
           if distance > self.follow_distance {
+            let old_pos = self.position.clone();
             self.position.move_towards(leader_pos, self.speed);
+            console::log_1(
+              &format!(
+                "Follower {} moving from ({:.1}, {:.1}) to ({:.1}, {:.1})",
+                self.id, old_pos.x, old_pos.y, self.position.x, self.position.y
+              )
+              .into(),
+            );
+          } else {
+            console::log_1(
+              &format!("Follower {} close enough to leader, not moving", self.id).into(),
+            );
           }
           break;
         }
       }
+    } else {
+      console::log_1(&format!("Follower {} has no target leader", self.id).into());
     }
   }
 }
@@ -522,6 +583,15 @@ impl Handler<Tick> for Follower {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, message: Tick) -> Self::Reply {
+    console::log_1(
+      &format!(
+        "Follower {} received tick with {} leaders",
+        self.id,
+        message.leader_positions.len()
+      )
+      .into(),
+    );
+
     // Use the leader positions from the tick message
     self.find_closest_leader(&message.leader_positions);
     self.follow_target(&message.leader_positions);
