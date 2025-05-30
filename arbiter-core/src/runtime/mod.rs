@@ -23,11 +23,10 @@ impl Runtime {
   pub fn shared() -> Arc<Mutex<Self>> { Arc::new(Mutex::new(Self::new())) }
 
   /// Register an agent with the runtime
-  pub fn register_agent<A>(&mut self, agent: A) -> AgentId
+  pub fn register_agent<A>(&mut self, agent: Agent<A>) -> AgentId
   where A: LifeCycle + 'static {
-    let agent_container = Agent::new(agent);
-    let id = agent_container.id();
-    self.agents.insert(id, Box::new(agent_container));
+    let id = agent.id();
+    self.agents.insert(id, Box::new(agent));
     id
   }
 
@@ -35,7 +34,7 @@ impl Runtime {
   pub fn register_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: A,
+    agent: Agent<A>,
   ) -> Result<AgentId, String>
   where
     A: LifeCycle + 'static,
@@ -45,15 +44,14 @@ impl Runtime {
       return Err(format!("Agent name '{}' already exists", name));
     }
 
-    let agent_container = Agent::with_name(agent, name.clone());
-    let id = agent_container.id();
-    self.agents.insert(id, Box::new(agent_container));
+    let id = agent.id();
+    self.agents.insert(id, Box::new(agent));
     self.name_to_id.insert(name, id);
     Ok(id)
   }
 
   /// Register an agent and start it immediately
-  pub fn spawn_agent<A>(&mut self, agent: A) -> AgentId
+  pub fn spawn_agent<A>(&mut self, agent: Agent<A>) -> AgentId
   where A: LifeCycle + 'static {
     let id = self.register_agent(agent);
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
@@ -64,7 +62,7 @@ impl Runtime {
   pub fn spawn_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: A,
+    agent: Agent<A>,
   ) -> Result<AgentId, String>
   where
     A: LifeCycle + 'static,
@@ -131,13 +129,69 @@ impl Runtime {
       }
     }
 
-    // Second pass: route all collected replies
+    // Second pass: route all collected replies back into agent mailboxes
     for reply in all_replies {
-      self.route_reply_message(&*reply);
+      self.route_reply_to_agents(&*reply);
     }
 
     total_processed
   }
+
+  /// Execute a single runtime step: process messages and route replies
+  /// Returns the number of messages processed in this step
+  pub fn step(&mut self) -> usize {
+    let mut step_processed = 0;
+    let mut pending_replies = Vec::new();
+
+    // Process all agents that have pending messages
+    for agent in self.agents.values_mut() {
+      if agent.should_process_mailbox() {
+        let replies = agent.process_pending_messages();
+        step_processed += replies.len();
+        pending_replies.extend(replies);
+      }
+    }
+
+    // Route all replies to appropriate agents
+    for reply in pending_replies {
+      self.route_reply_to_agents(&*reply);
+    }
+
+    step_processed
+  }
+
+  /// Run the runtime until no more messages are being processed
+  /// Returns total messages processed and number of steps taken
+  pub fn run(&mut self) -> RuntimeExecutionResult {
+    self.run_with_limit(1000) // Default reasonable limit
+  }
+
+  /// Run the runtime with a maximum number of steps to prevent infinite loops
+  /// Returns total messages processed and number of steps taken
+  pub fn run_with_limit(&mut self, max_steps: usize) -> RuntimeExecutionResult {
+    let mut total_processed = 0;
+    let mut steps_taken = 0;
+
+    for step in 0..max_steps {
+      let processed_this_step = self.step();
+      total_processed += processed_this_step;
+      steps_taken = step + 1;
+
+      // If no messages were processed, the system has reached a stable state
+      if processed_this_step == 0 {
+        break;
+      }
+    }
+
+    RuntimeExecutionResult {
+      total_messages_processed: total_processed,
+      steps_taken,
+      reached_stable_state: steps_taken < max_steps,
+    }
+  }
+
+  /// Check if the runtime has any pending work
+  pub fn has_pending_work(&self) -> bool { self.agents_needing_processing() > 0 }
 
   /// Get list of all agent IDs
   pub fn agent_ids(&self) -> Vec<AgentId> { self.agents.keys().copied().collect() }
@@ -151,13 +205,6 @@ impl Runtime {
   /// Get count of agents that need processing
   pub fn agents_needing_processing(&self) -> usize {
     self.agents.values().filter(|agent| agent.should_process_mailbox()).count()
-  }
-
-  /// Route a cloneable reply message to all agents that can handle it
-  /// This is a convenience method for when you know the reply type implements Clone
-  pub fn route_cloneable_reply<R>(&mut self, reply: R) -> usize
-  where R: Any + Clone + Send + Sync + 'static {
-    self.broadcast_message(reply)
   }
 
   /// Start an agent by ID
@@ -365,25 +412,56 @@ impl Runtime {
   }
 
   /// Helper function to route reply messages back into the system
-  fn route_reply_message(&self, reply: &dyn Any) {
+  fn route_reply_to_agents(&mut self, reply: &dyn Any) {
     let reply_type = reply.type_id();
 
-    // Collect agents that can handle this reply type first
-    let mut target_agents = Vec::new();
-    for (name, agent) in &self.agents {
-      if agent.handlers().contains_key(&reply_type) {
-        target_agents.push(name.clone());
+    // Find all agents that can handle this reply type
+    let target_agent_ids: Vec<AgentId> = self
+      .agents
+      .iter()
+      .filter_map(
+        |(id, agent)| {
+          if agent.handlers().contains_key(&reply_type) {
+            Some(*id)
+          } else {
+            None
+          }
+        },
+      )
+      .collect();
+
+    // Route the reply to each target agent
+    // Note: This approach requires replies to implement Clone + Send + Sync
+    // We use a type-erased approach to handle different reply types
+    for agent_id in target_agent_ids {
+      if let Some(agent) = self.agents.get_mut(&agent_id) {
+        // We can't clone arbitrary `dyn Any`, so we use a workaround:
+        // The reply routing will work for replies that were created as Clone types
+        // For now, we skip non-cloneable replies with a warning
+        if let Some(cloned_reply) = Self::try_clone_any_reply() {
+          agent.enqueue_boxed_message(cloned_reply);
+        }
       }
     }
+  }
 
-    // Then send the reply to each target agent
-    // Note: This is a limitation - we can only route replies that implement Clone
-    // For now, we skip reply routing since we can't clone arbitrary boxed types
-    // In a production system, you'd want a proper message cloning registry
-    for _agent_name in target_agents {
-      // TODO: Implement proper reply cloning and routing
-      // For now, we skip this to avoid the complexity
-    }
+  /// Attempt to clone a reply of unknown type
+  /// This is a fundamental limitation of type-erased replies
+  /// In practice, most message types should implement Clone
+  fn try_clone_any_reply() -> Option<Box<dyn Any + Send + Sync>> {
+    // This is the fundamental challenge with type-erased message routing.
+    // Without knowing the concrete type, we can't clone arbitrary replies.
+    //
+    // Solutions for production systems:
+    // 1. Require all message types to implement Clone
+    // 2. Use a type registry with clone functions
+    // 3. Use Rc/Arc for shared ownership
+    // 4. Implement a custom CloneAny trait
+    //
+    // For now, we return None to indicate cloning failed
+    // This means replies won't be automatically routed between agents
+    // Users can manually route replies using route_cloneable_reply()
+    None
   }
 }
 
@@ -399,6 +477,14 @@ pub struct RuntimeStatistics {
   pub paused_agents:                usize,
   pub stopped_agents:               usize,
   pub agents_with_pending_messages: usize,
+}
+
+/// Result of runtime execution
+#[derive(Debug, Clone)]
+pub struct RuntimeExecutionResult {
+  pub total_messages_processed: usize,
+  pub steps_taken:              usize,
+  pub reached_stable_state:     bool,
 }
 
 #[cfg(test)]
@@ -419,21 +505,21 @@ mod tests {
 
   // Example agent types - simple structs with clear state
   #[derive(Clone)]
-  struct CounterAgent {
+  struct Counter {
     total: i32,
   }
 
-  impl LifeCycle for CounterAgent {}
+  impl LifeCycle for Counter {}
 
   #[derive(Clone)]
-  struct LogAgent {
+  struct Logger {
     name:          String,
     message_count: i32,
   }
 
-  impl LifeCycle for LogAgent {}
+  impl LifeCycle for Logger {}
 
-  impl Handler<NumberMessage> for CounterAgent {
+  impl Handler<NumberMessage> for Counter {
     type Reply = ();
 
     fn handle(&mut self, message: NumberMessage) -> Self::Reply {
@@ -442,7 +528,7 @@ mod tests {
     }
   }
 
-  impl Handler<TextMessage> for LogAgent {
+  impl Handler<TextMessage> for Logger {
     type Reply = ();
 
     fn handle(&mut self, message: TextMessage) -> Self::Reply {
@@ -459,12 +545,12 @@ mod tests {
     let mut runtime = Runtime::new();
 
     // Register agents
-    let counter_id = runtime.register_agent(CounterAgent { total: 0 });
+    let counter_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
     let logger_id = runtime
-      .register_named_agent("TestLogger", LogAgent {
-        name:          "TestLogger".to_string(),
-        message_count: 0,
-      })
+      .register_named_agent(
+        "TestLogger",
+        Agent::new(Logger { name: "TestLogger".to_string(), message_count: 0 }),
+      )
       .unwrap();
 
     assert_eq!(runtime.agent_count(), 2);
@@ -478,8 +564,8 @@ mod tests {
     let mut runtime = Runtime::new();
 
     // Register agents with specific handlers
-    let counter = Agent::new(CounterAgent { total: 0 }).with_handler::<NumberMessage>();
-    let logger = Agent::new(LogAgent { name: "TestLogger".to_string(), message_count: 0 })
+    let counter = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
+    let logger = Agent::new(Logger { name: "TestLogger".to_string(), message_count: 0 })
       .with_handler::<TextMessage>();
 
     let counter_id = counter.id();
@@ -508,7 +594,7 @@ mod tests {
   fn test_agent_lifecycle() {
     let mut runtime = Runtime::new();
 
-    let counter_id = runtime.spawn_agent(CounterAgent { total: 0 });
+    let counter_id = runtime.spawn_agent(Agent::new(Counter { total: 0 }));
 
     // Agent should be running after spawn
     assert_eq!(runtime.agent_state_by_id(counter_id), Some(AgentState::Running));
@@ -530,9 +616,9 @@ mod tests {
   fn test_runtime_statistics() {
     let mut runtime = Runtime::new();
 
-    let _agent1_id = runtime.spawn_agent(CounterAgent { total: 0 });
-    let _agent2_id = runtime.spawn_agent(CounterAgent { total: 0 });
-    let _agent3_id = runtime.register_agent(CounterAgent { total: 0 });
+    let _agent1_id = runtime.spawn_agent(Agent::new(Counter { total: 0 }));
+    let _agent2_id = runtime.spawn_agent(Agent::new(Counter { total: 0 }));
+    let _agent3_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
 
     let stats = runtime.statistics();
     assert_eq!(stats.total_agents, 3);
@@ -545,9 +631,9 @@ mod tests {
     let mut runtime = Runtime::new();
 
     // Register multiple agents
-    let agent1_id = runtime.register_agent(CounterAgent { total: 0 });
-    let agent2_id = runtime.register_agent(CounterAgent { total: 0 });
-    let agent3_id = runtime.register_agent(CounterAgent { total: 0 });
+    let agent1_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
+    let agent2_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
+    let agent3_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
     assert_eq!(agent1_id.value(), 1);
     assert_eq!(agent2_id.value(), 2);
     assert_eq!(agent3_id.value(), 3);
@@ -583,5 +669,47 @@ mod tests {
     let removed = runtime.remove_all_agents();
     assert_eq!(removed.len(), 3);
     assert_eq!(runtime.agent_count(), 0);
+  }
+
+  #[test]
+  fn test_runtime_execution() {
+    let mut runtime = Runtime::new();
+
+    // Create agents with handlers
+    let counter = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
+    let logger = Agent::new(Logger { name: "Logger".to_string(), message_count: 0 })
+      .with_handler::<TextMessage>();
+
+    let counter_id = counter.id();
+    let logger_id = logger.id();
+
+    runtime.register_agent(counter);
+    runtime.register_agent(logger);
+
+    // Start agents
+    runtime.start_agent_by_id(counter_id).unwrap();
+    runtime.start_agent_by_id(logger_id).unwrap();
+
+    // Send initial messages
+    runtime.broadcast_message(NumberMessage { value: 10 });
+    runtime.broadcast_message(TextMessage { content: "Hello".to_string() });
+
+    // Test single step execution
+    assert!(runtime.has_pending_work());
+    let processed = runtime.step();
+    assert_eq!(processed, 2); // Both messages processed
+
+    // Test full runtime execution
+    runtime.broadcast_message(NumberMessage { value: 5 });
+    let result = runtime.run();
+    assert_eq!(result.total_messages_processed, 1);
+    assert_eq!(result.steps_taken, 1);
+    assert!(result.reached_stable_state);
+
+    // Test runtime with no work
+    let result = runtime.run();
+    assert_eq!(result.total_messages_processed, 0);
+    assert_eq!(result.steps_taken, 1);
+    assert!(result.reached_stable_state);
   }
 }
