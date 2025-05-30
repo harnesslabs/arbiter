@@ -1,7 +1,10 @@
 use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
-  sync::atomic::{AtomicU64, Ordering},
+  sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+  },
 };
 
 use crate::handler::{Handler, HandlerWrapper, MessageHandler};
@@ -53,7 +56,7 @@ pub struct Agent<S: LifeCycle> {
   name:                 Option<String>,
   inner:                S,
   state:                AgentState,
-  mailbox:              VecDeque<Box<dyn Any + Send + Sync>>,
+  mailbox:              VecDeque<Arc<dyn Any + Send + Sync>>,
   handlers:             HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
   has_pending_messages: bool, // Clear flag indicating mailbox has messages to process
 }
@@ -145,7 +148,7 @@ impl<A: LifeCycle> Agent<A> {
   // Convenient method to send typed messages to mailbox
   pub fn enqueue_message<M>(&mut self, message: M)
   where M: Any + Send + Sync + 'static {
-    let boxed_message = Box::new(message);
+    let boxed_message = Arc::new(message);
     match self.state {
       AgentState::Running | AgentState::Paused => {
         self.mailbox.push_back(boxed_message);
@@ -158,7 +161,7 @@ impl<A: LifeCycle> Agent<A> {
   }
 
   // TODO: This function seems redundant.  We should just use process_any_message.
-  pub fn process_message<M>(&mut self, message: M) -> Vec<Box<dyn Any + Send + Sync>>
+  pub fn process_message<M>(&mut self, message: M) -> Vec<Arc<dyn Any + Send + Sync>>
   where M: Any + Clone + Send + Sync + 'static {
     if !self.is_active() {
       return Vec::new();
@@ -209,12 +212,12 @@ pub trait RuntimeAgent: Send + Sync {
   fn state(&self) -> AgentState;
   fn is_active(&self) -> bool;
   fn should_process_mailbox(&self) -> bool;
-  fn enqueue_boxed_message(&mut self, message: Box<dyn Any + Send + Sync>);
-  fn process_pending_messages(&mut self) -> Vec<Box<dyn Any + Send + Sync>>;
+  fn enqueue_shared_message(&mut self, message: Arc<dyn Any + Send + Sync>);
+  fn process_pending_messages(&mut self) -> Vec<Arc<dyn Any + Send + Sync>>;
   fn agent_type_name(&self) -> &'static str;
   fn handlers(&self) -> &HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
   fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
-  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Box<dyn Any + Send + Sync>>;
+  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>>;
 }
 
 impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
@@ -236,7 +239,7 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
   fn should_process_mailbox(&self) -> bool { self.has_pending_messages && self.is_active() }
 
-  fn enqueue_boxed_message(&mut self, message: Box<dyn Any + Send + Sync>) {
+  fn enqueue_shared_message(&mut self, message: Arc<dyn Any + Send + Sync>) {
     match self.state {
       AgentState::Running | AgentState::Paused => {
         self.mailbox.push_back(message);
@@ -248,7 +251,7 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     }
   }
 
-  fn process_pending_messages(&mut self) -> Vec<Box<dyn Any + Send + Sync>> {
+  fn process_pending_messages(&mut self) -> Vec<Arc<dyn Any + Send + Sync>> {
     let mut all_replies = Vec::new();
 
     if !self.is_active() {
@@ -272,7 +275,7 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     &mut self.handlers
   }
 
-  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Box<dyn Any + Send + Sync>> {
+  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>> {
     if !self.is_active() {
       return Vec::new();
     }

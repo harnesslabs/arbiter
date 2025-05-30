@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 pub trait Handler<M> {
   type Reply;
@@ -8,7 +8,7 @@ pub trait Handler<M> {
 
 // Trait object for handling any message type
 pub trait MessageHandler: Send + Sync {
-  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Box<dyn Any + Send + Sync>;
+  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Arc<dyn Any + Send + Sync>;
 }
 
 // Wrapper to make Handler<M> work as MessageHandler
@@ -21,15 +21,15 @@ where
   M: Any + Clone + Send + Sync,
   <A as Handler<M>>::Reply: Send + Sync + 'static,
 {
-  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Box<dyn Any + Send + Sync> {
+  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Arc<dyn Any + Send + Sync> {
     if let (Some(typed_agent), Some(typed_message)) =
       (agent.downcast_mut::<A>(), message.downcast_ref::<M>())
     {
       let reply = typed_agent.handle(typed_message.clone());
-      Box::new(reply)
+      Arc::new(reply)
     } else {
       // Return unit if types don't match
-      Box::new(())
+      Arc::new(())
     }
   }
 }

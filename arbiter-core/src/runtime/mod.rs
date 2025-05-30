@@ -88,7 +88,7 @@ impl Runtime {
     for agent in self.agents.values_mut() {
       // Check if agent has handlers for this message type
       if agent.handlers().contains_key(&message_type) {
-        agent.enqueue_boxed_message(Box::new(message.clone()));
+        agent.enqueue_shared_message(Arc::new(message.clone()));
         delivered_count += 1;
       }
     }
@@ -101,7 +101,7 @@ impl Runtime {
   where M: Any + Send + Sync + 'static {
     match self.agents.get_mut(&agent_id) {
       Some(agent) => {
-        agent.enqueue_boxed_message(Box::new(message));
+        agent.enqueue_shared_message(Arc::new(message));
         Ok(())
       },
       None => Err(format!("Agent with ID {} not found", agent_id)),
@@ -133,7 +133,7 @@ impl Runtime {
 
     // Second pass: route all collected replies back into agent mailboxes
     for reply in all_replies {
-      self.route_reply_to_agents(&*reply);
+      self.route_reply_to_agents(reply);
     }
 
     total_processed
@@ -156,7 +156,7 @@ impl Runtime {
 
     // Route all replies to appropriate agents
     for reply in pending_replies {
-      self.route_reply_to_agents(&*reply);
+      self.route_reply_to_agents(reply);
     }
 
     step_processed
@@ -414,7 +414,7 @@ impl Runtime {
   }
 
   /// Helper function to route reply messages back into the system
-  fn route_reply_to_agents(&mut self, reply: &dyn Any) {
+  fn route_reply_to_agents(&mut self, reply: Arc<dyn Any + Send + Sync>) {
     let reply_type = reply.type_id();
 
     // Find all agents that can handle this reply type
@@ -434,7 +434,7 @@ impl Runtime {
 
     for agent_id in target_agent_ids {
       if let Some(agent) = self.agents.get_mut(&agent_id) {
-        agent.enqueue_boxed_message(reply.clone());
+        agent.enqueue_shared_message(reply.clone());
       }
     }
   }
