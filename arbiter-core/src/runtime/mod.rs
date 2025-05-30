@@ -1,45 +1,82 @@
 use std::{
   any::{Any, TypeId},
-  collections::{HashMap, VecDeque},
-  sync::{Arc, Mutex, MutexGuard},
+  collections::HashMap,
+  sync::{Arc, Mutex},
 };
 
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
-use crate::agent::{Agent, AgentState, LifeCycle, RuntimeAgent};
+use crate::agent::{Agent, AgentId, AgentState, LifeCycle, RuntimeAgent};
 
 /// A multi-agent runtime that manages agent lifecycles and message routing
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 pub struct Runtime {
-  agents: HashMap<String, Box<dyn RuntimeAgent>>,
+  agents:     HashMap<AgentId, Box<dyn RuntimeAgent>>,
+  name_to_id: HashMap<String, AgentId>, // Optional name lookup
 }
 
 impl Runtime {
   /// Create a new runtime
-  pub fn new() -> Self { Self { agents: HashMap::new() } }
+  pub fn new() -> Self { Self { agents: HashMap::new(), name_to_id: HashMap::new() } }
 
   /// Create a shared runtime wrapped in Arc<Mutex<>> for concurrent access
   pub fn shared() -> Arc<Mutex<Self>> { Arc::new(Mutex::new(Self::new())) }
 
   /// Register an agent with the runtime
-  pub fn register_agent<A>(&mut self, name: impl Into<String>, agent: A) -> Result<(), String>
+  pub fn register_agent<A>(&mut self, agent: A) -> AgentId
   where A: LifeCycle + 'static {
-    let name = name.into();
-    if self.agents.contains_key(&name) {
-      return Err(format!("Agent '{}' already exists", name));
-    }
-
     let agent_container = Agent::new(agent);
-    self.agents.insert(name, Box::new(agent_container));
-    Ok(())
+    let id = agent_container.id();
+    self.agents.insert(id, Box::new(agent_container));
+    id
   }
 
-  /// Register an agent with handlers and start it immediately
-  pub fn spawn_agent<A>(&mut self, name: &str, agent: A) -> Result<(), String>
+  /// Register an agent with a name
+  pub fn register_named_agent<A>(
+    &mut self,
+    name: impl Into<String>,
+    agent: A,
+  ) -> Result<AgentId, String>
+  where
+    A: LifeCycle + 'static,
+  {
+    let name = name.into();
+    if self.name_to_id.contains_key(&name) {
+      return Err(format!("Agent name '{}' already exists", name));
+    }
+
+    let agent_container = Agent::with_name(agent, name.clone());
+    let id = agent_container.id();
+    self.agents.insert(id, Box::new(agent_container));
+    self.name_to_id.insert(name, id);
+    Ok(id)
+  }
+
+  /// Register an agent and start it immediately
+  pub fn spawn_agent<A>(&mut self, agent: A) -> AgentId
   where A: LifeCycle + 'static {
-    self.register_agent(name, agent)?;
-    self.start_agent(name);
-    Ok(())
+    let id = self.register_agent(agent);
+    self.start_agent_by_id(id).unwrap(); // Safe since we just added it
+    id
+  }
+
+  /// Register a named agent and start it immediately
+  pub fn spawn_named_agent<A>(
+    &mut self,
+    name: impl Into<String>,
+    agent: A,
+  ) -> Result<AgentId, String>
+  where
+    A: LifeCycle + 'static,
+  {
+    let id = self.register_named_agent(name, agent)?;
+    self.start_agent_by_id(id).unwrap(); // Safe since we just added it
+    Ok(id)
+  }
+
+  /// Look up agent ID by name
+  pub fn agent_id_by_name(&self, name: &str) -> Option<AgentId> {
+    self.name_to_id.get(name).copied()
   }
 
   /// Send a message to all agents that can handle it
@@ -59,16 +96,25 @@ impl Runtime {
     delivered_count
   }
 
-  /// Send a message to a specific agent
-  pub fn send_to_agent<M>(&mut self, agent_name: &str, message: M) -> Result<(), String>
+  /// Send a message to a specific agent by ID
+  pub fn send_to_agent_by_id<M>(&mut self, agent_id: AgentId, message: M) -> Result<(), String>
   where M: Any + Send + Sync + 'static {
-    match self.agents.get_mut(agent_name) {
+    match self.agents.get_mut(&agent_id) {
       Some(agent) => {
         agent.enqueue_boxed_message(Box::new(message));
         Ok(())
       },
-      None => Err(format!("Agent '{}' not found", agent_name)),
+      None => Err(format!("Agent with ID {} not found", agent_id)),
     }
+  }
+
+  /// Send a message to a specific agent by name
+  pub fn send_to_agent_by_name<M>(&mut self, agent_name: &str, message: M) -> Result<(), String>
+  where M: Any + Send + Sync + 'static {
+    let agent_id = self
+      .agent_id_by_name(agent_name)
+      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    self.send_to_agent_by_id(agent_id, message)
   }
 
   /// Process all pending messages across all agents
@@ -93,18 +139,11 @@ impl Runtime {
     total_processed
   }
 
-  /// Add a handler to an existing agent at runtime
-  pub fn add_handler_to_agent<M>(&mut self, agent_name: &str) -> Result<(), String>
-  where M: Clone + Send + Sync + 'static {
-    // This is a limitation - we can't dynamically add handlers without knowing the agent type
-    // We'd need a different architecture for this. For now, return an error.
-    Err(
-      "Dynamic handler addition requires agent type information - not implemented yet".to_string(),
-    )
-  }
+  /// Get list of all agent IDs
+  pub fn agent_ids(&self) -> Vec<AgentId> { self.agents.keys().copied().collect() }
 
-  /// Get list of all agent names
-  pub fn agent_names(&self) -> Vec<&String> { self.agents.keys().collect() }
+  /// Get list of all agent names (only named agents)
+  pub fn agent_names(&self) -> Vec<&String> { self.name_to_id.keys().collect() }
 
   /// Get agent count
   pub fn agent_count(&self) -> usize { self.agents.len() }
@@ -121,61 +160,118 @@ impl Runtime {
     self.broadcast_message(reply)
   }
 
-  /// Start an agent
-  pub fn start_agent(&mut self, name: &str) -> Result<(), String> {
-    match self.agents.get_mut(name) {
+  /// Start an agent by ID
+  pub fn start_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
+    match self.agents.get_mut(&agent_id) {
       Some(agent) => {
         agent.start();
         Ok(())
       },
-      None => Err(format!("Agent '{}' not found", name)),
+      None => Err(format!("Agent with ID {} not found", agent_id)),
     }
   }
 
-  /// Pause an agent
-  pub fn pause_agent(&mut self, name: &str) -> Result<(), String> {
-    match self.agents.get_mut(name) {
+  /// Start an agent by name
+  pub fn start_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
+    let agent_id = self
+      .agent_id_by_name(agent_name)
+      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    self.start_agent_by_id(agent_id)
+  }
+
+  /// Pause an agent by ID
+  pub fn pause_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
+    match self.agents.get_mut(&agent_id) {
       Some(agent) => {
         agent.pause();
         Ok(())
       },
-      None => Err(format!("Agent '{}' not found", name)),
+      None => Err(format!("Agent with ID {} not found", agent_id)),
     }
   }
 
-  /// Resume an agent
-  pub fn resume_agent(&mut self, name: &str) -> Result<(), String> {
-    match self.agents.get_mut(name) {
+  /// Pause an agent by name
+  pub fn pause_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
+    let agent_id = self
+      .agent_id_by_name(agent_name)
+      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    self.pause_agent_by_id(agent_id)
+  }
+
+  /// Resume an agent by ID
+  pub fn resume_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
+    match self.agents.get_mut(&agent_id) {
       Some(agent) => {
         agent.resume();
         Ok(())
       },
-      None => Err(format!("Agent '{}' not found", name)),
+      None => Err(format!("Agent with ID {} not found", agent_id)),
     }
   }
 
-  /// Stop an agent
-  pub fn stop_agent(&mut self, name: &str) -> Result<(), String> {
-    match self.agents.get_mut(name) {
+  /// Resume an agent by name
+  pub fn resume_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
+    let agent_id = self
+      .agent_id_by_name(agent_name)
+      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    self.resume_agent_by_id(agent_id)
+  }
+
+  /// Stop an agent by ID
+  pub fn stop_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
+    match self.agents.get_mut(&agent_id) {
       Some(agent) => {
         agent.stop();
         Ok(())
       },
-      None => Err(format!("Agent '{}' not found", name)),
+      None => Err(format!("Agent with ID {} not found", agent_id)),
     }
   }
 
-  /// Remove an agent from the runtime
-  pub fn remove_agent(&mut self, name: &str) -> Result<(), String> {
-    match self.agents.remove(name) {
-      Some(_) => Ok(()),
-      None => Err(format!("Agent '{}' not found", name)),
+  /// Stop an agent by name
+  pub fn stop_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
+    let agent_id = self
+      .agent_id_by_name(agent_name)
+      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    self.stop_agent_by_id(agent_id)
+  }
+
+  /// Remove an agent by ID and return it
+  pub fn remove_agent_by_id(&mut self, agent_id: AgentId) -> Result<Box<dyn RuntimeAgent>, String> {
+    // Remove from name lookup if it has a name
+    if let Some(agent) = self.agents.get(&agent_id) {
+      if let Some(name) = agent.name() {
+        self.name_to_id.remove(name);
+      }
+    }
+
+    match self.agents.remove(&agent_id) {
+      Some(agent) => Ok(agent),
+      None => Err(format!("Agent with ID {} not found", agent_id)),
     }
   }
 
-  /// Get the state of an agent
-  pub fn agent_state(&self, name: &str) -> Option<AgentState> {
-    self.agents.get(name).map(|agent| agent.state())
+  /// Remove an agent by name and return it
+  pub fn remove_agent_by_name(
+    &mut self,
+    agent_name: &str,
+  ) -> Result<Box<dyn RuntimeAgent>, String> {
+    let agent_id = self
+      .agent_id_by_name(agent_name)
+      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    self.name_to_id.remove(agent_name);
+    self.remove_agent_by_id(agent_id)
+  }
+
+  /// Get the state of an agent by ID
+  pub fn agent_state_by_id(&self, agent_id: AgentId) -> Option<AgentState> {
+    self.agents.get(&agent_id).map(|agent| agent.state())
+  }
+
+  /// Get the state of an agent by name
+  pub fn agent_state_by_name(&self, agent_name: &str) -> Option<AgentState> {
+    let agent_id = self.agent_id_by_name(agent_name)?;
+    self.agent_state_by_id(agent_id)
   }
 
   /// Get statistics about the runtime
@@ -243,20 +339,29 @@ impl Runtime {
     stopped_count
   }
 
-  /// Remove all agents from the runtime
-  pub fn remove_all_agents(&mut self) -> usize {
-    let count = self.agents.len();
-    self.agents.clear();
-    count
-  }
-
   /// Get all agents by their current state
-  pub fn agents_by_state(&self, state: AgentState) -> Vec<String> {
+  pub fn agents_by_state(&self, state: AgentState) -> Vec<AgentId> {
     self
       .agents
       .iter()
-      .filter_map(|(name, agent)| if agent.state() == state { Some(name.clone()) } else { None })
+      .filter_map(|(id, agent)| if agent.state() == state { Some(*id) } else { None })
       .collect()
+  }
+
+  /// Remove all agents from the runtime and return them
+  pub fn remove_all_agents(&mut self) -> Vec<(AgentId, Box<dyn RuntimeAgent>)> {
+    self.name_to_id.clear(); // Clear name lookup
+    self.agents.drain().collect()
+  }
+
+  /// Re-insert a removed agent
+  pub fn reinsert_agent(&mut self, agent: Box<dyn RuntimeAgent>) -> AgentId {
+    let id = agent.id();
+    if let Some(name) = agent.name() {
+      self.name_to_id.insert(name.to_string(), id);
+    }
+    self.agents.insert(id, agent);
+    id
   }
 
   /// Helper function to route reply messages back into the system
@@ -353,15 +458,19 @@ mod tests {
   fn test_runtime_basics() {
     let mut runtime = Runtime::new();
 
-    // Register agents with handlers
-    let counter = CounterAgent { total: 0 };
-    let logger = LogAgent { name: "TestLogger".to_string(), message_count: 0 };
-
-    runtime.register_agent("counter", counter).unwrap();
-    runtime.register_agent("logger", logger).unwrap();
+    // Register agents
+    let counter_id = runtime.register_agent(CounterAgent { total: 0 });
+    let logger_id = runtime
+      .register_named_agent("TestLogger", LogAgent {
+        name:          "TestLogger".to_string(),
+        message_count: 0,
+      })
+      .unwrap();
 
     assert_eq!(runtime.agent_count(), 2);
-    assert_eq!(runtime.agent_names().len(), 2);
+    assert_eq!(runtime.agent_ids().len(), 2);
+    assert!(runtime.agent_ids().contains(&counter_id));
+    assert!(runtime.agent_ids().contains(&logger_id));
   }
 
   #[test]
@@ -373,12 +482,15 @@ mod tests {
     let logger = Agent::new(LogAgent { name: "TestLogger".to_string(), message_count: 0 })
       .with_handler::<TextMessage>();
 
-    runtime.agents.insert("counter".to_string(), Box::new(counter));
-    runtime.agents.insert("logger".to_string(), Box::new(logger));
+    let counter_id = counter.id();
+    let logger_id = logger.id();
+
+    runtime.agents.insert(counter_id, Box::new(counter));
+    runtime.agents.insert(logger_id, Box::new(logger));
 
     // Start agents
-    runtime.start_agent("counter").unwrap();
-    runtime.start_agent("logger").unwrap();
+    runtime.start_agent_by_id(counter_id).unwrap();
+    runtime.start_agent_by_id(logger_id).unwrap();
 
     // Send messages - should route to appropriate agents
     let delivered = runtime.broadcast_message(NumberMessage { value: 42 });
@@ -396,32 +508,31 @@ mod tests {
   fn test_agent_lifecycle() {
     let mut runtime = Runtime::new();
 
-    let counter = CounterAgent { total: 0 };
-    runtime.spawn_agent("counter", counter).unwrap();
+    let counter_id = runtime.spawn_agent(CounterAgent { total: 0 });
 
     // Agent should be running after spawn
-    assert_eq!(runtime.agent_state("counter"), Some(AgentState::Running));
+    assert_eq!(runtime.agent_state_by_id(counter_id), Some(AgentState::Running));
 
     // Pause the agent
-    runtime.pause_agent("counter").unwrap();
-    assert_eq!(runtime.agent_state("counter"), Some(AgentState::Paused));
+    runtime.pause_agent_by_id(counter_id).unwrap();
+    assert_eq!(runtime.agent_state_by_id(counter_id), Some(AgentState::Paused));
 
     // Resume the agent
-    runtime.resume_agent("counter").unwrap();
-    assert_eq!(runtime.agent_state("counter"), Some(AgentState::Running));
+    runtime.resume_agent_by_id(counter_id).unwrap();
+    assert_eq!(runtime.agent_state_by_id(counter_id), Some(AgentState::Running));
 
     // Stop the agent
-    runtime.stop_agent("counter").unwrap();
-    assert_eq!(runtime.agent_state("counter"), Some(AgentState::Stopped));
+    runtime.stop_agent_by_id(counter_id).unwrap();
+    assert_eq!(runtime.agent_state_by_id(counter_id), Some(AgentState::Stopped));
   }
 
   #[test]
   fn test_runtime_statistics() {
     let mut runtime = Runtime::new();
 
-    runtime.spawn_agent("agent1", CounterAgent { total: 0 }).unwrap();
-    runtime.spawn_agent("agent2", CounterAgent { total: 0 }).unwrap();
-    runtime.register_agent("agent3", CounterAgent { total: 0 }).unwrap();
+    let _agent1_id = runtime.spawn_agent(CounterAgent { total: 0 });
+    let _agent2_id = runtime.spawn_agent(CounterAgent { total: 0 });
+    let _agent3_id = runtime.register_agent(CounterAgent { total: 0 });
 
     let stats = runtime.statistics();
     assert_eq!(stats.total_agents, 3);
@@ -434,9 +545,12 @@ mod tests {
     let mut runtime = Runtime::new();
 
     // Register multiple agents
-    runtime.register_agent("agent1", CounterAgent { total: 0 }).unwrap();
-    runtime.register_agent("agent2", CounterAgent { total: 0 }).unwrap();
-    runtime.register_agent("agent3", CounterAgent { total: 0 }).unwrap();
+    let agent1_id = runtime.register_agent(CounterAgent { total: 0 });
+    let agent2_id = runtime.register_agent(CounterAgent { total: 0 });
+    let agent3_id = runtime.register_agent(CounterAgent { total: 0 });
+    assert_eq!(agent1_id.value(), 1);
+    assert_eq!(agent2_id.value(), 2);
+    assert_eq!(agent3_id.value(), 3);
 
     // All should be stopped initially
     assert_eq!(runtime.statistics().stopped_agents, 3);
@@ -464,13 +578,10 @@ mod tests {
     // Test agents_by_state
     let stopped_agents = runtime.agents_by_state(AgentState::Stopped);
     assert_eq!(stopped_agents.len(), 3);
-    assert!(stopped_agents.contains(&"agent1".to_string()));
-    assert!(stopped_agents.contains(&"agent2".to_string()));
-    assert!(stopped_agents.contains(&"agent3".to_string()));
 
     // Remove all agents
     let removed = runtime.remove_all_agents();
-    assert_eq!(removed, 3);
+    assert_eq!(removed.len(), 3);
     assert_eq!(runtime.agent_count(), 0);
   }
 }

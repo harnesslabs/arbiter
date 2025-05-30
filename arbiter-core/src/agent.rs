@@ -1,9 +1,31 @@
 use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
+  sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::handler::{Handler, HandlerWrapper, MessageHandler};
+
+/// Unique identifier for agents - uses atomic counter for WASM compatibility
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AgentId(u64);
+
+impl AgentId {
+  /// Generate a new unique agent ID
+  pub fn generate() -> Self {
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+    Self(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+  }
+
+  /// Get the raw ID value
+  pub const fn value(&self) -> u64 { self.0 }
+}
+
+impl std::fmt::Display for AgentId {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "agent-{}", self.0)
+  }
+}
 
 // Enhanced trait for things that can be agents with lifecycle management
 pub trait LifeCycle: Send + Sync + 'static {
@@ -27,6 +49,8 @@ pub trait LifeCycle: Send + Sync + 'static {
 
 // TODO: I need to rename all of this stuff.  It's confusing.
 pub struct Agent<S: LifeCycle> {
+  id:                   AgentId,
+  name:                 Option<String>,
   inner:                S,
   state:                AgentState,
   mailbox:              VecDeque<Box<dyn Any + Send + Sync>>,
@@ -37,6 +61,8 @@ pub struct Agent<S: LifeCycle> {
 impl<A: LifeCycle> Agent<A> {
   pub fn new(agent: A) -> Self {
     Self {
+      id:                   AgentId::generate(),
+      name:                 None,
       inner:                agent,
       state:                AgentState::Stopped,
       mailbox:              VecDeque::new(),
@@ -44,6 +70,31 @@ impl<A: LifeCycle> Agent<A> {
       has_pending_messages: false,
     }
   }
+
+  /// Create an agent with a specific name
+  pub fn with_name(agent: A, name: impl Into<String>) -> Self {
+    Self {
+      id:                   AgentId::generate(),
+      name:                 Some(name.into()),
+      inner:                agent,
+      state:                AgentState::Stopped,
+      mailbox:              VecDeque::new(),
+      handlers:             HashMap::new(),
+      has_pending_messages: false,
+    }
+  }
+
+  /// Get the agent's unique ID
+  pub const fn id(&self) -> AgentId { self.id }
+
+  /// Get the agent's name, if set
+  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+
+  /// Set the agent's name
+  pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
+
+  /// Clear the agent's name
+  pub fn clear_name(&mut self) { self.name = None; }
 
   // Lifecycle management methods
   pub fn start(&mut self) {
@@ -149,6 +200,8 @@ pub enum AgentState {
 
 // Trait for runtime-manageable agents
 pub trait RuntimeAgent: Send + Sync {
+  fn id(&self) -> AgentId;
+  fn name(&self) -> Option<&str>;
   fn start(&mut self);
   fn pause(&mut self);
   fn stop(&mut self);
@@ -165,6 +218,10 @@ pub trait RuntimeAgent: Send + Sync {
 }
 
 impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
+  fn id(&self) -> AgentId { self.id }
+
+  fn name(&self) -> Option<&str> { self.name.as_deref() }
+
   fn start(&mut self) { Self::start(self); }
 
   fn pause(&mut self) { Self::pause(self); }
@@ -277,6 +334,7 @@ mod tests {
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
     let mut shared_agent = Agent::new(arithmetic);
+    assert_eq!(shared_agent.id(), AgentId(1));
 
     assert_eq!(shared_agent.state(), AgentState::Stopped);
 
@@ -350,7 +408,7 @@ mod tests {
     // Send a message while running - should be processed immediately via mailbox
     arithmetic.enqueue_message(Increment(5));
     assert!(arithmetic.should_process_mailbox());
-    let replies = arithmetic.process_pending_messages();
+    let _ = arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 6); // 1 + 5 = 6
     assert!(!arithmetic.should_process_mailbox());
 
