@@ -1,10 +1,4 @@
-use std::{
-  any::{Any, TypeId},
-  marker::PhantomData,
-};
-
-use super::*;
-use crate::agent::Context;
+use std::{any::Any, marker::PhantomData};
 
 pub trait Handler<M> {
   type Reply;

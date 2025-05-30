@@ -5,25 +5,16 @@ name    = "arbiter-core"
 version = "0.1.0"
 
 [dependencies]
-crossbeam-channel = "0.5"
-
-# Async
-async-trait.workspace = true
-futures.workspace     = true
-tokio                 = { workspace = true, features = ["macros", "sync", "rt"] }
-
 # Error and logging
-
-tracing.workspace = true
+thiserror.workspace = true
+tracing.workspace   = true
 
 # WASM dependencies (optional)
 serde_json   = { version = "1.0", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 
 [dev-dependencies]
-arbiter-macros = { workspace = true }
-tokio          = { workspace = true, features = ["macros", "full"] }
-tracing-test   = { workspace = true }
+tracing-test = { workspace = true }
 
 [features]
 default = []

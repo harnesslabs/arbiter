@@ -294,7 +294,7 @@ impl LeaderFollowerSimulation {
     let canvas = Canvas::new(canvas_width, canvas_height);
 
     {
-      let mut runtime = domain.as_mut();
+      let mut runtime = domain.try_lock().unwrap();
 
       // Register Canvas agent using the new shared agent approach
       console::log_1(&"🎨 Initializing Canvas...".into());
@@ -336,14 +336,14 @@ impl LeaderFollowerSimulation {
     spawn_local(async move {
       loop {
         // Only send ticks if there are agents (other than canvas)
-        if let Ok(runtime) = domain.runtime().try_lock() {
+        if let Ok(runtime) = domain.try_lock() {
           let agent_count = runtime.get_agent_stats().total;
 
           if agent_count > 1 {
             // More than just the canvas
             drop(runtime); // Release the lock before sending message
 
-            if let Ok(mut runtime) = domain.runtime().try_lock() {
+            if let Ok(mut runtime) = domain.try_lock() {
               runtime.send_message(Tick { leader_positions: Vec::new() });
               runtime.run();
             }
@@ -366,7 +366,7 @@ impl LeaderFollowerSimulation {
       (format!("Follower {}", self.follower_count), AgentType::Follower)
     };
 
-    let mut runtime = self.domain.as_mut();
+    let mut runtime = self.domain.try_lock().unwrap();
 
     let success = match &agent_type {
       AgentType::Leader => {
@@ -433,7 +433,7 @@ impl LeaderFollowerSimulation {
   /// Remove an agent and notify Canvas
   #[wasm_bindgen(js_name = "removeAgent")]
   pub fn remove_agent(&mut self, agent_id: &str) -> bool {
-    let mut runtime = self.domain.as_mut();
+    let mut runtime = self.domain.try_lock().unwrap();
 
     // Remove from domain
     let success = runtime.remove_agent(agent_id);
@@ -454,7 +454,7 @@ impl LeaderFollowerSimulation {
   /// Clear all agents and notify Canvas
   #[wasm_bindgen(js_name = "clearAllAgents")]
   pub fn clear_all_agents(&mut self) -> usize {
-    let mut runtime = self.domain.as_mut();
+    let mut runtime = self.domain.try_lock().unwrap();
 
     // Get list of all agents and filter out canvas
     let all_agents = runtime.list_agents();

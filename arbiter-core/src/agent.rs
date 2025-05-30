@@ -6,7 +6,7 @@ use std::{
 use crate::handler::{Handler, MessageHandler};
 
 // Agent lifecycle states
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentState {
   Stopped, // Agent is not processing messages
   Running, // Agent is actively processing messages
@@ -132,13 +132,89 @@ where
   }
 }
 
+// Trait for runtime-manageable agents
+pub trait RuntimeAgent: Send + Sync {
+  fn start(&mut self);
+  fn pause(&mut self);
+  fn stop(&mut self);
+  fn resume(&mut self);
+  fn state(&self) -> AgentState;
+  fn is_active(&self) -> bool;
+  fn agent_type_name(&self) -> &'static str;
+}
+
+// Wrapper for shared agents to implement RuntimeAgent
+pub struct SharedAgentWrapper<A: Agent> {
+  pub shared_agent: SharedAgent<A>,
+}
+
+impl<A: Agent> RuntimeAgent for SharedAgentWrapper<A> {
+  fn start(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.start();
+    }
+  }
+
+  fn pause(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.pause();
+    }
+  }
+
+  fn stop(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.stop();
+    }
+  }
+
+  fn resume(&mut self) {
+    if let Ok(mut container) = self.shared_agent.lock() {
+      container.resume();
+    }
+  }
+
+  fn state(&self) -> AgentState {
+    if let Ok(container) = self.shared_agent.lock() {
+      container.state().clone()
+    } else {
+      AgentState::Stopped
+    }
+  }
+
+  fn is_active(&self) -> bool {
+    if let Ok(container) = self.shared_agent.lock() {
+      container.is_active()
+    } else {
+      false
+    }
+  }
+
+  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
+}
+
+// Implement RuntimeAgent for AgentContainer<T>
+impl<A: Agent> RuntimeAgent for crate::agent::AgentContainer<A> {
+  fn start(&mut self) { crate::agent::AgentContainer::start(self); }
+
+  fn pause(&mut self) { crate::agent::AgentContainer::pause(self); }
+
+  fn stop(&mut self) { crate::agent::AgentContainer::stop(self); }
+
+  fn resume(&mut self) { crate::agent::AgentContainer::resume(self); }
+
+  fn state(&self) -> AgentState { self.state().clone() }
+
+  fn is_active(&self) -> bool { crate::agent::AgentContainer::is_active(self) }
+
+  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
+}
+
 // TODO (autoparallel): This could be generalized to handle different kinds of locking. In which
 // case we'd make this a trait and have a default implementation that uses Arc<Mutex<A>>.
 pub struct Context<A> {
   agent: Arc<Mutex<A>>,
 }
 
-// Default implementation of Context for Arc<Mutex<Agent>>
 impl<A> Context<A> {
   pub fn new(agent: A) -> Self { Self { agent: Arc::new(Mutex::new(agent)) } }
 
@@ -173,7 +249,7 @@ mod tests {
     type Reply = ();
 
     fn handle(&mut self, message: Increment) -> Self::Reply {
-      println!("Handler 1 - Received message: {:?}", message);
+      println!("Handler 1 - Received message: {message:?}");
       self.state += message.0;
       println!("Handler 1 - Updated state: {}", self.state);
     }

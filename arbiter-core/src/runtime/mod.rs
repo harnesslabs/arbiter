@@ -8,11 +8,12 @@ use std::{
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
 use crate::{
-  agent::{Agent, AgentContainer, AgentState},
+  agent::{Agent, AgentState, RuntimeAgent, SharedAgentWrapper},
   handler::{Handler, HandlerWrapper, MessageHandler},
 };
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
+#[derive(Clone, Default)]
 pub struct Domain {
   runtime: Arc<Mutex<Runtime>>,
 }
@@ -20,19 +21,7 @@ pub struct Domain {
 impl Domain {
   pub fn new() -> Self { Self { runtime: Arc::new(Mutex::new(Runtime::new())) } }
 
-  pub fn as_mut(&mut self) -> MutexGuard<'_, Runtime> { self.runtime.lock().unwrap() }
-
   /// Get a reference to the runtime Arc for sharing
-  pub fn runtime(&self) -> &Arc<Mutex<Runtime>> { &self.runtime }
-}
-
-impl Clone for Domain {
-  fn clone(&self) -> Self { Self { runtime: Arc::clone(&self.runtime) } }
-}
-
-#[cfg(feature = "wasm")]
-impl Domain {
-  /// Try to acquire a lock on the runtime (non-blocking)
   pub fn try_lock(
     &self,
   ) -> Result<MutexGuard<'_, Runtime>, std::sync::TryLockError<MutexGuard<'_, Runtime>>> {
@@ -40,257 +29,14 @@ impl Domain {
   }
 }
 
-#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
-mod wasm_bindings {
-  use wasm_bindgen::prelude::*;
-
-  use super::*;
-
-  #[wasm_bindgen]
-  impl Domain {
-    /// Create a new Domain for WASM
-    #[wasm_bindgen(constructor)]
-    pub fn new_js() -> Domain { Domain::new() }
-
-    /// Get agent state as string
-    #[wasm_bindgen(js_name = "getAgentState")]
-    pub fn get_agent_state_js(&self, agent_id: &str) -> String {
-      if let Ok(runtime) = self.runtime.try_lock() {
-        match runtime.get_agent_state(agent_id) {
-          Some(state) => format!("{:?}", state),
-          None => "NotFound".to_string(),
-        }
-      } else {
-        "Locked".to_string()
-      }
-    }
-
-    /// Start an agent
-    #[wasm_bindgen(js_name = "startAgent")]
-    pub fn start_agent_js(&mut self, agent_id: &str) -> bool {
-      let mut runtime = self.as_mut();
-      runtime.start_agent(agent_id)
-    }
-
-    /// Pause an agent
-    #[wasm_bindgen(js_name = "pauseAgent")]
-    pub fn pause_agent_js(&mut self, agent_id: &str) -> bool {
-      let mut runtime = self.as_mut();
-      runtime.pause_agent(agent_id)
-    }
-
-    /// Stop an agent
-    #[wasm_bindgen(js_name = "stopAgent")]
-    pub fn stop_agent_js(&mut self, agent_id: &str) -> bool {
-      let mut runtime = self.as_mut();
-      runtime.stop_agent(agent_id)
-    }
-
-    /// Resume an agent
-    #[wasm_bindgen(js_name = "resumeAgent")]
-    pub fn resume_agent_js(&mut self, agent_id: &str) -> bool {
-      let mut runtime = self.as_mut();
-      runtime.resume_agent(agent_id)
-    }
-
-    /// Run the runtime (process messages)
-    #[wasm_bindgen(js_name = "run")]
-    pub fn run_js(&mut self) -> usize {
-      let mut runtime = self.as_mut();
-      runtime.run()
-    }
-
-    /// Get queue length
-    #[wasm_bindgen(js_name = "queueLength")]
-    pub fn queue_length_js(&self) -> usize {
-      if let Ok(runtime) = self.runtime.try_lock() {
-        runtime.queue_length()
-      } else {
-        0
-      }
-    }
-
-    /// Check if runtime is idle
-    #[wasm_bindgen(js_name = "isIdle")]
-    pub fn is_idle_js(&self) -> bool {
-      if let Ok(runtime) = self.runtime.try_lock() {
-        runtime.is_idle()
-      } else {
-        false
-      }
-    }
-
-    /// List all agent names as JSON array
-    #[wasm_bindgen(js_name = "listAgents")]
-    pub fn list_agents_js(&self) -> String {
-      if let Ok(runtime) = self.runtime.try_lock() {
-        let agents = runtime.list_agents();
-        serde_json::to_string(&agents).unwrap_or_else(|_| "[]".to_string())
-      } else {
-        "[]".to_string()
-      }
-    }
-
-    /// Remove an agent
-    #[wasm_bindgen(js_name = "removeAgent")]
-    pub fn remove_agent_js(&mut self, agent_id: &str) -> bool {
-      let mut runtime = self.as_mut();
-      runtime.remove_agent(agent_id)
-    }
-
-    /// Start all agents
-    #[wasm_bindgen(js_name = "startAllAgents")]
-    pub fn start_all_agents_js(&mut self) -> usize {
-      let mut runtime = self.as_mut();
-      runtime.start_all_agents()
-    }
-
-    /// Pause all agents
-    #[wasm_bindgen(js_name = "pauseAllAgents")]
-    pub fn pause_all_agents_js(&mut self) -> usize {
-      let mut runtime = self.as_mut();
-      runtime.pause_all_agents()
-    }
-
-    /// Resume all agents
-    #[wasm_bindgen(js_name = "resumeAllAgents")]
-    pub fn resume_all_agents_js(&mut self) -> usize {
-      let mut runtime = self.as_mut();
-      runtime.resume_all_agents()
-    }
-
-    /// Stop all agents
-    #[wasm_bindgen(js_name = "stopAllAgents")]
-    pub fn stop_all_agents_js(&mut self) -> usize {
-      let mut runtime = self.as_mut();
-      runtime.stop_all_agents()
-    }
-
-    /// Clear all agents
-    #[wasm_bindgen(js_name = "clearAllAgents")]
-    pub fn clear_all_agents_js(&mut self) -> usize {
-      let mut runtime = self.as_mut();
-      runtime.clear_all_agents()
-    }
-
-    /// Get agents by state as JSON array
-    #[wasm_bindgen(js_name = "getAgentsByState")]
-    pub fn get_agents_by_state_js(&self, state_str: &str) -> String {
-      if let Ok(runtime) = self.runtime.try_lock() {
-        let state = match state_str {
-          "Running" => crate::agent::AgentState::Running,
-          "Paused" => crate::agent::AgentState::Paused,
-          "Stopped" => crate::agent::AgentState::Stopped,
-          _ => return "[]".to_string(),
-        };
-        let agents = runtime.get_agents_by_state(state);
-        serde_json::to_string(&agents).unwrap_or_else(|_| "[]".to_string())
-      } else {
-        "[]".to_string()
-      }
-    }
-
-    /// Get agent statistics as JSON
-    #[wasm_bindgen(js_name = "getAgentStats")]
-    pub fn get_agent_stats_js(&self) -> String {
-      if let Ok(runtime) = self.runtime.try_lock() {
-        let stats = runtime.get_agent_stats();
-        format!(
-          "{{\"total\":{},\"running\":{},\"paused\":{},\"stopped\":{}}}",
-          stats.total, stats.running, stats.paused, stats.stopped
-        )
-      } else {
-        "{\"total\":0,\"running\":0,\"paused\":0,\"stopped\":0}".to_string()
-      }
-    }
-  }
-}
-
 // Enhanced runtime with agent lifecycle management and mailboxes
+#[derive(Default)]
 pub struct Runtime {
   agents:          HashMap<String, Box<dyn RuntimeAgent>>,
   handlers:        HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
   message_queue:   VecDeque<Box<dyn Any + Send + Sync>>,
   agent_mailboxes: HashMap<String, VecDeque<Box<dyn Any + Send + Sync>>>, /* Messages for paused
                                                                            * agents */
-  max_iterations:  usize, // Prevent infinite loops
-}
-
-// Trait for runtime-manageable agents
-pub trait RuntimeAgent: Send + Sync {
-  fn start(&mut self);
-  fn pause(&mut self);
-  fn stop(&mut self);
-  fn resume(&mut self);
-  fn state(&self) -> AgentState;
-  fn is_active(&self) -> bool;
-  fn agent_type_name(&self) -> &'static str;
-}
-
-// Wrapper for shared agents to implement RuntimeAgent
-struct SharedAgentWrapper<A: Agent> {
-  shared_agent: crate::agent::SharedAgent<A>,
-}
-
-impl<A: Agent> RuntimeAgent for SharedAgentWrapper<A> {
-  fn start(&mut self) {
-    if let Ok(mut container) = self.shared_agent.lock() {
-      container.start();
-    }
-  }
-
-  fn pause(&mut self) {
-    if let Ok(mut container) = self.shared_agent.lock() {
-      container.pause();
-    }
-  }
-
-  fn stop(&mut self) {
-    if let Ok(mut container) = self.shared_agent.lock() {
-      container.stop();
-    }
-  }
-
-  fn resume(&mut self) {
-    if let Ok(mut container) = self.shared_agent.lock() {
-      container.resume();
-    }
-  }
-
-  fn state(&self) -> AgentState {
-    if let Ok(container) = self.shared_agent.lock() {
-      container.state().clone()
-    } else {
-      AgentState::Stopped
-    }
-  }
-
-  fn is_active(&self) -> bool {
-    if let Ok(container) = self.shared_agent.lock() {
-      container.is_active()
-    } else {
-      false
-    }
-  }
-
-  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
-}
-
-// Implement RuntimeAgent for AgentContainer<T>
-impl<A: Agent> RuntimeAgent for crate::agent::AgentContainer<A> {
-  fn start(&mut self) { crate::agent::AgentContainer::start(self); }
-
-  fn pause(&mut self) { crate::agent::AgentContainer::pause(self); }
-
-  fn stop(&mut self) { crate::agent::AgentContainer::stop(self); }
-
-  fn resume(&mut self) { crate::agent::AgentContainer::resume(self); }
-
-  fn state(&self) -> AgentState { self.state().clone() }
-
-  fn is_active(&self) -> bool { crate::agent::AgentContainer::is_active(self) }
-
-  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
 }
 
 impl Runtime {
@@ -300,13 +46,7 @@ impl Runtime {
       handlers:        HashMap::new(),
       message_queue:   VecDeque::new(),
       agent_mailboxes: HashMap::new(),
-      max_iterations:  1000, // Reasonable default
     }
-  }
-
-  pub fn with_max_iterations(mut self, max_iterations: usize) -> Self {
-    self.max_iterations = max_iterations;
-    self
   }
 
   // Register any agent that implements the Agent trait
@@ -341,9 +81,9 @@ impl Runtime {
   }
 
   // Add agent and immediately start it
-  pub fn add_and_start_agent<A: Agent>(&mut self, name: String, agent: A) -> bool {
-    if self.register_agent(name.clone(), agent) {
-      self.start_agent(&name)
+  pub fn add_and_start_agent<A: Agent>(&mut self, name: &str, agent: A) -> bool {
+    if self.register_agent(name.to_string(), agent) {
+      self.start_agent(name)
     } else {
       false
     }
@@ -367,7 +107,7 @@ impl Runtime {
     M: Any + Clone + Send + Sync + 'static, {
     let type_id = TypeId::of::<M>();
     let wrapped = HandlerWrapper { handler, _phantom: PhantomData };
-    self.handlers.entry(type_id).or_insert_with(Vec::new).push(Box::new(wrapped));
+    self.handlers.entry(type_id).or_default().push(Box::new(wrapped));
   }
 
   // Register an agent handler for a specific message type
@@ -377,7 +117,7 @@ impl Runtime {
     M: Clone + Send + Sync + 'static,
     A::Reply: Send + Sync + 'static, {
     let type_id = TypeId::of::<M>();
-    self.handlers.entry(type_id).or_insert_with(Vec::new).push(Box::new(handler));
+    self.handlers.entry(type_id).or_default().push(Box::new(handler));
   }
 
   // Send a message - adds to queue for processing
@@ -387,7 +127,7 @@ impl Runtime {
 
   // Process a single message and add any replies to the queue
   fn process_message(&mut self, message: Box<dyn Any + Send + Sync>) -> bool {
-    let type_id = (&*message).type_id();
+    let type_id = (*message).type_id();
 
     if let Some(handlers) = self.handlers.get_mut(&type_id) {
       let mut processed = false;
@@ -396,7 +136,7 @@ impl Runtime {
 
         // Add the reply to the message queue for further processing
         // Skip () replies as they indicate no further processing needed
-        if (&*reply).type_id() != TypeId::of::<()>() {
+        if (*reply).type_id() != TypeId::of::<()>() {
           self.message_queue.push_back(reply);
         }
         processed = true;
@@ -420,11 +160,6 @@ impl Runtime {
     let mut iterations = 0;
 
     while let Some(message) = self.message_queue.pop_front() {
-      if iterations >= self.max_iterations {
-        println!("Warning: Maximum iterations ({}) reached, stopping runtime", self.max_iterations);
-        break;
-      }
-
       let processed = self.process_message(message);
       if processed {
         iterations += 1;
@@ -449,21 +184,17 @@ impl Runtime {
 
   // Agent lifecycle management methods
   pub fn start_agent(&mut self, name: &str) -> bool {
-    if let Some(agent) = self.agents.get_mut(name) {
+    self.agents.get_mut(name).is_some_and(|agent| {
       agent.start();
       true
-    } else {
-      false
-    }
+    })
   }
 
   pub fn pause_agent(&mut self, name: &str) -> bool {
-    if let Some(agent) = self.agents.get_mut(name) {
+    self.agents.get_mut(name).is_some_and(|agent| {
       agent.pause();
       true
-    } else {
-      false
-    }
+    })
   }
 
   pub fn stop_agent(&mut self, name: &str) -> bool {
@@ -480,21 +211,15 @@ impl Runtime {
   }
 
   pub fn resume_agent(&mut self, name: &str) -> bool {
-    if let Some(agent) = self.agents.get_mut(name) {
+    self.agents.get_mut(name).is_some_and(|agent| {
       agent.resume();
       true
-    } else {
-      false
-    }
+    })
   }
 
   // Get agent state
   pub fn get_agent_state(&self, name: &str) -> Option<AgentState> {
-    if let Some(agent) = self.agents.get(name) {
-      Some(agent.state())
-    } else {
-      None
-    }
+    self.agents.get(name).map(|agent| agent.state())
   }
 
   // Get list of registered agent names
@@ -502,16 +227,13 @@ impl Runtime {
 
   // Get agent info
   pub fn get_agent_info(&self, name: &str) -> Option<&'static str> {
-    if let Some(agent) = self.agents.get(name) {
-      Some(agent.agent_type_name())
-    } else {
-      None
-    }
+    self.agents.get(name).map(|agent| agent.agent_type_name())
   }
 
   // Check if message queue is empty
   pub fn is_idle(&self) -> bool {
-    self.message_queue.is_empty() && self.agent_mailboxes.values().all(|mb| mb.is_empty())
+    self.message_queue.is_empty()
+      && self.agent_mailboxes.values().all(std::collections::VecDeque::is_empty)
   }
 
   // Get current queue length
@@ -519,7 +241,7 @@ impl Runtime {
 
   // Get total messages in all mailboxes
   pub fn total_mailbox_messages(&self) -> usize {
-    self.agent_mailboxes.values().map(|mb| mb.len()).sum()
+    self.agent_mailboxes.values().map(std::collections::VecDeque::len).sum()
   }
 
   // === BULK AGENT OPERATIONS ===
