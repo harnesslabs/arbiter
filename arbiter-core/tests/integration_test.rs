@@ -327,7 +327,7 @@ fn test_agent_containers_with_runtime() {
   assert!(result1.is_some());
 
   // The containers maintain their state independently
-  assert_eq!(processor_container.agent().processed_count, 1);
+  assert_eq!(processor_container.inner().processed_count, 1);
 
   println!("Direct container processing completed successfully");
 }
@@ -415,7 +415,7 @@ fn test_agent_lifecycle_management() {
   println!("\n--- Processing Message While Running ---");
   let result = container.handle_message(StartProcessing(5));
   assert!(result.is_some());
-  assert_eq!(container.agent().processed_count, 1);
+  assert_eq!(container.inner().processed_count, 1);
 
   println!("\n--- Pausing Agent ---");
   container.pause();
@@ -426,7 +426,7 @@ fn test_agent_lifecycle_management() {
   println!("\n--- Trying to Process Message While Paused ---");
   let result = container.handle_message(StartProcessing(10));
   assert!(result.is_none()); // Message ignored
-  assert_eq!(container.agent().processed_count, 1); // Count unchanged
+  assert_eq!(container.inner().processed_count, 1); // Count unchanged
 
   println!("\n--- Resuming Agent ---");
   container.resume();
@@ -437,7 +437,7 @@ fn test_agent_lifecycle_management() {
   println!("\n--- Processing Message After Resume ---");
   let result = container.handle_message(StartProcessing(15));
   assert!(result.is_some());
-  assert_eq!(container.agent().processed_count, 2);
+  assert_eq!(container.inner().processed_count, 2);
 
   println!("\n--- Stopping Agent ---");
   container.stop();
@@ -445,7 +445,7 @@ fn test_agent_lifecycle_management() {
   assert!(!container.is_active());
 
   // Verify lifecycle events were recorded
-  let events = &container.agent().events;
+  let events = &container.inner().events;
   assert!(events.iter().any(|e| e.contains("Started")));
   assert!(events.iter().any(|e| e.contains("Paused")));
   assert!(events.iter().any(|e| e.contains("Resumed")));

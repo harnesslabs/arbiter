@@ -27,21 +27,21 @@ pub trait LifeCycle: Send + Sync + 'static {
 
 // TODO: I need to rename all of this stuff.  It's confusing.
 pub struct Agent<S: LifeCycle> {
-  inner:            S,
-  state:            AgentState,
-  mailbox:          VecDeque<Box<dyn Any + Send + Sync>>,
-  handlers:         HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
-  needs_processing: bool, // Simple flag for WASM-compatible alerting
+  inner:                S,
+  state:                AgentState,
+  mailbox:              VecDeque<Box<dyn Any + Send + Sync>>,
+  handlers:             HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
+  has_pending_messages: bool, // Clear flag indicating mailbox has messages to process
 }
 
 impl<A: LifeCycle> Agent<A> {
   pub fn new(agent: A) -> Self {
     Self {
-      inner:            agent,
-      state:            AgentState::Stopped,
-      mailbox:          VecDeque::new(),
-      handlers:         HashMap::new(),
-      needs_processing: false,
+      inner:                agent,
+      state:                AgentState::Stopped,
+      mailbox:              VecDeque::new(),
+      handlers:             HashMap::new(),
+      has_pending_messages: false,
     }
   }
 
@@ -66,7 +66,7 @@ impl<A: LifeCycle> Agent<A> {
       self.state = AgentState::Stopped;
       // Clear the mailbox to prevent any messages from being processed
       self.mailbox.clear();
-      self.needs_processing = false;
+      self.has_pending_messages = false;
     }
   }
 
@@ -75,7 +75,7 @@ impl<A: LifeCycle> Agent<A> {
       self.inner.on_resume();
       self.state = AgentState::Running;
       // Process any messages that were queued while paused
-      self.process_mailbox();
+      self.process_pending_messages();
     }
   }
 
@@ -85,44 +85,25 @@ impl<A: LifeCycle> Agent<A> {
   // Check if agent can process messages
   pub fn is_active(&self) -> bool { self.state == AgentState::Running }
 
-  // Check if agent needs mailbox processing (WASM-compatible alert system)
-  pub fn needs_processing(&self) -> bool { self.needs_processing && self.is_active() }
+  // Get mutable access to the underlying agent
+  pub const fn inner_mut(&mut self) -> &mut A { &mut self.inner }
 
-  // Send message to mailbox based on agent state
-  pub fn send_to_mailbox<M>(&mut self, message: M)
+  // Get immutable access to the underlying agent
+  pub const fn inner(&self) -> &A { &self.inner }
+
+  // Convenient method to send typed messages to mailbox
+  pub fn enqueue_message<M>(&mut self, message: M)
   where M: Any + Send + Sync + 'static {
+    let boxed_message = Box::new(message);
     match self.state {
       AgentState::Running | AgentState::Paused => {
-        self.mailbox.push_back(Box::new(message));
-        self.needs_processing = true;
+        self.mailbox.push_back(boxed_message);
+        self.has_pending_messages = true;
       },
       AgentState::Stopped => {
         // Stopped agents don't accept messages
       },
     }
-  }
-
-  // Get mutable access to the underlying agent
-  pub const fn agent_mut(&mut self) -> &mut A { &mut self.inner }
-
-  // Get immutable access to the underlying agent
-  pub const fn agent(&self) -> &A { &self.inner }
-
-  // Process all messages in the mailbox
-  pub fn process_mailbox(&mut self) -> Vec<Box<dyn Any + Send + Sync>> {
-    let mut all_replies = Vec::new();
-
-    if !self.is_active() {
-      return all_replies; // Only process if agent is running
-    }
-
-    while let Some(message) = self.mailbox.pop_front() {
-      let replies = self.process_any_message(&*message);
-      all_replies.extend(replies);
-    }
-
-    self.needs_processing = false; // Clear flag after processing
-    all_replies
   }
 
   // TODO: This function seems redundant.  We should just use process_any_message.
@@ -174,9 +155,9 @@ pub trait RuntimeAgent: Send + Sync {
   fn resume(&mut self);
   fn state(&self) -> AgentState;
   fn is_active(&self) -> bool;
-  fn needs_processing(&self) -> bool;
-  fn send_to_mailbox(&mut self, message: Box<dyn Any + Send + Sync>);
-  fn process_mailbox(&mut self) -> Vec<Box<dyn Any + Send + Sync>>;
+  fn should_process_mailbox(&self) -> bool;
+  fn enqueue_boxed_message(&mut self, message: Box<dyn Any + Send + Sync>);
+  fn process_pending_messages(&mut self) -> Vec<Box<dyn Any + Send + Sync>>;
   fn agent_type_name(&self) -> &'static str;
   fn handlers(&self) -> &HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
   fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
@@ -196,13 +177,35 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
   fn is_active(&self) -> bool { Self::is_active(self) }
 
-  fn needs_processing(&self) -> bool { Self::needs_processing(self) }
+  fn should_process_mailbox(&self) -> bool { self.has_pending_messages && self.is_active() }
 
-  fn send_to_mailbox(&mut self, message: Box<dyn Any + Send + Sync>) {
-    Self::send_to_mailbox(self, message);
+  fn enqueue_boxed_message(&mut self, message: Box<dyn Any + Send + Sync>) {
+    match self.state {
+      AgentState::Running | AgentState::Paused => {
+        self.mailbox.push_back(message);
+        self.has_pending_messages = true;
+      },
+      AgentState::Stopped => {
+        // Stopped agents don't accept messages
+      },
+    }
   }
 
-  fn process_mailbox(&mut self) -> Vec<Box<dyn Any + Send + Sync>> { Self::process_mailbox(self) }
+  fn process_pending_messages(&mut self) -> Vec<Box<dyn Any + Send + Sync>> {
+    let mut all_replies = Vec::new();
+
+    if !self.is_active() {
+      return all_replies; // Only process if agent is running
+    }
+
+    while let Some(message) = self.mailbox.pop_front() {
+      let replies = self.process_any_message(&*message);
+      all_replies.extend(replies);
+    }
+
+    self.has_pending_messages = false; // Clear flag after processing
+    all_replies
+  }
 
   fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
 
@@ -345,11 +348,11 @@ mod tests {
     assert_eq!(arithmetic.state(), AgentState::Running);
 
     // Send a message while running - should be processed immediately via mailbox
-    arithmetic.send_to_mailbox(Increment(5));
-    assert!(arithmetic.needs_processing());
-    let replies = arithmetic.process_mailbox();
+    arithmetic.enqueue_message(Increment(5));
+    assert!(arithmetic.should_process_mailbox());
+    let replies = arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 6); // 1 + 5 = 6
-    assert!(!arithmetic.needs_processing());
+    assert!(!arithmetic.should_process_mailbox());
 
     // Pause the agent
     arithmetic.pause();
@@ -357,11 +360,11 @@ mod tests {
     assert!(!arithmetic.is_active());
 
     // Send messages while paused - should be queued but not processed
-    arithmetic.send_to_mailbox(Increment(10));
-    arithmetic.send_to_mailbox(Multiply(2));
+    arithmetic.enqueue_message(Increment(10));
+    arithmetic.enqueue_message(Multiply(2));
 
-    // Agent is paused, so needs_processing should be false
-    assert!(!arithmetic.needs_processing());
+    // Agent is paused, so should_process_mailbox should be false
+    assert!(!arithmetic.should_process_mailbox());
     assert_eq!(arithmetic.inner.state, 6); // State unchanged
 
     // Resume the agent - should process queued messages automatically
@@ -371,7 +374,7 @@ mod tests {
 
     // Messages should have been processed during resume: (6 + 10) * 2 = 32
     assert_eq!(arithmetic.inner.state, 32);
-    assert!(!arithmetic.needs_processing()); // No pending messages
+    assert!(!arithmetic.should_process_mailbox()); // No pending messages
   }
 
   #[test]
@@ -384,8 +387,8 @@ mod tests {
     assert_eq!(arithmetic.state(), AgentState::Running);
 
     // Send a message while running
-    arithmetic.send_to_mailbox(Increment(5));
-    arithmetic.process_mailbox();
+    arithmetic.enqueue_message(Increment(5));
+    arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 6); // 1 + 5 = 6
 
     // Stop the agent
@@ -394,11 +397,11 @@ mod tests {
     assert!(!arithmetic.is_active());
 
     // Send messages while stopped - should be ignored completely
-    arithmetic.send_to_mailbox(Increment(100));
-    arithmetic.send_to_mailbox(Multiply(10));
+    arithmetic.enqueue_message(Increment(100));
+    arithmetic.enqueue_message(Multiply(10));
 
     // No messages should be queued since agent is stopped
-    assert!(!arithmetic.needs_processing());
+    assert!(!arithmetic.should_process_mailbox());
     assert_eq!(arithmetic.inner.state, 6); // State unchanged
 
     // Start the agent again
@@ -407,12 +410,12 @@ mod tests {
     assert!(arithmetic.is_active());
 
     // No messages should have been queued while stopped
-    assert!(!arithmetic.needs_processing());
+    assert!(!arithmetic.should_process_mailbox());
     assert_eq!(arithmetic.inner.state, 6); // State still unchanged
 
     // Verify agent can still receive new messages after restart
-    arithmetic.send_to_mailbox(Increment(4));
-    arithmetic.process_mailbox();
+    arithmetic.enqueue_message(Increment(4));
+    arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 10); // 6 + 4 = 10
   }
 }
