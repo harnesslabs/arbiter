@@ -264,12 +264,11 @@ impl Handler<Tick> for Canvas {
 /// Main simulation structure using arbiter-core
 #[wasm_bindgen]
 pub struct LeaderFollowerSimulation {
-  canvas_width:    f64,
-  canvas_height:   f64,
-  leader_count:    u32,
-  follower_count:  u32,
-  runtime:         Runtime,
-  agent_positions: HashMap<String, Position>, // Track agent positions
+  canvas_width:   f64,
+  canvas_height:  f64,
+  leader_count:   u32,
+  follower_count: u32,
+  runtime:        Runtime,
 }
 
 #[wasm_bindgen]
@@ -300,14 +299,7 @@ impl LeaderFollowerSimulation {
     runtime.broadcast_message(Tick { leader_positions: Vec::new() });
     runtime.step();
 
-    Self {
-      canvas_width,
-      canvas_height,
-      leader_count: 0,
-      follower_count: 0,
-      runtime,
-      agent_positions: HashMap::new(),
-    }
+    Self { canvas_width, canvas_height, leader_count: 0, follower_count: 0, runtime }
   }
 
   /// Step the simulation forward by one tick
@@ -317,57 +309,16 @@ impl LeaderFollowerSimulation {
     let delivered = self.runtime.broadcast_message(Tick { leader_positions: Vec::new() });
 
     if delivered > 0 {
-      // Process agent movements
+      // Process agent movements (this generates UpdatePosition replies)
       let processed = self.runtime.step();
 
-      processed
+      // Process the UpdatePosition replies to route them to Canvas
+      let additional = self.runtime.step();
+
+      processed + additional
     } else {
       0
     }
-  }
-
-  /// Update Canvas with current agent positions
-  fn update_canvas_positions(&mut self) {
-    // Simple approach: update positions with small random movements
-    // This simulates the agents moving and provides smooth animation
-    let agent_names: Vec<String> = self
-      .runtime
-      .agent_names()
-      .iter()
-      .filter(|name| name.as_str() != "canvas")
-      .map(|name| (*name).clone())
-      .collect();
-
-    for agent_name in agent_names {
-      // Get or create current position
-      let current_pos = self
-        .agent_positions
-        .get(&agent_name)
-        .cloned()
-        .unwrap_or_else(|| Position::new(400.0, 300.0)); // Default center position
-
-      // Apply small movement (this simulates the agent's internal movement)
-      let speed = if agent_name.starts_with("Leader") { 0.5 } else { 0.3 };
-      let dx = (random() - 0.5) * speed * 2.0;
-      let dy = (random() - 0.5) * speed * 2.0;
-
-      let mut new_pos = Position::new(current_pos.x + dx, current_pos.y + dy);
-
-      // Keep within bounds
-      new_pos.x = new_pos.x.max(20.0).min(self.canvas_width - 20.0);
-      new_pos.y = new_pos.y.max(20.0).min(self.canvas_height - 20.0);
-
-      // Update our tracking
-      self.agent_positions.insert(agent_name.clone(), new_pos.clone());
-
-      // Send position update to Canvas
-      let update = UpdatePosition { agent_id: agent_name, position: new_pos };
-
-      let _ = self.runtime.send_to_agent_by_name("canvas", update);
-    }
-
-    // Process the position updates we just sent
-    self.runtime.step();
   }
 
   /// Add an agent at the specified position (simulation-specific)
@@ -417,9 +368,6 @@ impl LeaderFollowerSimulation {
     };
 
     if success {
-      // Track the initial position
-      self.agent_positions.insert(agent_id.clone(), Position::new(x, y));
-
       // Send agent type registration to Canvas
       self.runtime.broadcast_message(RegisterAgentType {
         agent_id:   agent_id.clone(),
@@ -440,6 +388,7 @@ impl LeaderFollowerSimulation {
       String::new()
     }
   }
+}
 
 /// Initialize the WASM module
 #[wasm_bindgen(start)]
