@@ -4,7 +4,11 @@ use std::{
   sync::{Arc, Mutex},
 };
 
+#[cfg(feature = "wasm")] use serde_json;
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
+
+#[cfg(feature = "wasm")] pub mod wasm;
+#[cfg(feature = "wasm")] pub use wasm::WasmRuntime;
 
 use crate::agent::{Agent, AgentId, AgentState, LifeCycle, RuntimeAgent};
 
