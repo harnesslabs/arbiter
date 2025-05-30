@@ -703,13 +703,13 @@ mod tests {
     runtime.broadcast_message(NumberMessage { value: 5 });
     let result = runtime.run();
     assert_eq!(result.total_messages_processed, 1);
-    assert_eq!(result.steps_taken, 1);
+    assert_eq!(result.steps_taken, 2); // Step 1: process message, Step 2: detect no work
     assert!(result.reached_stable_state);
 
     // Test runtime with no work
     let result = runtime.run();
     assert_eq!(result.total_messages_processed, 0);
-    assert_eq!(result.steps_taken, 1);
+    assert_eq!(result.steps_taken, 1); // Just one step to detect no work
     assert!(result.reached_stable_state);
   }
 }
