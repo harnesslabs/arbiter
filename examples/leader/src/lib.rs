@@ -264,11 +264,12 @@ impl Handler<Tick> for Canvas {
 /// Main simulation structure using arbiter-core
 #[wasm_bindgen]
 pub struct LeaderFollowerSimulation {
-  canvas_width:   f64,
-  canvas_height:  f64,
-  leader_count:   u32,
-  follower_count: u32,
-  runtime:        Runtime,
+  canvas_width:    f64,
+  canvas_height:   f64,
+  leader_count:    u32,
+  follower_count:  u32,
+  runtime:         Runtime,
+  agent_positions: HashMap<String, Position>, // Track agent positions
 }
 
 #[wasm_bindgen]
@@ -299,38 +300,74 @@ impl LeaderFollowerSimulation {
     runtime.broadcast_message(Tick { leader_positions: Vec::new() });
     runtime.step();
 
-    // Start the automatic tick loop to keep agents moving
-    Self::start_tick_loop(&mut runtime);
-
-    Self { canvas_width, canvas_height, leader_count: 0, follower_count: 0, runtime }
-  }
-
-  /// Start the automatic tick loop to drive the simulation
-  fn start_tick_loop(_runtime: &mut Runtime) {
-    // Note: We can't move the runtime into the closure since we need it in the main struct
-    // Instead, we'll rely on the manual tick() calls from JavaScript
-    // Or we could use a different pattern, but for simplicity, let's use manual ticking
-    console::log_1(&"🔄 Tick loop will be driven by JavaScript timer".into());
+    Self {
+      canvas_width,
+      canvas_height,
+      leader_count: 0,
+      follower_count: 0,
+      runtime,
+      agent_positions: HashMap::new(),
+    }
   }
 
   /// Step the simulation forward by one tick
   #[wasm_bindgen(js_name = "tick")]
   pub fn tick(&mut self) -> usize {
-    // Use step() instead of run() to process just one round of messages
-    // This allows for proper tick-by-tick simulation
+    // Send tick to all agents to make them move
     let delivered = self.runtime.broadcast_message(Tick { leader_positions: Vec::new() });
 
     if delivered > 0 {
-      // Process one step of the simulation
+      // Process agent movements
       let processed = self.runtime.step();
-      console::log_1(
-        &format!("🔄 Tick: delivered {} messages, processed {}", delivered, processed).into(),
-      );
+
       processed
     } else {
-      console::log_1(&"⚠️ No agents to receive tick messages".into());
       0
     }
+  }
+
+  /// Update Canvas with current agent positions
+  fn update_canvas_positions(&mut self) {
+    // Simple approach: update positions with small random movements
+    // This simulates the agents moving and provides smooth animation
+    let agent_names: Vec<String> = self
+      .runtime
+      .agent_names()
+      .iter()
+      .filter(|name| name.as_str() != "canvas")
+      .map(|name| (*name).clone())
+      .collect();
+
+    for agent_name in agent_names {
+      // Get or create current position
+      let current_pos = self
+        .agent_positions
+        .get(&agent_name)
+        .cloned()
+        .unwrap_or_else(|| Position::new(400.0, 300.0)); // Default center position
+
+      // Apply small movement (this simulates the agent's internal movement)
+      let speed = if agent_name.starts_with("Leader") { 0.5 } else { 0.3 };
+      let dx = (random() - 0.5) * speed * 2.0;
+      let dy = (random() - 0.5) * speed * 2.0;
+
+      let mut new_pos = Position::new(current_pos.x + dx, current_pos.y + dy);
+
+      // Keep within bounds
+      new_pos.x = new_pos.x.max(20.0).min(self.canvas_width - 20.0);
+      new_pos.y = new_pos.y.max(20.0).min(self.canvas_height - 20.0);
+
+      // Update our tracking
+      self.agent_positions.insert(agent_name.clone(), new_pos.clone());
+
+      // Send position update to Canvas
+      let update = UpdatePosition { agent_id: agent_name, position: new_pos };
+
+      let _ = self.runtime.send_to_agent_by_name("canvas", update);
+    }
+
+    // Process the position updates we just sent
+    self.runtime.step();
   }
 
   /// Add an agent at the specified position (simulation-specific)
@@ -380,6 +417,9 @@ impl LeaderFollowerSimulation {
     };
 
     if success {
+      // Track the initial position
+      self.agent_positions.insert(agent_id.clone(), Position::new(x, y));
+
       // Send agent type registration to Canvas
       self.runtime.broadcast_message(RegisterAgentType {
         agent_id:   agent_id.clone(),
@@ -400,98 +440,6 @@ impl LeaderFollowerSimulation {
       String::new()
     }
   }
-
-  /// Get agent count
-  #[wasm_bindgen(js_name = "getAgentCount")]
-  pub fn get_agent_count(&self) -> usize { self.runtime.agent_count() }
-
-  /// Get agent names as JSON
-  #[wasm_bindgen(js_name = "getAgentNames")]
-  pub fn get_agent_names(&self) -> String {
-    let names: Vec<&String> = self.runtime.agent_names();
-    serde_json::to_string(&names).unwrap_or_else(|_| "[]".to_string())
-  }
-
-  /// Start an agent by name
-  #[wasm_bindgen(js_name = "startAgent")]
-  pub fn start_agent(&mut self, agent_name: &str) -> bool {
-    self.runtime.start_agent_by_name(agent_name).is_ok()
-  }
-
-  /// Pause an agent by name
-  #[wasm_bindgen(js_name = "pauseAgent")]
-  pub fn pause_agent(&mut self, agent_name: &str) -> bool {
-    self.runtime.pause_agent_by_name(agent_name).is_ok()
-  }
-
-  /// Resume an agent by name
-  #[wasm_bindgen(js_name = "resumeAgent")]
-  pub fn resume_agent(&mut self, agent_name: &str) -> bool {
-    self.runtime.resume_agent_by_name(agent_name).is_ok()
-  }
-
-  /// Stop an agent by name
-  #[wasm_bindgen(js_name = "stopAgent")]
-  pub fn stop_agent(&mut self, agent_name: &str) -> bool {
-    self.runtime.stop_agent_by_name(agent_name).is_ok()
-  }
-
-  /// Get agent state by name
-  #[wasm_bindgen(js_name = "getAgentState")]
-  pub fn get_agent_state(&self, agent_name: &str) -> String {
-    match self.runtime.agent_state_by_name(agent_name) {
-      Some(state) => format!("{:?}", state),
-      None => "NotFound".to_string(),
-    }
-  }
-
-  /// Remove an agent by ID
-  #[wasm_bindgen]
-  pub fn remove_agent(&mut self, agent_id: &str) -> bool {
-    // Send message to canvas to remove the agent from display
-    let remove_msg = RemoveAgent { agent_id: agent_id.to_string() };
-    self.runtime.send_to_agent_by_name("canvas", remove_msg).is_ok();
-
-    // Remove from runtime
-    if self.runtime.remove_agent_by_name(agent_id).is_ok() {
-      // Update counts
-      if agent_id.starts_with("Leader") {
-        self.leader_count = self.leader_count.saturating_sub(1);
-      } else if agent_id.starts_with("Follower") {
-        self.follower_count = self.follower_count.saturating_sub(1);
-      }
-      true
-    } else {
-      false
-    }
-  }
-
-  /// Clear all agents (except canvas)
-  #[wasm_bindgen]
-  pub fn clear_all_agents(&mut self) -> usize {
-    // Send message to canvas to clear all agents
-    self.runtime.send_to_agent_by_name("canvas", ClearAllAgents).ok();
-
-    // Get all agent names except canvas
-    let all_names = self.runtime.agent_names();
-    let agent_names_to_remove: Vec<String> = all_names
-      .iter()
-      .filter(|name| name.as_str() != "canvas")
-      .map(|name| (*name).clone())
-      .collect();
-
-    // Remove each agent from runtime
-    for agent_name in &agent_names_to_remove {
-      let _ = self.runtime.remove_agent_by_name(agent_name);
-    }
-
-    // Reset agent counters
-    self.leader_count = 0;
-    self.follower_count = 0;
-
-    agent_names_to_remove.len()
-  }
-}
 
 /// Initialize the WASM module
 #[wasm_bindgen(start)]
@@ -522,7 +470,7 @@ impl Leader {
       position: Position::new(x, y),
       canvas_width,
       canvas_height,
-      speed: 0.01,
+      speed: 0.5,
       current_direction: random() * 2.0 * std::f64::consts::PI,
       direction_steps: 0,
       max_direction_steps: (100 + (random() * 100.0) as u32),
@@ -572,13 +520,8 @@ impl Handler<Tick> for Leader {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
-    console::log_1(&format!("🔴 {} processing tick", self.id).into());
     self.move_agent();
-    let update = UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() };
-    console::log_1(
-      &format!("🔴 {} moved to ({:.1}, {:.1})", self.id, self.position.x, self.position.y).into(),
-    );
-    update
+    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
   }
 }
 
@@ -597,7 +540,7 @@ impl Follower {
     Self {
       id,
       position: Position::new(x, y),
-      speed: 0.008,
+      speed: 0.3,
       follow_distance: 50.0,
       target_leader_id: None,
     }
@@ -645,9 +588,7 @@ impl Handler<Tick> for Follower {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
-    console::log_1(&format!("🔵 {} processing tick", self.id).into());
-    // Since we can't get leader positions reliably yet due to reply routing issues,
-    // let's make followers move randomly for now so we can see they're working
+    // Simple random movement for now
     let dx = (random() - 0.5) * self.speed * 2.0;
     let dy = (random() - 0.5) * self.speed * 2.0;
 
@@ -658,9 +599,6 @@ impl Handler<Tick> for Follower {
     self.position.x = self.position.x.max(10.0).min(790.0);
     self.position.y = self.position.y.max(10.0).min(590.0);
 
-    console::log_1(
-      &format!("🔵 {} moved to ({:.1}, {:.1})", self.id, self.position.x, self.position.y).into(),
-    );
     UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
   }
 }
