@@ -12,20 +12,24 @@ pub trait MessageHandler: Send + Sync {
 }
 
 // Wrapper to make Handler<M> work as MessageHandler
-pub struct HandlerWrapper<H, M> {
-  pub handler:  H,
+pub struct HandlerWrapper<A, H: Handler<M>, M> {
+  pub handler:  fn(&mut A, M) -> H::Reply,
   pub _phantom: PhantomData<M>,
 }
 
-impl<H, M> MessageHandler for HandlerWrapper<H, M>
+impl<A, H: Handler<M>, M> HandlerWrapper<A, H, M> {
+  pub fn new(handler: fn(&mut A, M) -> H::Reply) -> Self { Self { handler, _phantom: PhantomData } }
+}
+
+impl<A, H: Handler<M>, M> MessageHandler for HandlerWrapper<A, H, M>
 where
-  H: Handler<M> + Send + Sync,
+  H: Handler<M>,
   M: Any + Clone + Send + Sync,
   H::Reply: Send + Sync + 'static,
 {
   fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any + Send + Sync> {
     if let Some(typed_message) = message.downcast_ref::<M>() {
-      let reply = self.handler.handle(typed_message.clone());
+      let reply = (self.handler)(typed_message.clone());
       Box::new(reply)
     } else {
       // Return unit if message type doesn't match

@@ -1,5 +1,5 @@
 use arbiter_core::{
-  agent::{Agent, AgentContainer, AgentState, Context},
+  agent::{status, Agent, Context, LifeCycle},
   handler::Handler,
   runtime::Runtime,
 };
@@ -23,7 +23,7 @@ struct ProcessorAgent {
   name: String,
 }
 
-impl Agent for ProcessorAgent {}
+impl LifeCycle for ProcessorAgent {}
 
 impl Handler<StartProcessing> for ProcessorAgent {
   type Reply = ProcessedData;
@@ -43,7 +43,7 @@ struct ValidatorAgent {
   name: String,
 }
 
-impl Agent for ValidatorAgent {}
+impl LifeCycle for ValidatorAgent {}
 
 impl Handler<ProcessedData> for ValidatorAgent {
   type Reply = ValidatedData;
@@ -63,7 +63,7 @@ struct FinalizerAgent {
   name: String,
 }
 
-impl Agent for FinalizerAgent {}
+impl LifeCycle for FinalizerAgent {}
 
 impl Handler<ValidatedData> for FinalizerAgent {
   type Reply = FinalResult;
@@ -84,7 +84,7 @@ struct LoggerAgent {
   results: Vec<i32>,
 }
 
-impl Agent for LoggerAgent {}
+impl LifeCycle for LoggerAgent {}
 
 impl Handler<FinalResult> for LoggerAgent {
   type Reply = ();
@@ -162,8 +162,8 @@ fn test_agent_container_with_routing() {
   // Test that AgentContainer works properly now
   let processor = ProcessorAgent { name: "DirectProcessor".to_string() };
 
-  let mut container = AgentContainer::new(processor);
-  container.register_handler::<StartProcessing>();
+  let mut container = Agent::new(processor);
+  container.with_handler::<StartProcessing>();
 
   let result = container.handle_message(StartProcessing(10));
   assert!(result.is_some());
@@ -196,7 +196,7 @@ fn test_agent_containers_with_runtime() {
     processed_count: i32,
   }
 
-  impl Agent for MultiProcessorAgent {}
+  impl LifeCycle for MultiProcessorAgent {}
 
   // MultiProcessor handles StartProcessing and ValidatedData
   impl Handler<StartProcessing> for MultiProcessorAgent {
@@ -230,7 +230,7 @@ fn test_agent_containers_with_runtime() {
     log_entries:      Vec<String>,
   }
 
-  impl Agent for MultiValidatorAgent {}
+  impl LifeCycle for MultiValidatorAgent {}
 
   // MultiValidator handles ProcessedData and FinalResult
   impl Handler<ProcessedData> for MultiValidatorAgent {
@@ -268,13 +268,13 @@ fn test_agent_containers_with_runtime() {
     log_entries:      Vec::new(),
   };
 
-  let mut processor_container = AgentContainer::new(processor);
-  processor_container.register_handler::<StartProcessing>();
-  processor_container.register_handler::<ValidatedData>();
+  let mut processor_container = Agent::new(processor);
+  processor_container.with_handler::<StartProcessing>();
+  processor_container.with_handler::<ValidatedData>();
 
-  let mut validator_container = AgentContainer::new(validator);
-  validator_container.register_handler::<ProcessedData>();
-  validator_container.register_handler::<FinalResult>();
+  let mut validator_container = Agent::new(validator);
+  validator_container.with_handler::<ProcessedData>();
+  validator_container.with_handler::<FinalResult>();
 
   // Set up runtime and register our containers' handlers
   let mut runtime = Runtime::new();
@@ -349,7 +349,7 @@ fn test_agent_lifecycle_management() {
     processed_count: i32,
   }
 
-  impl Agent for LifecycleAgent {
+  impl LifeCycle for LifecycleAgent {
     fn on_start(&mut self) {
       let event = format!("{}: Started", self.name);
       println!("{}", event);
@@ -398,17 +398,17 @@ fn test_agent_lifecycle_management() {
     processed_count: 0,
   };
 
-  let mut container = AgentContainer::new(agent);
-  container.register_handler::<StartProcessing>();
+  let mut container = Agent::new(agent);
+  container.with_handler::<StartProcessing>();
 
   // Test lifecycle: Stopped -> Running -> Paused -> Running -> Stopped
   println!("\n--- Initial State ---");
-  assert_eq!(*container.state(), AgentState::Stopped);
+  assert_eq!(*container.state(), status::Stopped);
   assert!(!container.is_active());
 
   println!("\n--- Starting Agent ---");
   container.start();
-  assert_eq!(*container.state(), AgentState::Running);
+  assert_eq!(*container.state(), status::Running);
   assert!(container.is_active());
 
   // Process a message while running
@@ -419,7 +419,7 @@ fn test_agent_lifecycle_management() {
 
   println!("\n--- Pausing Agent ---");
   container.pause();
-  assert_eq!(*container.state(), AgentState::Paused);
+  assert_eq!(*container.state(), status::Paused);
   assert!(!container.is_active());
 
   // Try to process message while paused - should be ignored
@@ -430,7 +430,7 @@ fn test_agent_lifecycle_management() {
 
   println!("\n--- Resuming Agent ---");
   container.resume();
-  assert_eq!(*container.state(), AgentState::Running);
+  assert_eq!(*container.state(), status::Running);
   assert!(container.is_active());
 
   // Process message after resume
@@ -441,7 +441,7 @@ fn test_agent_lifecycle_management() {
 
   println!("\n--- Stopping Agent ---");
   container.stop();
-  assert_eq!(*container.state(), AgentState::Stopped);
+  assert_eq!(*container.state(), status::Stopped);
   assert!(!container.is_active());
 
   // Verify lifecycle events were recorded
@@ -510,7 +510,7 @@ fn test_dynamic_agent_management_with_runtime() {
     status:     String,
   }
 
-  impl Agent for WorkerAgent {
+  impl LifeCycle for WorkerAgent {
     fn on_start(&mut self) {
       self.status = "Running".to_string();
       println!("Worker {}: Started", self.id);
@@ -574,8 +574,8 @@ fn test_dynamic_agent_management_with_runtime() {
 
     // Verify agents are registered
     assert_eq!(rt.list_agents().len(), 2);
-    assert_eq!(rt.get_agent_state("worker1"), Some(AgentState::Stopped));
-    assert_eq!(rt.get_agent_state("worker2"), Some(AgentState::Running));
+    assert_eq!(rt.get_agent_state("worker1"), Some(status::Stopped));
+    assert_eq!(rt.get_agent_state("worker2"), Some(status::Running));
   }
 
   // Test 2: Start an agent and send it work
@@ -586,7 +586,7 @@ fn test_dynamic_agent_management_with_runtime() {
 
     // Start worker1
     assert!(rt.start_agent("worker1"));
-    assert_eq!(rt.get_agent_state("worker1"), Some(AgentState::Running));
+    assert_eq!(rt.get_agent_state("worker1"), Some(status::Running));
 
     // Register a simple handler to process work
     rt.register_handler::<WorkerAgent, StartProcessing>(WorkerAgent {
@@ -613,14 +613,14 @@ fn test_dynamic_agent_management_with_runtime() {
 
     // Pause worker1
     assert!(rt.pause_agent("worker1"));
-    assert_eq!(rt.get_agent_state("worker1"), Some(AgentState::Paused));
+    assert_eq!(rt.get_agent_state("worker1"), Some(status::Paused));
 
     // Send work while paused (should be ignored by paused agents)
     rt.send_message(StartProcessing(20));
 
     // Resume worker1
     assert!(rt.resume_agent("worker1"));
-    assert_eq!(rt.get_agent_state("worker1"), Some(AgentState::Running));
+    assert_eq!(rt.get_agent_state("worker1"), Some(status::Running));
 
     // Send more work after resume
     rt.send_message(StartProcessing(25));
@@ -639,7 +639,7 @@ fn test_dynamic_agent_management_with_runtime() {
 
     // Stop worker1
     assert!(rt.stop_agent("worker1"));
-    assert_eq!(rt.get_agent_state("worker1"), Some(AgentState::Stopped));
+    assert_eq!(rt.get_agent_state("worker1"), Some(status::Stopped));
 
     // Try to stop non-existent agent
     assert!(!rt.stop_agent("nonexistent"));

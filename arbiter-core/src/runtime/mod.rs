@@ -1,16 +1,12 @@
 use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
-  marker::PhantomData,
   sync::{Arc, Mutex, MutexGuard},
 };
 
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
-use crate::{
-  agent::{Agent, AgentState, RuntimeAgent, SharedAgentWrapper},
-  handler::{Handler, HandlerWrapper, MessageHandler},
-};
+use crate::agent::{status, Agent, LifeCycle, RuntimeAgent};
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 #[derive(Clone, Default)]
@@ -32,57 +28,38 @@ impl Domain {
 // Enhanced runtime with agent lifecycle management and mailboxes
 #[derive(Default)]
 pub struct Runtime {
-  agents:          HashMap<String, Box<dyn RuntimeAgent>>,
-  handlers:        HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
-  message_queue:   VecDeque<Box<dyn Any + Send + Sync>>,
-  agent_mailboxes: HashMap<String, VecDeque<Box<dyn Any + Send + Sync>>>, /* Messages for paused
-                                                                           * agents */
+  agents:        HashMap<String, Box<dyn RuntimeAgent>>,
+  message_queue: VecDeque<Box<dyn Any + Send + Sync>>,
 }
 
 impl Runtime {
-  pub fn new() -> Self {
-    Self {
-      agents:          HashMap::new(),
-      handlers:        HashMap::new(),
-      message_queue:   VecDeque::new(),
-      agent_mailboxes: HashMap::new(),
-    }
-  }
+  pub fn new() -> Self { Self { agents: HashMap::new(), message_queue: VecDeque::new() } }
 
   // Register any agent that implements the Agent trait
-  pub fn register_agent<A: Agent>(&mut self, name: String, agent: A) -> bool {
-    if self.agents.contains_key(&name) {
+  pub fn register_agent<A: LifeCycle>(&mut self, name: &str, agent: A) -> bool {
+    if self.agents.contains_key(name) {
       return false; // Agent name already exists
     }
 
-    let container = crate::agent::AgentContainer::new(agent);
-    self.agents.insert(name.clone(), Box::new(container));
-    self.agent_mailboxes.insert(name, VecDeque::new());
+    let container = Agent::new(agent);
+    self.agents.insert(name.to_string(), Box::new(container));
     true
   }
 
   // Register a shared agent (for when you need to create handlers for it)
-  pub fn register_shared_agent<A: Agent>(
-    &mut self,
-    name: String,
-    shared_agent: crate::agent::SharedAgent<A>,
-  ) -> bool {
-    if self.agents.contains_key(&name) {
+  pub fn register_shared_agent<A: LifeCycle>(&mut self, name: &str, agent: A) -> bool {
+    if self.agents.contains_key(name) {
       return false; // Agent name already exists
     }
 
-    // We need to extract the container to register as RuntimeAgent
-    // This is a bit tricky with the shared ownership, but we can clone the Arc
-    // and create a wrapper that delegates to the shared agent
-    let wrapper = SharedAgentWrapper { shared_agent };
-    self.agents.insert(name.clone(), Box::new(wrapper));
-    self.agent_mailboxes.insert(name, VecDeque::new());
+    let wrapper = Agent::new(agent);
+    self.agents.insert(name.to_string(), Box::new(wrapper));
     true
   }
 
   // Add agent and immediately start it
-  pub fn add_and_start_agent<A: Agent>(&mut self, name: &str, agent: A) -> bool {
-    if self.register_agent(name.to_string(), agent) {
+  pub fn add_and_start_agent<A: LifeCycle>(&mut self, name: &str, agent: A) -> bool {
+    if self.register_agent(name, agent) {
       self.start_agent(name)
     } else {
       false
@@ -90,35 +67,7 @@ impl Runtime {
   }
 
   // Remove an agent from the runtime
-  pub fn remove_agent(&mut self, name: &str) -> bool {
-    if self.agents.remove(name).is_some() {
-      self.agent_mailboxes.remove(name);
-      true
-    } else {
-      false
-    }
-  }
-
-  // Register a handler for a specific message type
-  pub fn register_handler<H, M>(&mut self, handler: H)
-  where
-    H: Handler<M> + Send + Sync + 'static,
-    H::Reply: Send + Sync + 'static,
-    M: Any + Clone + Send + Sync + 'static, {
-    let type_id = TypeId::of::<M>();
-    let wrapped = HandlerWrapper { handler, _phantom: PhantomData };
-    self.handlers.entry(type_id).or_default().push(Box::new(wrapped));
-  }
-
-  // Register an agent handler for a specific message type
-  pub fn register_agent_handler<A, M>(&mut self, handler: crate::agent::AgentHandler<A, M>)
-  where
-    A: Agent + Handler<M>,
-    M: Clone + Send + Sync + 'static,
-    A::Reply: Send + Sync + 'static, {
-    let type_id = TypeId::of::<M>();
-    self.handlers.entry(type_id).or_default().push(Box::new(handler));
-  }
+  pub fn remove_agent(&mut self, name: &str) -> bool { self.agents.remove(name).is_some() }
 
   // Send a message - adds to queue for processing
   pub fn send_message<M: Any + Clone + Send + Sync + 'static>(&mut self, message: M) {
@@ -129,30 +78,18 @@ impl Runtime {
   fn process_message(&mut self, message: Box<dyn Any + Send + Sync>) -> bool {
     let type_id = (*message).type_id();
 
-    if let Some(handlers) = self.handlers.get_mut(&type_id) {
-      let mut processed = false;
-      for handler in handlers {
-        let reply = handler.handle_message(&*message);
-
-        // Add the reply to the message queue for further processing
-        // Skip () replies as they indicate no further processing needed
-        if (*reply).type_id() != TypeId::of::<()>() {
-          self.message_queue.push_back(reply);
+    for agent in self.agents.values_mut() {
+      if let Some(handlers) = agent.handlers_mut().get_mut(&type_id) {
+        for handler in handlers {
+          let reply = handler.handle_message(&*message);
+          if (*reply).type_id() != TypeId::of::<()>() {
+            self.message_queue.push_back(reply);
+          }
         }
-        processed = true;
+        return true;
       }
-      processed
-    } else {
-      false
     }
-  }
-
-  // Process mailboxes for resumed agents (simplified for now)
-  fn process_agent_mailboxes(&mut self) {
-    // For now, we'll skip the complex mailbox processing
-    // In a full implementation, this would deliver queued messages to active agents
-    // The challenge is that we need type information to properly route messages
-    // to specific agent handlers, which requires a different architecture
+    false
   }
 
   // Run the runtime - processes all messages until queue is empty or max iterations reached
@@ -164,22 +101,8 @@ impl Runtime {
       if processed {
         iterations += 1;
       }
-
-      // Process agent mailboxes periodically
-      if iterations % 10 == 0 {
-        self.process_agent_mailboxes();
-      }
     }
-
-    // Final mailbox processing
-    self.process_agent_mailboxes();
     iterations
-  }
-
-  // Send a message and immediately run until completion
-  pub fn send_and_run<M: Any + Clone + Send + Sync + 'static>(&mut self, message: M) -> usize {
-    self.send_message(message);
-    self.run()
   }
 
   // Agent lifecycle management methods
@@ -198,16 +121,10 @@ impl Runtime {
   }
 
   pub fn stop_agent(&mut self, name: &str) -> bool {
-    if let Some(agent) = self.agents.get_mut(name) {
+    self.agents.get_mut(name).is_some_and(|agent| {
       agent.stop();
-      // Clear the agent's mailbox when stopped
-      if let Some(mailbox) = self.agent_mailboxes.get_mut(name) {
-        mailbox.clear();
-      }
       true
-    } else {
-      false
-    }
+    })
   }
 
   pub fn resume_agent(&mut self, name: &str) -> bool {
@@ -218,7 +135,7 @@ impl Runtime {
   }
 
   // Get agent state
-  pub fn get_agent_state(&self, name: &str) -> Option<AgentState> {
+  pub fn get_agent_state(&self, name: &str) -> Option<status> {
     self.agents.get(name).map(|agent| agent.state())
   }
 
@@ -230,19 +147,8 @@ impl Runtime {
     self.agents.get(name).map(|agent| agent.agent_type_name())
   }
 
-  // Check if message queue is empty
-  pub fn is_idle(&self) -> bool {
-    self.message_queue.is_empty()
-      && self.agent_mailboxes.values().all(std::collections::VecDeque::is_empty)
-  }
-
   // Get current queue length
   pub fn queue_length(&self) -> usize { self.message_queue.len() }
-
-  // Get total messages in all mailboxes
-  pub fn total_mailbox_messages(&self) -> usize {
-    self.agent_mailboxes.values().map(std::collections::VecDeque::len).sum()
-  }
 
   // === BULK AGENT OPERATIONS ===
 
@@ -295,7 +201,7 @@ impl Runtime {
   }
 
   /// Get agents by state
-  pub fn get_agents_by_state(&self, state: AgentState) -> Vec<String> {
+  pub fn get_agents_by_state(&self, state: status) -> Vec<String> {
     self
       .agents
       .iter()
@@ -304,16 +210,16 @@ impl Runtime {
   }
 
   /// Get count of agents by state
-  pub fn count_agents_by_state(&self, state: AgentState) -> usize {
+  pub fn count_agents_by_state(&self, state: status) -> usize {
     self.agents.values().filter(|agent| agent.state() == state).count()
   }
 
   /// Get agent statistics
   pub fn get_agent_stats(&self) -> AgentStats {
     let total = self.agents.len();
-    let running = self.count_agents_by_state(AgentState::Running);
-    let paused = self.count_agents_by_state(AgentState::Paused);
-    let stopped = self.count_agents_by_state(AgentState::Stopped);
+    let running = self.count_agents_by_state(status::Running);
+    let paused = self.count_agents_by_state(status::Paused);
+    let stopped = self.count_agents_by_state(status::Stopped);
 
     AgentStats { total, running, paused, stopped }
   }
@@ -322,7 +228,6 @@ impl Runtime {
   pub fn clear_all_agents(&mut self) -> usize {
     let count = self.agents.len();
     self.agents.clear();
-    self.agent_mailboxes.clear();
     count
   }
 }
@@ -339,6 +244,7 @@ pub struct AgentStats {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::handler::Handler;
 
   // Example message types - just regular structs!
   #[derive(Debug, Clone)]
@@ -358,14 +264,14 @@ mod tests {
     message_count: i32,
   }
 
-  impl Agent for LogAgent {}
+  impl LifeCycle for LogAgent {}
 
   #[derive(Clone)]
   struct CounterAgent {
     total: i32,
   }
 
-  impl Agent for CounterAgent {}
+  impl LifeCycle for CounterAgent {}
 
   impl Handler<NumberMessage> for LogAgent {
     type Reply = ();
@@ -387,27 +293,28 @@ mod tests {
 
   #[test]
   fn test_runtime_with_containers() {
-    let mut runtime = Runtime::new();
+    todo!("This needs re-thought.");
+    // let mut runtime = Runtime::new();
 
-    // Register different types of agents - they get wrapped in containers automatically
-    runtime.register_agent("logger".to_string(), LogAgent {
-      name:          "Logger1".to_string(),
-      message_count: 0,
-    });
+    // // Register different types of agents - they get wrapped in containers automatically
+    // runtime.register_agent("logger".to_string(), LogAgent {
+    //   name:          "Logger1".to_string(),
+    //   message_count: 0,
+    // });
 
-    runtime.register_agent("counter".to_string(), CounterAgent { total: 0 });
+    // runtime.register_agent("counter".to_string(), CounterAgent { total: 0 });
 
-    // Register standalone handlers for message types
-    runtime.register_handler(LogAgent { name: "Handler1".to_string(), message_count: 0 });
-    runtime.register_handler(CounterAgent { total: 0 });
+    // // Register standalone handlers for message types
+    // runtime.register_handler(LogAgent { name: "Handler1".to_string(), message_count: 0 });
+    // runtime.register_handler(CounterAgent { total: 0 });
 
-    // Send messages - they'll go to all handlers that can handle this message type
-    let num_msg = NumberMessage { value: 42 };
-    runtime.send_message(num_msg);
+    // // Send messages - they'll go to all handlers that can handle this message type
+    // let num_msg = NumberMessage { value: 42 };
+    // runtime.send_message(num_msg);
 
-    // Test that we can register agents
-    assert_eq!(runtime.list_agents().len(), 2);
-    assert!(runtime.get_agent_info("logger").is_some());
-    assert!(runtime.get_agent_info("counter").is_some());
+    // // Test that we can register agents
+    // assert_eq!(runtime.list_agents().len(), 2);
+    // assert!(runtime.get_agent_info("logger").is_some());
+    // assert!(runtime.get_agent_info("counter").is_some());
   }
 }
