@@ -6,7 +6,7 @@ use std::{
 
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
-use crate::agent::{status, Agent, LifeCycle, RuntimeAgent};
+use crate::agent::{Agent, AgentState, LifeCycle, RuntimeAgent};
 
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
 #[derive(Clone, Default)]
@@ -76,17 +76,10 @@ impl Runtime {
 
   // Process a single message and add any replies to the queue
   fn process_message(&mut self, message: Box<dyn Any + Send + Sync>) -> bool {
-    let type_id = (*message).type_id();
-
     for agent in self.agents.values_mut() {
-      if let Some(handlers) = agent.handlers_mut().get_mut(&type_id) {
-        for handler in handlers {
-          let reply = handler.handle_message(&*message);
-          if (*reply).type_id() != TypeId::of::<()>() {
-            self.message_queue.push_back(reply);
-          }
-        }
-        return true;
+      let replies = agent.process_any_message(&message);
+      for reply in replies {
+        self.message_queue.push_back(reply);
       }
     }
     false
@@ -135,7 +128,7 @@ impl Runtime {
   }
 
   // Get agent state
-  pub fn get_agent_state(&self, name: &str) -> Option<status> {
+  pub fn get_agent_state(&self, name: &str) -> Option<AgentState> {
     self.agents.get(name).map(|agent| agent.state())
   }
 
@@ -201,7 +194,7 @@ impl Runtime {
   }
 
   /// Get agents by state
-  pub fn get_agents_by_state(&self, state: status) -> Vec<String> {
+  pub fn get_agents_by_state(&self, state: AgentState) -> Vec<String> {
     self
       .agents
       .iter()
@@ -210,16 +203,16 @@ impl Runtime {
   }
 
   /// Get count of agents by state
-  pub fn count_agents_by_state(&self, state: status) -> usize {
+  pub fn count_agents_by_state(&self, state: AgentState) -> usize {
     self.agents.values().filter(|agent| agent.state() == state).count()
   }
 
   /// Get agent statistics
   pub fn get_agent_stats(&self) -> AgentStats {
     let total = self.agents.len();
-    let running = self.count_agents_by_state(status::Running);
-    let paused = self.count_agents_by_state(status::Paused);
-    let stopped = self.count_agents_by_state(status::Stopped);
+    let running = self.count_agents_by_state(AgentState::Running);
+    let paused = self.count_agents_by_state(AgentState::Paused);
+    let stopped = self.count_agents_by_state(AgentState::Stopped);
 
     AgentStats { total, running, paused, stopped }
   }

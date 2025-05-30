@@ -25,7 +25,7 @@ pub trait LifeCycle: Send + Sync + 'static {
   }
 }
 
-// Container that manages handlers for an agent
+// TODO: I need to rename all of this stuff.  It's confusing.
 pub struct Agent<S: LifeCycle> {
   inner:    S,
   state:    AgentState,
@@ -84,17 +84,36 @@ impl<A: LifeCycle> Agent<A> {
   // Get immutable access to the underlying agent
   pub const fn agent(&self) -> &A { &self.inner }
 
+  // TODO: This function seems redundant.  We should just use process_any_message.
+  pub fn process_message<M>(&mut self, message: M) -> Vec<Box<dyn Any + Send + Sync>>
+  where M: Any + Clone + Send + Sync + 'static {
+    if !self.is_active() {
+      return Vec::new();
+    }
+
+    let mut replies = Vec::new();
+    let type_id = TypeId::of::<M>();
+    if let Some(handlers) = self.handlers.get(&type_id) {
+      for handler in handlers {
+        let agent_any: &mut dyn Any = &mut self.inner;
+        let message_any: &dyn Any = &message;
+        let reply = handler.handle_message(agent_any, message_any);
+        replies.push(reply);
+      }
+    }
+    replies
+  }
+
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Clone + Send + Sync + 'static,
     A: Handler<M> + Send + Sync + 'static,
     A::Reply: Send + Sync + 'static, {
-    let thing = A::handle;
     self
       .handlers
       .entry(TypeId::of::<M>())
       .or_default()
-      .push(Box::new(HandlerWrapper::<A, M>::new(A::handle)));
+      .push(Box::new(HandlerWrapper::<A, M> { _phantom: std::marker::PhantomData }));
     self
   }
 }
@@ -117,9 +136,9 @@ pub trait RuntimeAgent: Send + Sync {
   fn agent_type_name(&self) -> &'static str;
   fn handlers(&self) -> &HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
   fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
+  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Box<dyn Any + Send + Sync>>;
 }
 
-// Implement RuntimeAgent for AgentContainer<T>
 impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
   fn start(&mut self) { Self::start(self); }
 
@@ -139,6 +158,23 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
   fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>> {
     &mut self.handlers
+  }
+
+  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Box<dyn Any + Send + Sync>> {
+    if !self.is_active() {
+      return Vec::new();
+    }
+
+    let mut replies = Vec::new();
+    let type_id = message.type_id();
+    if let Some(handlers) = self.handlers.get(&type_id) {
+      for handler in handlers {
+        let agent_any: &mut dyn Any = &mut self.inner;
+        let reply = handler.handle_message(agent_any, message);
+        replies.push(reply);
+      }
+    }
+    replies
   }
 }
 
@@ -183,17 +219,53 @@ mod tests {
   }
 
   #[test]
-  fn test_agent_handlers() {
+  fn test_agent_lifecycle() {
+    let arithmetic = Arithmetic { state: 10 };
+    let mut shared_agent = Agent::new(arithmetic);
+
+    assert_eq!(shared_agent.state(), AgentState::Stopped);
+
+    // Start agent
+    shared_agent.start();
+    assert_eq!(shared_agent.state(), AgentState::Running);
+
+    // Pause agent
+    shared_agent.pause();
+    assert_eq!(shared_agent.state(), AgentState::Paused);
+    assert!(!shared_agent.is_active()); // Paused agents don't process messages
+
+    // Resume agent
+    shared_agent.resume();
+    assert_eq!(shared_agent.state(), AgentState::Running);
+    assert!(shared_agent.is_active());
+
+    // Stop agent
+    shared_agent.stop();
+    assert_eq!(shared_agent.state(), AgentState::Stopped);
+    assert!(!shared_agent.is_active());
+  }
+
+  #[test]
+  fn test_single_agent_handler() {
+    let mut arithmetic = Agent::new(Arithmetic { state: 1 }).with_handler::<Increment>();
+
+    let increment = Increment(5);
+    let _result = arithmetic.process_message(increment);
+    assert_eq!(arithmetic.inner.state, 6);
+  }
+
+  #[test]
+  fn test_multiple_agent_handlers() {
     // Create simple agent
     let mut arithmetic = Agent::new(Arithmetic { state: 1 });
-    arithmetic.with_handler::<Increment>();
+    arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     // Agent starts in stopped state - messages should be ignored
     assert_eq!(arithmetic.state(), AgentState::Stopped);
     assert!(!arithmetic.is_active());
 
     let increment = Increment(5);
-    let _ = arithmetic.agent_mut().handle(increment);
+    arithmetic.process_message(increment);
     assert_eq!(arithmetic.state(), AgentState::Stopped);
     assert_eq!(arithmetic.inner.state, 1);
 
@@ -203,117 +275,37 @@ mod tests {
 
     // Now messages should be processed
     let increment = Increment(5);
-    let _result = arithmetic.agent_mut().handle(increment);
+    let _result = arithmetic.process_message(increment);
 
     let multiply = Multiply(3);
-    let _result = arithmetic.agent_mut().handle(multiply);
+    let _result = arithmetic.process_message(multiply);
 
     assert_eq!(arithmetic.inner.state, 18); // (1 + 5) * 3 = 18
   }
 
   #[test]
-  fn test_agent_lifecycle() {
-    todo!("This needs re-thought.");
-    // let test_agent = TestAgent { state: 10 };
-    // let shared_agent = AgentContainer::shared(test_agent);
-    // let mut increment_handler = AgentHandler::<TestAgent, Increment>::new(shared_agent.clone());
+  fn test_pause_and_resume() {
+    todo!(
+      "Test that pausing and sending a message to an agent that is paused does not process the \
+       message, but then it is processed on resume, or the mailbox is handled in some way on \
+       resume."
+    );
+    let mut arithmetic = Agent::new(Arithmetic { state: 1 });
+    arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
-    // // Test lifecycle transitions
-    // {
-    //   let container = shared_agent.lock().unwrap();
-    //   assert_eq!(container.state(), &AgentState::Stopped);
-    // }
-
-    // // Start agent
-    // {
-    //   let mut container = shared_agent.lock().unwrap();
-    //   container.start();
-    //   assert_eq!(container.state(), &AgentState::Running);
-    // }
-
-    // // Pause agent
-    // {
-    //   let mut container = shared_agent.lock().unwrap();
-    //   container.pause();
-    //   assert_eq!(container.state(), &AgentState::Paused);
-    //   assert!(!container.is_active()); // Paused agents don't process messages
-    // }
-
-    // // Try to process message while paused
-    // let increment = Increment(5);
-    // let _result = increment_handler.handle_message(&increment);
-    // {
-    //   let container = shared_agent.lock().unwrap();
-    //   assert_eq!(container.agent().state, 10); // State unchanged
-    // }
-
-    // // Resume agent
-    // {
-    //   let mut container = shared_agent.lock().unwrap();
-    //   container.resume();
-    //   assert_eq!(container.state(), &AgentState::Running);
-    //   assert!(container.is_active());
-    // }
-
-    // // Now message should be processed
-    // let increment = Increment(5);
-    // let _result = increment_handler.handle_message(&increment);
-    // {
-    //   let container = shared_agent.lock().unwrap();
-    //   assert_eq!(container.agent().state, 15); // 10 + 5 = 15
-    // }
-
-    // // Stop agent
-    // {
-    //   let mut container = shared_agent.lock().unwrap();
-    //   container.stop();
-    //   assert_eq!(container.state(), &AgentState::Stopped);
-    //   assert!(!container.is_active());
-    // }
+    arithmetic.start();
+    arithmetic.pause();
   }
 
   #[test]
-  fn test_context_direct() {
-    todo!("This needs re-thought.");
-    let agent = Arithmetic { state: 1 };
-    let mut context = Agent::new(agent);
+  fn test_stop_and_start() {
+    todo!(
+      "Test that stopping and sending a message to an agent that is stopped does not process the \
+       message, but then it is processed on start."
+    );
+    let mut arithmetic = Agent::new(Arithmetic { state: 1 });
+    arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
-    // Use first handler - agent handles Increment messages
-    let increment = Increment(5);
-    context.agent_mut().handle(increment);
-
-    // Use second handler - agent handles Multiply messages
-    let multiply = Multiply(3);
-    let result = context.agent_mut().handle(multiply);
-    assert_eq!(result, 18); // (1 + 5) * 3 = 18
-  }
-}
-
-mod compile_time_safety {
-  use super::*;
-  pub struct DummyAgent;
-
-  impl LifeCycle for DummyAgent {}
-
-  /// This test demonstrates that our type system prevents invalid handler registration.
-  /// The following code should NOT compile because DummyAgent doesn't implement
-  /// Handler<StartProcessing>:
-  ///
-  /// ```compile_fail
-  /// use arbiter_core::agent::{Agent, AgentContainer};
-  ///
-  /// pub struct DummyAgent;
-  /// impl Agent for DummyAgent {}
-  ///
-  /// # #[derive(Debug, Clone)]
-  /// # struct StartProcessing(i32);
-  ///
-  /// let mut dummy_agent = AgentContainer::new(DummyAgent);
-  /// dummy_agent.register_handler::<StartProcessing>(); // This should fail to compile!
-  /// ```
-  #[allow(dead_code)]
-  fn test_compile_time_safety_documentation() {
-    // This test passes just by existing - the real test is in the doctest above
-    println!("Compile-time safety is enforced! ✅");
+    arithmetic.start();
   }
 }

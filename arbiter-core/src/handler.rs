@@ -1,4 +1,4 @@
-use std::{any::Any, marker::PhantomData};
+use std::any::Any;
 
 pub trait Handler<M> {
   type Reply;
@@ -8,31 +8,27 @@ pub trait Handler<M> {
 
 // Trait object for handling any message type
 pub trait MessageHandler: Send + Sync {
-  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any + Send + Sync>;
+  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Box<dyn Any + Send + Sync>;
 }
 
 // Wrapper to make Handler<M> work as MessageHandler
-pub struct HandlerWrapper<A, H: Handler<M>, M> {
-  pub handler:  fn(&mut A, M) -> H::Reply,
-  pub _phantom: PhantomData<M>,
+pub(crate) struct HandlerWrapper<A, M> {
+  pub(crate) _phantom: std::marker::PhantomData<(A, M)>,
 }
-
-impl<A, H: Handler<M>, M> HandlerWrapper<A, H, M> {
-  pub fn new(handler: fn(&mut A, M) -> H::Reply) -> Self { Self { handler, _phantom: PhantomData } }
-}
-
-impl<A, H: Handler<M>, M> MessageHandler for HandlerWrapper<A, H, M>
+impl<A, M> MessageHandler for HandlerWrapper<A, M>
 where
-  H: Handler<M>,
+  A: Handler<M> + Send + Sync + 'static,
   M: Any + Clone + Send + Sync,
-  H::Reply: Send + Sync + 'static,
+  <A as Handler<M>>::Reply: Send + Sync + 'static,
 {
-  fn handle_message(&mut self, message: &dyn Any) -> Box<dyn Any + Send + Sync> {
-    if let Some(typed_message) = message.downcast_ref::<M>() {
-      let reply = (self.handler)(typed_message.clone());
+  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Box<dyn Any + Send + Sync> {
+    if let (Some(typed_agent), Some(typed_message)) =
+      (agent.downcast_mut::<A>(), message.downcast_ref::<M>())
+    {
+      let reply = typed_agent.handle(typed_message.clone());
       Box::new(reply)
     } else {
-      // Return unit if message type doesn't match
+      // Return unit if types don't match
       Box::new(())
     }
   }
