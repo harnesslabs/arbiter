@@ -23,8 +23,8 @@ extern crate console_error_panic_hook;
 fn random() -> f64 {
   static mut SEED: u32 = 12345;
   unsafe {
-    SEED = SEED.wrapping_mul(1103515245).wrapping_add(12345);
-    ((SEED >> 16) & 0x7fff) as f64 / 32767.0
+    SEED = SEED.wrapping_mul(1_103_515_245).wrapping_add(12345);
+    f64::from((SEED >> 16) & 0x7fff) / 32767.0
   }
 }
 
@@ -36,15 +36,15 @@ pub struct Position {
 }
 
 impl Position {
-  pub fn new(x: f64, y: f64) -> Self { Self { x, y } }
+  pub const fn new(x: f64, y: f64) -> Self { Self { x, y } }
 
-  pub fn distance_to(&self, other: &Position) -> f64 {
+  pub fn distance_to(&self, other: &Self) -> f64 {
     let dx = self.x - other.x;
     let dy = self.y - other.y;
-    (dx * dx + dy * dy).sqrt()
+    dx.hypot(dy)
   }
 
-  pub fn move_towards(&mut self, target: &Position, speed: f64) {
+  pub fn move_towards(&mut self, target: &Self, speed: f64) {
     let distance = self.distance_to(target);
     if distance > 0.0 {
       let dx = (target.x - self.x) / distance;
@@ -56,13 +56,11 @@ impl Position {
 }
 
 /// Agent types in our simulation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AgentType {
   Leader,
   Follower,
 }
-
-// === MESSAGE TYPES FOR OUR SYSTEM ===
 
 /// Message to update agent position
 #[derive(Clone, Debug)]
@@ -77,15 +75,9 @@ pub struct Tick {
   pub leader_positions: Vec<(String, Position)>,
 }
 
-/// Message to render all agents
-#[derive(Clone, Debug)]
-pub struct RenderAll {
-  pub agent_positions: Vec<(String, Position, AgentType)>,
-}
-
 /// Message to register an agent type with canvas
 #[derive(Clone, Debug)]
-pub struct RegisterAgentType {
+pub struct RegisterAgent {
   pub agent_id:   String,
   pub agent_type: AgentType,
 }
@@ -106,8 +98,6 @@ pub struct LeaderPositions {
   pub positions: Vec<(String, Position)>,
 }
 
-// === AGENT IMPLEMENTATIONS ===
-
 /// Canvas agent that manages world state and rendering
 #[derive(Clone)]
 pub struct Canvas {
@@ -115,6 +105,16 @@ pub struct Canvas {
   pub canvas_height:   f64,
   pub agent_positions: HashMap<String, Position>,
   pub agent_types:     HashMap<String, AgentType>,
+}
+
+fn get_canvas_context() -> Option<CanvasRenderingContext2d> {
+  let window = web_sys::window()?;
+  let document = window.document()?;
+  let canvas = document.get_element_by_id("canvas")?;
+  let canvas: HtmlCanvasElement = canvas.dyn_into().ok()?;
+  let context = canvas.get_context("2d").ok()??;
+  let context: CanvasRenderingContext2d = context.dyn_into().ok()?;
+  Some(context)
 }
 
 impl Canvas {
@@ -127,18 +127,8 @@ impl Canvas {
     }
   }
 
-  fn get_canvas_context(&self) -> Option<CanvasRenderingContext2d> {
-    let window = web_sys::window()?;
-    let document = window.document()?;
-    let canvas = document.get_element_by_id("canvas")?;
-    let canvas: HtmlCanvasElement = canvas.dyn_into().ok()?;
-    let context = canvas.get_context("2d").ok()??;
-    let context: CanvasRenderingContext2d = context.dyn_into().ok()?;
-    Some(context)
-  }
-
   fn render(&self) {
-    if let Some(context) = self.get_canvas_context() {
+    if let Some(context) = get_canvas_context() {
       // Clear any existing drawings first
       context.clear_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
 
@@ -182,15 +172,13 @@ impl Canvas {
       .agent_positions
       .iter()
       .filter_map(|(id, pos)| {
-        if let Some(agent_type) = self.agent_types.get(id) {
+        self.agent_types.get(id).and_then(|agent_type| {
           if matches!(agent_type, AgentType::Leader) {
             Some((id.clone(), pos.clone()))
           } else {
             None
           }
-        } else {
-          None
-        }
+        })
       })
       .collect();
 
@@ -209,11 +197,11 @@ impl Handler<UpdatePosition> for Canvas {
   }
 }
 
-impl Handler<RegisterAgentType> for Canvas {
+impl Handler<RegisterAgent> for Canvas {
   type Reply = ();
 
-  fn handle(&mut self, message: RegisterAgentType) -> Self::Reply {
-    self.agent_types.insert(message.agent_id.clone(), message.agent_type.clone());
+  fn handle(&mut self, message: RegisterAgent) -> Self::Reply {
+    self.agent_types.insert(message.agent_id, message.agent_type);
     self.render();
   }
 }
@@ -284,7 +272,7 @@ impl LeaderFollowerSimulation {
     let canvas = Canvas::new(canvas_width, canvas_height);
     let canvas_agent = Agent::new(canvas)
       .with_handler::<UpdatePosition>()
-      .with_handler::<RegisterAgentType>()
+      .with_handler::<RegisterAgent>()
       .with_handler::<RemoveAgent>()
       .with_handler::<ClearAllAgents>()
       .with_handler::<Tick>();
@@ -340,11 +328,11 @@ impl LeaderFollowerSimulation {
         // Register and start the leader
         match self.runtime.spawn_named_agent(&agent_id, leader_agent) {
           Ok(_) => {
-            console::log_1(&format!("🔴 {} created and started", agent_id).into());
+            console::log_1(&format!("🔴 {agent_id} created and started").into());
             true
           },
           Err(e) => {
-            console::log_1(&format!("❌ Failed to register {}: {}", agent_id, e).into());
+            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
             false
           },
         }
@@ -356,11 +344,11 @@ impl LeaderFollowerSimulation {
         // Register and start the follower
         match self.runtime.spawn_named_agent(&agent_id, follower_agent) {
           Ok(_) => {
-            console::log_1(&format!("🔵 {} created and started", agent_id).into());
+            console::log_1(&format!("🔵 {agent_id} created and started").into());
             true
           },
           Err(e) => {
-            console::log_1(&format!("❌ Failed to register {}: {}", agent_id, e).into());
+            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
             false
           },
         }
@@ -369,10 +357,7 @@ impl LeaderFollowerSimulation {
 
     if success {
       // Send agent type registration to Canvas
-      self.runtime.broadcast_message(RegisterAgentType {
-        agent_id:   agent_id.clone(),
-        agent_type: agent_type.clone(),
-      });
+      self.runtime.broadcast_message(RegisterAgent { agent_id: agent_id.clone(), agent_type });
 
       // Send initial position update to Canvas
       self.runtime.broadcast_message(UpdatePosition {
@@ -430,7 +415,7 @@ impl Leader {
     if self.direction_steps >= self.max_direction_steps {
       let direction_change = (random() - 0.5) * 0.5;
       self.current_direction += direction_change;
-      self.current_direction = self.current_direction % (2.0 * std::f64::consts::PI);
+      self.current_direction %= (2.0 * std::f64::consts::PI);
       self.direction_steps = 0;
       self.max_direction_steps = 100 + (random() * 100.0) as u32;
     }
@@ -485,7 +470,7 @@ pub struct Follower {
 }
 
 impl Follower {
-  pub fn new(id: String, x: f64, y: f64) -> Self {
+  pub const fn new(id: String, x: f64, y: f64) -> Self {
     Self {
       id,
       position: Position::new(x, y),
@@ -512,7 +497,7 @@ impl Follower {
       }
     }
 
-    self.target_leader_id = closest_leader.clone();
+    self.target_leader_id = closest_leader;
   }
 
   fn follow_target(&mut self, leader_positions: &[(String, Position)]) {
@@ -536,17 +521,9 @@ impl LifeCycle for Follower {}
 impl Handler<Tick> for Follower {
   type Reply = UpdatePosition;
 
-  fn handle(&mut self, _message: Tick) -> Self::Reply {
-    // Simple random movement for now
-    let dx = (random() - 0.5) * self.speed * 2.0;
-    let dy = (random() - 0.5) * self.speed * 2.0;
-
-    self.position.x += dx;
-    self.position.y += dy;
-
-    // Keep within bounds
-    self.position.x = self.position.x.max(10.0).min(790.0);
-    self.position.y = self.position.y.max(10.0).min(590.0);
+  fn handle(&mut self, message: Tick) -> Self::Reply {
+    self.find_closest_leader(&message.leader_positions);
+    self.follow_target(&message.leader_positions);
 
     UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
   }

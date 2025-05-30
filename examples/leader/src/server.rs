@@ -8,10 +8,11 @@
 //! ```
 //! Then open http://localhost:3030
 
-use warp::Filter;
+#[cfg(not(target_arch = "wasm32"))] use warp::Filter;
 
 const HTML_CONTENT: &str = include_str!("../index.html");
 
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() {
   println!("🦀 Starting Leader-Follower Demo Server...");
@@ -30,4 +31,9 @@ async fn main() {
   println!("🛑 Press Ctrl+C to stop the server");
 
   warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn main() {
+  panic!("This is a server");
 }
