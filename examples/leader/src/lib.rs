@@ -249,132 +249,6 @@ impl Handler<Tick> for Canvas {
   }
 }
 
-/// Main simulation structure using arbiter-core
-#[wasm_bindgen]
-pub struct LeaderFollowerSimulation {
-  canvas_width:   f64,
-  canvas_height:  f64,
-  leader_count:   u32,
-  follower_count: u32,
-  runtime:        Runtime,
-}
-
-#[wasm_bindgen]
-impl LeaderFollowerSimulation {
-  /// Create a new simulation instance
-  #[wasm_bindgen(constructor)]
-  pub fn new(canvas_width: f64, canvas_height: f64) -> Self {
-    console_error_panic_hook::set_once();
-
-    let mut runtime = Runtime::new();
-
-    // Create and register Canvas agent with all its handlers
-    let canvas = Canvas::new(canvas_width, canvas_height);
-    let canvas_agent = Agent::new(canvas)
-      .with_handler::<UpdatePosition>()
-      .with_handler::<RegisterAgent>()
-      .with_handler::<RemoveAgent>()
-      .with_handler::<ClearAllAgents>()
-      .with_handler::<Tick>();
-
-    // Register and start the canvas agent
-    runtime.register_named_agent("canvas", canvas_agent).unwrap();
-    runtime.start_agent_by_name("canvas").unwrap();
-
-    console::log_1(&"🎨 Canvas initialized and started".into());
-
-    // Send initial tick to set up the system
-    runtime.broadcast_message(Tick { leader_positions: Vec::new() });
-    runtime.step();
-
-    Self { canvas_width, canvas_height, leader_count: 0, follower_count: 0, runtime }
-  }
-
-  /// Step the simulation forward by one tick
-  #[wasm_bindgen(js_name = "tick")]
-  pub fn tick(&mut self) -> usize {
-    // Send tick to all agents to make them move
-    let delivered = self.runtime.broadcast_message(Tick { leader_positions: Vec::new() });
-
-    if delivered > 0 {
-      // Process agent movements (this generates UpdatePosition replies)
-      let processed = self.runtime.step();
-
-      // Process the UpdatePosition replies to route them to Canvas
-      let additional = self.runtime.step();
-
-      processed + additional
-    } else {
-      0
-    }
-  }
-
-  /// Add an agent at the specified position (simulation-specific)
-  #[wasm_bindgen]
-  pub fn add_agent(&mut self, x: f64, y: f64, is_leader: bool) -> String {
-    let (agent_id, agent_type) = if is_leader {
-      self.leader_count += 1;
-      (format!("Leader {}", self.leader_count), AgentType::Leader)
-    } else {
-      self.follower_count += 1;
-      (format!("Follower {}", self.follower_count), AgentType::Follower)
-    };
-
-    let success = match &agent_type {
-      AgentType::Leader => {
-        let leader = Leader::new(agent_id.clone(), self.canvas_width, self.canvas_height, x, y);
-        let leader_agent = Agent::new(leader).with_handler::<Tick>();
-
-        // Register and start the leader
-        match self.runtime.spawn_named_agent(&agent_id, leader_agent) {
-          Ok(_) => {
-            console::log_1(&format!("🔴 {agent_id} created and started").into());
-            true
-          },
-          Err(e) => {
-            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-            false
-          },
-        }
-      },
-      AgentType::Follower => {
-        let follower = Follower::new(agent_id.clone(), x, y);
-        let follower_agent = Agent::new(follower).with_handler::<Tick>();
-
-        // Register and start the follower
-        match self.runtime.spawn_named_agent(&agent_id, follower_agent) {
-          Ok(_) => {
-            console::log_1(&format!("🔵 {agent_id} created and started").into());
-            true
-          },
-          Err(e) => {
-            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-            false
-          },
-        }
-      },
-    };
-
-    if success {
-      // Send agent type registration to Canvas
-      self.runtime.broadcast_message(RegisterAgent { agent_id: agent_id.clone(), agent_type });
-
-      // Send initial position update to Canvas
-      self.runtime.broadcast_message(UpdatePosition {
-        agent_id: agent_id.clone(),
-        position: Position::new(x, y),
-      });
-
-      // Process all messages
-      self.runtime.step();
-
-      agent_id
-    } else {
-      String::new()
-    }
-  }
-}
-
 /// Initialize the WASM module
 #[wasm_bindgen(start)]
 pub fn main() {
@@ -526,5 +400,127 @@ impl Handler<Tick> for Follower {
     self.follow_target(&message.leader_positions);
 
     UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
+  }
+}
+
+/// Initialize the leader-follower simulation
+#[wasm_bindgen]
+pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) -> Runtime {
+  console_error_panic_hook::set_once();
+
+  let mut runtime = Runtime::new();
+
+  // Create and register Canvas agent with all its handlers
+  let canvas = Canvas::new(canvas_width, canvas_height);
+  let canvas_agent = Agent::new(canvas)
+    .with_handler::<UpdatePosition>()
+    .with_handler::<RegisterAgent>()
+    .with_handler::<RemoveAgent>()
+    .with_handler::<ClearAllAgents>()
+    .with_handler::<Tick>();
+
+  // Register and start the canvas agent
+  runtime.register_named_agent("canvas", canvas_agent).unwrap();
+  runtime.start_agent_by_name("canvas").unwrap();
+
+  console::log_1(&"🎨 Canvas initialized and started".into());
+
+  // Send initial tick to set up the system
+  runtime.broadcast_message(Tick { leader_positions: Vec::new() });
+  runtime.step();
+
+  runtime
+}
+
+/// Add simulation-specific WASM bindings to Runtime
+#[wasm_bindgen]
+impl Runtime {
+  /// Step the simulation forward by one tick
+  #[wasm_bindgen(js_name = "tick")]
+  pub fn simulation_tick(&mut self) -> usize {
+    // Send tick to all agents to make them move
+    let delivered = self.broadcast_message(Tick { leader_positions: Vec::new() });
+
+    if delivered > 0 {
+      // Process agent movements (this generates UpdatePosition replies)
+      let processed = self.step();
+
+      // Process the UpdatePosition replies to route them to Canvas
+      let additional = self.step();
+
+      processed + additional
+    } else {
+      0
+    }
+  }
+
+  /// Add an agent at the specified position
+  #[wasm_bindgen(js_name = "addAgent")]
+  pub fn add_simulation_agent(&mut self, x: f64, y: f64, is_leader: bool) -> String {
+    static mut LEADER_COUNT: u32 = 0;
+    static mut FOLLOWER_COUNT: u32 = 0;
+
+    let (agent_id, agent_type) = if is_leader {
+      unsafe {
+        LEADER_COUNT += 1;
+        (format!("Leader {}", LEADER_COUNT), AgentType::Leader)
+      }
+    } else {
+      unsafe {
+        FOLLOWER_COUNT += 1;
+        (format!("Follower {}", FOLLOWER_COUNT), AgentType::Follower)
+      }
+    };
+
+    let success = match &agent_type {
+      AgentType::Leader => {
+        let leader = Leader::new(agent_id.clone(), 800.0, 600.0, x, y);
+        let leader_agent = Agent::new(leader).with_handler::<Tick>();
+
+        match self.spawn_named_agent(&agent_id, leader_agent) {
+          Ok(_) => {
+            console::log_1(&format!("🔴 {agent_id} created and started").into());
+            true
+          },
+          Err(e) => {
+            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+            false
+          },
+        }
+      },
+      AgentType::Follower => {
+        let follower = Follower::new(agent_id.clone(), x, y);
+        let follower_agent = Agent::new(follower).with_handler::<Tick>();
+
+        match self.spawn_named_agent(&agent_id, follower_agent) {
+          Ok(_) => {
+            console::log_1(&format!("🔵 {agent_id} created and started").into());
+            true
+          },
+          Err(e) => {
+            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+            false
+          },
+        }
+      },
+    };
+
+    if success {
+      // Send agent type registration to Canvas
+      self.broadcast_message(RegisterAgent { agent_id: agent_id.clone(), agent_type });
+
+      // Send initial position update to Canvas
+      self.broadcast_message(UpdatePosition {
+        agent_id: agent_id.clone(),
+        position: Position::new(x, y),
+      });
+
+      // Process all messages
+      self.step();
+
+      agent_id
+    } else {
+      String::new()
+    }
   }
 }

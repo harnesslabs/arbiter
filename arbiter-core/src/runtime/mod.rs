@@ -7,7 +7,6 @@ use std::{
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")] pub mod wasm;
-#[cfg(feature = "wasm")] pub use wasm::WasmRuntime;
 
 use crate::agent::{Agent, AgentId, AgentState, LifeCycle, RuntimeAgent};
 
@@ -433,38 +432,11 @@ impl Runtime {
       )
       .collect();
 
-    // Route the reply to each target agent
-    // Note: This approach requires replies to implement Clone + Send + Sync
-    // We use a type-erased approach to handle different reply types
     for agent_id in target_agent_ids {
       if let Some(agent) = self.agents.get_mut(&agent_id) {
-        // We can't clone arbitrary `dyn Any`, so we use a workaround:
-        // The reply routing will work for replies that were created as Clone types
-        // For now, we skip non-cloneable replies with a warning
-        if let Some(cloned_reply) = Self::try_clone_any_reply() {
-          agent.enqueue_boxed_message(cloned_reply);
-        }
+        agent.enqueue_boxed_message(reply.clone());
       }
     }
-  }
-
-  /// Attempt to clone a reply of unknown type
-  /// This is a fundamental limitation of type-erased replies
-  /// In practice, most message types should implement Clone
-  fn try_clone_any_reply() -> Option<Box<dyn Any + Send + Sync>> {
-    // This is the fundamental challenge with type-erased message routing.
-    // Without knowing the concrete type, we can't clone arbitrary replies.
-    //
-    // Solutions for production systems:
-    // 1. Require all message types to implement Clone
-    // 2. Use a type registry with clone functions
-    // 3. Use Rc/Arc for shared ownership
-    // 4. Implement a custom CloneAny trait
-    //
-    // For now, we return None to indicate cloning failed
-    // This means replies won't be automatically routed between agents
-    // Users can manually route replies using route_cloneable_reply()
-    None
   }
 }
 
