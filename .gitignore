@@ -8,7 +8,6 @@
 
 /cache/
 /out/
-*.html
 *.csv
 
 .DS_Store
