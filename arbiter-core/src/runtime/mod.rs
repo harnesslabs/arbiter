@@ -687,4 +687,187 @@ mod tests {
     assert_eq!(result.steps_taken, 1); // Just one step to detect no work
     assert!(result.reached_stable_state);
   }
+
+  #[test]
+  fn test_reply_routing_and_memory_cleanup() {
+    use std::sync::{Arc, Weak};
+
+    // Custom message and reply types for testing
+    #[derive(Debug, Clone)]
+    struct RequestData {
+      value: i32,
+    }
+
+    #[derive(Debug, Clone)]
+    struct ResponseData {
+      result: i32,
+    }
+
+    // Producer agent that generates responses
+    #[derive(Clone)]
+    struct Producer {
+      multiplier: i32,
+    }
+
+    impl LifeCycle for Producer {}
+
+    impl Handler<RequestData> for Producer {
+      type Reply = ResponseData;
+
+      fn handle(&mut self, message: RequestData) -> Self::Reply {
+        ResponseData { result: message.value * self.multiplier }
+      }
+    }
+
+    // Consumer agent that processes responses
+    #[derive(Clone)]
+    struct Consumer {
+      total:              i32,
+      responses_received: usize,
+    }
+
+    impl LifeCycle for Consumer {}
+
+    impl Handler<ResponseData> for Consumer {
+      type Reply = ();
+
+      fn handle(&mut self, message: ResponseData) -> Self::Reply {
+        self.total += message.result;
+        self.responses_received += 1;
+      }
+    }
+
+    let mut runtime = Runtime::new();
+
+    // Create producer and consumers
+    let producer = Agent::new(Producer { multiplier: 2 }).with_handler::<RequestData>();
+    let consumer1 =
+      Agent::new(Consumer { total: 0, responses_received: 0 }).with_handler::<ResponseData>();
+    let consumer2 =
+      Agent::new(Consumer { total: 0, responses_received: 0 }).with_handler::<ResponseData>();
+
+    let producer_id = producer.id();
+    let consumer1_id = consumer1.id();
+    let consumer2_id = consumer2.id();
+
+    runtime.register_agent(producer);
+    runtime.register_agent(consumer1);
+    runtime.register_agent(consumer2);
+
+    // Start all agents
+    runtime.start_agent_by_id(producer_id).unwrap();
+    runtime.start_agent_by_id(consumer1_id).unwrap();
+    runtime.start_agent_by_id(consumer2_id).unwrap();
+
+    // Create a message and keep a weak reference to test cleanup
+    let request = Arc::new(RequestData { value: 10 });
+    let weak_request = Arc::downgrade(&request);
+
+    // Send the request to the producer
+    runtime.send_to_agent_by_id(producer_id, (*request).clone()).unwrap();
+
+    // Check initial reference count (1 for our Arc, plus any internal references)
+    let initial_strong_count = Arc::strong_count(&request);
+    assert!(initial_strong_count >= 1);
+
+    // Drop our reference to the original message
+    drop(request);
+
+    // Step 1: Process the request, which should generate a response
+    let processed_step1 = runtime.step();
+    assert_eq!(processed_step1, 1); // One reply generated
+
+    // Verify the original request message is cleaned up
+    assert!(weak_request.upgrade().is_none(), "Original request should be cleaned up");
+
+    // Step 2: Route the response to consumers
+    let processed_step2 = runtime.step();
+    assert_eq!(processed_step2, 2); // Response delivered to both consumers
+
+    // Verify no more work remains
+    assert!(!runtime.has_pending_work());
+
+    // Verify both consumers received the response
+    let consumer1 = runtime.agents.get(&consumer1_id).unwrap();
+    if let Some(consumer) = consumer1.inner_as_any().downcast_ref::<Consumer>() {
+      assert_eq!(consumer.total, 20); // 10 * 2 = 20
+      assert_eq!(consumer.responses_received, 1);
+    }
+
+    let consumer2 = runtime.agents.get(&consumer2_id).unwrap();
+    if let Some(consumer) = consumer2.inner_as_any().downcast_ref::<Consumer>() {
+      assert_eq!(consumer.total, 20); // 10 * 2 = 20
+      assert_eq!(consumer.responses_received, 1);
+    }
+
+    // Test multiple message cycles to ensure no memory accumulation
+    for i in 1..=5 {
+      let request = Arc::new(RequestData { value: i });
+      let weak_ref = Arc::downgrade(&request);
+
+      runtime.send_to_agent_by_id(producer_id, (*request).clone()).unwrap();
+      drop(request);
+
+      // Process request and response
+      runtime.step(); // Generate response
+      runtime.step(); // Route response to consumers
+
+      // Verify cleanup
+      assert!(weak_ref.upgrade().is_none(), "Request {} should be cleaned up", i);
+    }
+
+    // Final verification - no pending work and proper final state
+    assert!(!runtime.has_pending_work());
+    let stats = runtime.statistics();
+    assert_eq!(stats.running_agents, 3);
+    assert_eq!(stats.agents_with_pending_messages, 0);
+  }
+
+  #[test]
+  fn test_arc_message_sharing() {
+    let mut runtime = Runtime::new();
+
+    // Create multiple agents that can handle the same message type
+    let counter1 = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
+    let counter2 = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
+    let counter3 = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
+
+    let counter1_id = counter1.id();
+    let counter2_id = counter2.id();
+    let counter3_id = counter3.id();
+
+    runtime.register_agent(counter1);
+    runtime.register_agent(counter2);
+    runtime.register_agent(counter3);
+
+    runtime.start_agent_by_id(counter1_id).unwrap();
+    runtime.start_agent_by_id(counter2_id).unwrap();
+    runtime.start_agent_by_id(counter3_id).unwrap();
+
+    // Create a message with a known Arc
+    let message = Arc::new(NumberMessage { value: 42 });
+    let message_weak = Arc::downgrade(&message);
+
+    // Broadcast should share the Arc among all agents
+    let delivered = runtime.broadcast_message((*message).clone());
+    assert_eq!(delivered, 3); // All three counters should receive it
+
+    // Drop our reference
+    drop(message);
+
+    // Process messages - this should consume the shared Arcs
+    let processed = runtime.process_all_pending_messages();
+    assert_eq!(processed, 3); // Each counter generates a () reply, so 3 replies total
+
+    // Verify the message is properly cleaned up
+    assert!(message_weak.upgrade().is_none(), "Message should be cleaned up after processing");
+
+    // Verify all counters processed the message
+    for &counter_id in &[counter1_id, counter2_id, counter3_id] {
+      let agent = runtime.agents.get(&counter_id).unwrap();
+      if let Some(counter) = agent.inner_as_any().downcast_ref::<Counter>() {
+        assert_eq!(counter.total, 42);
+      }
+    }
+  }
 }

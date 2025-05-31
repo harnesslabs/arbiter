@@ -108,12 +108,26 @@ pub struct Canvas {
 }
 
 fn get_canvas_context() -> Option<CanvasRenderingContext2d> {
+  console::log_1(&"🔍 Getting canvas context...".into());
+
   let window = web_sys::window()?;
+  console::log_1(&"✅ Got window".into());
+
   let document = window.document()?;
+  console::log_1(&"✅ Got document".into());
+
   let canvas = document.get_element_by_id("canvas")?;
-  let canvas: HtmlCanvasElement = canvas.dyn_into().ok()?;
+  console::log_1(&"✅ Got canvas element".into());
+
+  let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into().ok()?;
+  console::log_1(&"✅ Cast to HtmlCanvasElement".into());
+
   let context = canvas.get_context("2d").ok()??;
-  let context: CanvasRenderingContext2d = context.dyn_into().ok()?;
+  console::log_1(&"✅ Got 2d context".into());
+
+  let context: web_sys::CanvasRenderingContext2d = context.dyn_into().ok()?;
+  console::log_1(&"✅ Cast to CanvasRenderingContext2d - ready to render!".into());
+
   Some(context)
 }
 
@@ -128,43 +142,62 @@ impl Canvas {
   }
 
   fn render(&self) {
-    if let Some(context) = get_canvas_context() {
-      // Clear any existing drawings first
-      context.clear_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
+    console::log_1(&format!("🎨 Canvas rendering {} agents", self.agent_positions.len()).into());
 
-      // Fill with white background
-      context.set_fill_style_str("#ffffff");
-      context.fill_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
+    let context = match get_canvas_context() {
+      Some(ctx) => {
+        console::log_1(&"✅ Successfully got canvas context".into());
+        ctx
+      },
+      None => {
+        console::log_1(&"❌ Failed to get canvas context".into());
+        return;
+      },
+    };
 
-      // Draw agents (if any)
-      for (agent_id, position) in &self.agent_positions {
-        let agent_type = self.agent_types.get(agent_id);
+    // Clear canvas with white background
+    console::log_1(&"🧹 Clearing canvas...".into());
+    context.set_fill_style(&wasm_bindgen::JsValue::from_str("#ffffff")); // Clean white background
+    context.fill_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
+    console::log_1(&"✅ Canvas cleared with white background".into());
 
-        match agent_type {
-          Some(AgentType::Leader) => {
-            // Draw leader as red circle
-            context.set_fill_style_str("#ff4444");
-            context.begin_path();
-            context.arc(position.x, position.y, 12.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
-            context.fill();
-          },
-          Some(AgentType::Follower) => {
-            // Draw follower as blue circle
-            context.set_fill_style_str("#4444ff");
-            context.begin_path();
-            context.arc(position.x, position.y, 8.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
-            context.fill();
-          },
-          None => {
-            // Unknown agent type, draw as gray
-            context.set_fill_style_str("#888888");
-            context.begin_path();
-            context.arc(position.x, position.y, 6.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
-            context.fill();
-          },
-        }
+    // Draw actual agents
+    console::log_1(&format!("🎯 Drawing {} agents", self.agent_positions.len()).into());
+    for (agent_id, position) in &self.agent_positions {
+      console::log_1(
+        &format!("  🎯 Drawing {} at ({}, {})", agent_id, position.x, position.y).into(),
+      );
+      let agent_type = self.agent_types.get(agent_id);
+
+      match agent_type {
+        Some(AgentType::Leader) => {
+          // Draw leader as red circle
+          context.set_fill_style(&wasm_bindgen::JsValue::from_str("#dc2626"));
+          context.begin_path();
+          context.arc(position.x, position.y, 12.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+          context.fill();
+          console::log_1(&format!("  ✅ Leader {} drawn", agent_id).into());
+        },
+        Some(AgentType::Follower) => {
+          // Draw follower as blue circle
+          context.set_fill_style(&wasm_bindgen::JsValue::from_str("#2563eb"));
+          context.begin_path();
+          context.arc(position.x, position.y, 8.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+          context.fill();
+          console::log_1(&format!("  ✅ Follower {} drawn", agent_id).into());
+        },
+        None => {
+          // Unknown agent type - draw as gray circle
+          context.set_fill_style(&wasm_bindgen::JsValue::from_str("#6b7280"));
+          context.begin_path();
+          context.arc(position.x, position.y, 6.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
+          context.fill();
+          console::log_1(&format!("  ✅ Unknown agent {} drawn", agent_id).into());
+        },
       }
     }
+
+    console::log_1(&"🎨 Render complete!".into());
   }
 
   fn get_leader_positions(&self) -> Vec<(String, Position)> {
@@ -192,6 +225,13 @@ impl Handler<UpdatePosition> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
+    console::log_1(
+      &format!(
+        "🎨 Canvas received position update for {}: ({}, {})",
+        message.agent_id, message.position.x, message.position.y
+      )
+      .into(),
+    );
     self.agent_positions.insert(message.agent_id, message.position);
     self.render();
   }
@@ -243,9 +283,13 @@ impl Handler<ClearAllAgents> for Canvas {
 impl Handler<Tick> for Canvas {
   type Reply = Tick;
 
-  fn handle(&mut self, _message: Tick) -> Self::Reply {
-    let leader_positions = self.get_leader_positions();
-    Tick { leader_positions }
+  fn handle(&mut self, message: Tick) -> Self::Reply {
+    console::log_1(&"🎨 Canvas received tick, rendering and getting leader positions".into());
+    for (leader_id, leader_pos) in message.leader_positions {
+      self.agent_positions.insert(leader_id, leader_pos);
+    }
+    self.render();
+    Tick { leader_positions: self.get_leader_positions() }
   }
 }
 
@@ -328,8 +372,17 @@ impl Handler<Tick> for Leader {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
+    console::log_1(&format!("🔴 {} received tick", self.id).into());
     self.move_agent();
-    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
+    let reply = UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() };
+    console::log_1(
+      &format!(
+        "🔴 {} generating UpdatePosition reply: ({}, {})",
+        self.id, reply.position.x, reply.position.y
+      )
+      .into(),
+    );
+    reply
   }
 }
 
@@ -396,6 +449,7 @@ impl Handler<Tick> for Follower {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, message: Tick) -> Self::Reply {
+    console::log_1(&format!("🔵 {} received tick", self.id).into());
     self.find_closest_leader(&message.leader_positions);
     self.follow_target(&message.leader_positions);
 
@@ -432,95 +486,150 @@ pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) 
   runtime
 }
 
-/// Add simulation-specific WASM bindings to Runtime
+/// Step the simulation forward by one tick
 #[wasm_bindgen]
-impl Runtime {
-  /// Step the simulation forward by one tick
-  #[wasm_bindgen(js_name = "tick")]
-  pub fn simulation_tick(&mut self) -> usize {
-    // Send tick to all agents to make them move
-    let delivered = self.broadcast_message(Tick { leader_positions: Vec::new() });
+pub fn simulation_tick(runtime: &mut Runtime) -> usize {
+  console::log_1(
+    &format!("=== Starting simulation tick, agent count: {} ===", runtime.agent_count()).into(),
+  );
 
-    if delivered > 0 {
-      // Process agent movements (this generates UpdatePosition replies)
-      let processed = self.step();
+  // Step 1: Broadcast tick to all agents (Canvas will render and provide leader positions)
+  let delivered = runtime.broadcast_message(Tick { leader_positions: Vec::new() });
+  console::log_1(&format!("📡 Tick delivered to {} agents", delivered).into());
 
-      // Process the UpdatePosition replies to route them to Canvas
-      let additional = self.step();
+  if delivered > 0 {
+    // Step 2: Process the tick messages (Canvas renders, agents generate UpdatePosition replies)
+    let processed_tick = runtime.step();
+    console::log_1(
+      &format!("⚡ Step 1 processed {} messages (tick handling)", processed_tick).into(),
+    );
 
-      processed + additional
-    } else {
-      0
+    // Check how many agents have pending work after tick processing
+    let pending_after_tick = runtime.agents_needing_processing();
+    console::log_1(
+      &format!("📬 Agents with pending messages after tick: {}", pending_after_tick).into(),
+    );
+
+    // Step 3: Process the UpdatePosition replies and route them to Canvas
+    let processed_updates = runtime.step();
+    console::log_1(
+      &format!("⚡ Step 2 processed {} messages (reply routing)", processed_updates).into(),
+    );
+
+    // Check again
+    let pending_after_routing = runtime.agents_needing_processing();
+    console::log_1(
+      &format!("📬 Agents with pending messages after routing: {}", pending_after_routing).into(),
+    );
+
+    // Step 4: Process any additional routing
+    let additional = runtime.step();
+    console::log_1(&format!("⚡ Step 3 processed {} messages (additional)", additional).into());
+
+    console::log_1(
+      &format!(
+        "✅ Total: {} + {} + {} = {}",
+        processed_tick,
+        processed_updates,
+        additional,
+        processed_tick + processed_updates + additional
+      )
+      .into(),
+    );
+
+    processed_tick + processed_updates + additional
+  } else {
+    console::log_1(&"❌ No agents to deliver tick to".into());
+    0
+  }
+}
+
+/// Add an agent at the specified position
+#[wasm_bindgen]
+pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bool) -> String {
+  static mut LEADER_COUNT: u32 = 0;
+  static mut FOLLOWER_COUNT: u32 = 0;
+
+  let (agent_id, agent_type) = if is_leader {
+    unsafe {
+      LEADER_COUNT += 1;
+      (format!("Leader {LEADER_COUNT}"), AgentType::Leader)
     }
+  } else {
+    unsafe {
+      FOLLOWER_COUNT += 1;
+      (format!("Follower {FOLLOWER_COUNT}"), AgentType::Follower)
+    }
+  };
+
+  let success = match &agent_type {
+    AgentType::Leader => {
+      let leader = Leader::new(agent_id.clone(), 800.0, 600.0, x, y);
+      let leader_agent = Agent::new(leader).with_handler::<Tick>();
+
+      match runtime.spawn_named_agent(&agent_id, leader_agent) {
+        Ok(_) => {
+          console::log_1(&format!("🔴 {agent_id} created and started").into());
+          true
+        },
+        Err(e) => {
+          console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+          false
+        },
+      }
+    },
+    AgentType::Follower => {
+      let follower = Follower::new(agent_id.clone(), x, y);
+      let follower_agent = Agent::new(follower).with_handler::<Tick>();
+
+      match runtime.spawn_named_agent(&agent_id, follower_agent) {
+        Ok(_) => {
+          console::log_1(&format!("🔵 {agent_id} created and started").into());
+          true
+        },
+        Err(e) => {
+          console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+          false
+        },
+      }
+    },
+  };
+
+  if success {
+    // Send agent type registration to Canvas
+    runtime.broadcast_message(RegisterAgent { agent_id: agent_id.clone(), agent_type });
+
+    // Send initial position update to Canvas
+    runtime.broadcast_message(UpdatePosition {
+      agent_id: agent_id.clone(),
+      position: Position::new(x, y),
+    });
+
+    // Process all messages
+    runtime.step();
+
+    agent_id
+  } else {
+    String::new()
+  }
+}
+
+/// Test function to manually send UpdatePosition to Canvas
+#[wasm_bindgen]
+pub fn test_update_position(runtime: &mut Runtime, x: f64, y: f64) {
+  console::log_1(&format!("🧪 Testing manual UpdatePosition to Canvas: ({}, {})", x, y).into());
+
+  let test_message =
+    UpdatePosition { agent_id: "TEST_AGENT".to_string(), position: Position::new(x, y) };
+
+  // Send directly to Canvas
+  if let Err(e) = runtime.send_to_agent_by_name("canvas", test_message) {
+    console::log_1(&format!("❌ Failed to send to Canvas: {}", e).into());
+  } else {
+    console::log_1(&"✅ UpdatePosition sent to Canvas".into());
   }
 
-  /// Add an agent at the specified position
-  #[wasm_bindgen(js_name = "addAgent")]
-  pub fn add_simulation_agent(&mut self, x: f64, y: f64, is_leader: bool) -> String {
-    static mut LEADER_COUNT: u32 = 0;
-    static mut FOLLOWER_COUNT: u32 = 0;
-
-    let (agent_id, agent_type) = if is_leader {
-      unsafe {
-        LEADER_COUNT += 1;
-        (format!("Leader {}", LEADER_COUNT), AgentType::Leader)
-      }
-    } else {
-      unsafe {
-        FOLLOWER_COUNT += 1;
-        (format!("Follower {}", FOLLOWER_COUNT), AgentType::Follower)
-      }
-    };
-
-    let success = match &agent_type {
-      AgentType::Leader => {
-        let leader = Leader::new(agent_id.clone(), 800.0, 600.0, x, y);
-        let leader_agent = Agent::new(leader).with_handler::<Tick>();
-
-        match self.spawn_named_agent(&agent_id, leader_agent) {
-          Ok(_) => {
-            console::log_1(&format!("🔴 {agent_id} created and started").into());
-            true
-          },
-          Err(e) => {
-            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-            false
-          },
-        }
-      },
-      AgentType::Follower => {
-        let follower = Follower::new(agent_id.clone(), x, y);
-        let follower_agent = Agent::new(follower).with_handler::<Tick>();
-
-        match self.spawn_named_agent(&agent_id, follower_agent) {
-          Ok(_) => {
-            console::log_1(&format!("🔵 {agent_id} created and started").into());
-            true
-          },
-          Err(e) => {
-            console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-            false
-          },
-        }
-      },
-    };
-
-    if success {
-      // Send agent type registration to Canvas
-      self.broadcast_message(RegisterAgent { agent_id: agent_id.clone(), agent_type });
-
-      // Send initial position update to Canvas
-      self.broadcast_message(UpdatePosition {
-        agent_id: agent_id.clone(),
-        position: Position::new(x, y),
-      });
-
-      // Process all messages
-      self.step();
-
-      agent_id
-    } else {
-      String::new()
-    }
-  }
+  // Process the message
+  let processed = runtime.step();
+  console::log_1(&format!("🔄 Processed {} messages", processed).into());
 }

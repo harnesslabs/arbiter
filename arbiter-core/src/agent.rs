@@ -218,6 +218,9 @@ pub trait RuntimeAgent: Send + Sync {
   fn handlers(&self) -> &HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
   fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
   fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>>;
+
+  /// Access the inner agent as Any for testing and introspection
+  fn inner_as_any(&self) -> &dyn Any;
 }
 
 impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
@@ -291,6 +294,9 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     }
     replies
   }
+
+  /// Access the inner agent as Any for testing and introspection
+  fn inner_as_any(&self) -> &dyn Any { &self.inner }
 }
 
 #[cfg(test)]
