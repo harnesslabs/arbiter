@@ -1,0 +1,55 @@
+[package]
+authors = ["Harness Labs"]
+description = "Interactive Vietoris-Rips Complex Demo using cova"
+edition = "2021"
+name = "leader"
+version = "0.1.0"
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
+
+[workspace]
+
+# Server binary
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[dependencies]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+arbiter-core = { path = "../../arbiter-core", features = ["wasm"] }
+console_error_panic_hook = { version = "0.1" }
+getrandom = { version = "0.2", features = ["js"] }
+gloo-timers = { version = "0.2", features = ["futures"] }
+js-sys = { version = "0.3" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0" }
+wasm-bindgen = { version = "0.2" }
+wasm-bindgen-futures = { version = "0.4" }
+web-sys = { version = "0.3", features = [
+    "console",
+    "CanvasRenderingContext2d",
+    "HtmlCanvasElement",
+    "HtmlInputElement",
+    "MouseEvent",
+    "Element",
+    "Document",
+    "Window",
+    "Event",
+    "EventTarget",
+] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+warp = { version = "0.3" }
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

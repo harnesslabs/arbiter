@@ -8,7 +8,6 @@
 
 /cache/
 /out/
-*.html
 *.csv
 
 .DS_Store
@@ -23,3 +22,5 @@ example_fork/test.json
 
 doctest_cache/
 docs/target/*
+
+examples/leader/target/*

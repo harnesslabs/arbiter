@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>Leader-Follower Simulation | Arbiter-Core</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            color: #1e293b;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 60px;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 40px;
+        }
+
+        .header .brand {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+
+        .header h1 {
+            font-size: 42px;
+            font-weight: 200;
+            color: #0f172a;
+            margin-bottom: 20px;
+            letter-spacing: -0.5px;
+        }
+
+        .header p {
+            font-size: 16px;
+            color: #475569;
+            max-width: 600px;
+            margin: 0 auto;
+            font-weight: 400;
+        }
+
+        .demo-container {
+            display: grid;
+            grid-template-columns: 1fr 340px;
+            gap: 32px;
+            align-items: start;
+        }
+
+        .canvas-container {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        #canvas {
+            display: block;
+            cursor: crosshair;
+            border: none;
+            width: 100%;
+            height: auto;
+        }
+
+        .controls {
+            background: #ffffff;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        .control-group {
+            margin-bottom: 24px;
+        }
+
+        .control-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .control-group h3 {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .instructions {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+        }
+
+        .instructions h4 {
+            margin-bottom: 10px;
+            color: #1e293b;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .instructions ul {
+            list-style: none;
+            color: #64748b;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .instructions li {
+            margin-bottom: 6px;
+            padding-left: 12px;
+            position: relative;
+        }
+
+        .instructions li::before {
+            content: "·";
+            position: absolute;
+            left: 0;
+            color: #94a3b8;
+            font-weight: 600;
+            font-size: 16px;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+            color: #ffffff;
+            border: none;
+            padding: 12px 16px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            width: 100%;
+            box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+        }
+
+        .btn:hover {
+            background: linear-gradient(135deg, #334155 0%, #475569 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn.danger {
+            background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%);
+        }
+
+        .btn.danger:hover {
+            background: linear-gradient(135deg, #b91c1c 0%, #dc2626 100%);
+        }
+
+        .agent-list-container {
+            max-height: 320px;
+            min-height: 320px;
+            overflow-y: auto;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            background: #f8fafc;
+        }
+
+        .agent-list-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .agent-list-container::-webkit-scrollbar-track {
+            background: #f1f5f9;
+            border-radius: 3px;
+        }
+
+        .agent-list-container::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 3px;
+        }
+
+        .agent-list-container::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        .agent-item {
+            background-color: #ffffff;
+            margin: 0;
+            padding: 12px 16px;
+            border-bottom: 1px solid #e2e8f0;
+            transition: all 0.15s ease;
+        }
+
+        .agent-item:last-child {
+            border-bottom: none;
+        }
+
+        .agent-item:hover {
+            background-color: #f8fafc;
+        }
+
+        .agent-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .agent-id {
+            font-weight: 600;
+            color: #1e293b;
+            font-size: 13px;
+        }
+
+        .agent-state {
+            font-size: 10px;
+            padding: 3px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .agent-state.running {
+            background-color: #10b981;
+            color: white;
+        }
+
+        .agent-state.paused {
+            background-color: #f59e0b;
+            color: white;
+        }
+
+        .agent-state.stopped {
+            background-color: #ef4444;
+            color: white;
+        }
+
+        .agent-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            gap: 3px;
+        }
+
+        .agent-btn {
+            padding: 4px 6px;
+            font-size: 9px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .agent-btn.start {
+            background-color: #10b981;
+            color: white;
+        }
+
+        .agent-btn.pause {
+            background-color: #f59e0b;
+            color: white;
+        }
+
+        .agent-btn.stop {
+            background-color: #ef4444;
+            color: white;
+        }
+
+        .agent-btn.remove {
+            background-color: #64748b;
+            color: white;
+        }
+
+        .agent-btn:hover {
+            opacity: 0.8;
+            transform: scale(1.02);
+        }
+
+        .agent-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: #94a3b8;
+            font-style: italic;
+            font-size: 13px;
+            padding: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .demo-container {
+                grid-template-columns: 1fr;
+                gap: 24px;
+            }
+
+            .controls {
+                order: -1;
+            }
+
+            .agent-list-container {
+                max-height: 300px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="brand">Harness Labs</div>
+            <h1>Leader-Follower Simulation</h1>
+            <p>Multi-agent system using Arbiter-Core in WebAssembly</p>
+        </div>
+
+        <div class="demo-container">
+            <div class="canvas-container">
+                <canvas id="canvas" width="1000" height="680"></canvas>
+            </div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <div class="instructions">
+                        <h4>Instructions:</h4>
+                        <ul>
+                            <li><strong>Add Leader:</strong> Click "Add Leader" then click on canvas</li>
+                            <li><strong>Add Followers:</strong> Click "Add Follower" then click on canvas</li>
+                            <li><strong>Leaders:</strong> Move in patterns, change direction periodically</li>
+                            <li><strong>Followers:</strong> Follow the nearest leader</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <button id="addLeaderBtn" class="btn">Add Leader</button>
+                    <button id="addFollowerBtn" class="btn">Add Follower</button>
+                    <button id="clearAllBtn" class="btn danger">Clear All</button>
+                </div>
+
+                <div class="control-group">
+                    <h3>Agent Controls</h3>
+                    <div class="agent-list-container">
+                        <div id="agentList"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, {
+            Runtime,
+            create_leader_follower_simulation,
+            simulation_tick,
+            add_simulation_agent,
+            get_agent_positions,
+            clear_all_agents,
+            remove_single_agent
+        } from './pkg/leader.js';
+
+        // Global state
+        let wasmModule = null;
+        let runtime = null;
+        let placementMode = null;
+        let simulationRunning = false;
+        let lastTickTime = 0;
+        const TICK_INTERVAL = 50; // 20 FPS for simulation, but 60 FPS for rendering
+
+        // Clear canvas and draw background
+        function clearCanvas() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Clear with white background
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Add a subtle grid that covers the FULL canvas
+            ctx.strokeStyle = '#f1f5f9';
+            ctx.lineWidth = 1;
+
+            // Vertical lines - cover full width
+            for (let x = 0; x <= canvas.width; x += 50) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+
+            // Horizontal lines - cover full height  
+            for (let y = 0; y <= canvas.height; y += 50) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+        }
+
+        // Render agents on canvas
+        function renderAgents() {
+            if (!runtime) return;
+
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+
+            // Clear canvas
+            clearCanvas();
+
+            try {
+                // Get agent positions from WASM
+                const positionsJson = get_agent_positions();
+
+                if (!positionsJson || positionsJson === "[]") {
+                    return;
+                }
+
+                const agents = JSON.parse(positionsJson);
+
+                // Render each agent
+                agents.forEach((agent, index) => {
+                    ctx.beginPath();
+                    ctx.arc(agent.x, agent.y, 12, 0, 2 * Math.PI);
+
+                    if (agent.type === 'leader') {
+                        ctx.fillStyle = '#ef4444'; // Red for leaders
+                    } else {
+                        ctx.fillStyle = '#3b82f6'; // Blue for followers
+                    }
+
+                    ctx.fill();
+
+                    // Add white border
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.lineWidth = 3;
+                    ctx.stroke();
+
+                    // Add agent ID text
+                    ctx.fillStyle = '#000000';
+                    ctx.font = 'bold 11px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(agent.id, agent.x, agent.y + 25);
+                });
+
+            } catch (error) {
+                console.error('Rendering error:', error);
+            }
+        }
+
+        // Update agent list in UI
+        function updateAgentList() {
+            if (!runtime) return;
+
+            const agentListContainer = document.getElementById('agentList');
+
+            try {
+                const agentNamesJson = runtime.agentNames();
+                const agentNames = JSON.parse(agentNamesJson);
+
+                if (agentNames.length === 0) {
+                    agentListContainer.innerHTML = '<div class="empty-state">No agents added yet</div>';
+                    return;
+                }
+
+                let html = '';
+                agentNames.forEach(agentName => {
+                    const state = runtime.agentState(agentName);
+                    const stateClass = state.toLowerCase();
+                    const isRunning = state === 'Running';
+                    const isPaused = state === 'Paused';
+                    const isStopped = state === 'Stopped';
+
+                    html += `
+                        <div class="agent-item">
+                            <div class="agent-header">
+                                <span class="agent-id">${agentName}</span>
+                                <span class="agent-state ${stateClass}">${state}</span>
+                            </div>
+                            <div class="agent-controls">
+                                <button class="agent-btn start" onclick="controlAgent('${agentName}', 'start')" ${isRunning ? 'disabled' : ''}>Start</button>
+                                <button class="agent-btn pause" onclick="controlAgent('${agentName}', 'pause')" ${!isRunning ? 'disabled' : ''}>Pause</button>
+                                <button class="agent-btn stop" onclick="controlAgent('${agentName}', 'stop')" ${isStopped ? 'disabled' : ''}>Stop</button>
+                                <button class="agent-btn remove" onclick="controlAgent('${agentName}', 'remove')">Remove</button>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                agentListContainer.innerHTML = html;
+            } catch (error) {
+                console.error('Error updating agent list:', error);
+            }
+        }
+
+        // Agent control function (global for HTML onclick)
+        window.controlAgent = function (agentId, action) {
+            if (!runtime) return;
+
+            try {
+                let success = false;
+                switch (action) {
+                    case 'start':
+                        success = runtime.startAgent(agentId);
+                        break;
+                    case 'pause':
+                        success = runtime.pauseAgent(agentId);
+                        break;
+                    case 'stop':
+                        success = runtime.stopAgent(agentId);
+                        break;
+                    case 'remove':
+                        success = runtime.removeAgent(agentId);
+                        if (success) {
+                            // Also remove from shared state
+                            remove_single_agent(agentId);
+                        }
+                        break;
+                }
+
+                if (success) {
+                    updateAgentList();
+                }
+            } catch (error) {
+                console.error(`Error ${action} agent ${agentId}:`, error);
+            }
+        };
+
+        // Main simulation loop - separated simulation ticking from rendering
+        function simulationLoop(currentTime) {
+            if (!simulationRunning || !runtime) return;
+
+            try {
+                // Only tick simulation at specified interval (20 FPS)
+                if (currentTime - lastTickTime >= TICK_INTERVAL) {
+                    simulation_tick(runtime);
+                    lastTickTime = currentTime;
+                }
+
+                // Always render at 60 FPS for smooth visuals
+                renderAgents();
+
+                // Update agent list less frequently
+                if (Math.random() < 0.02) { // 2% chance each frame ≈ once per second
+                    updateAgentList();
+                }
+
+            } catch (error) {
+                console.error('Simulation loop error:', error.message);
+            }
+
+            // Continue loop
+            requestAnimationFrame(simulationLoop);
+        }
+
+        // Initialize WASM and start simulation
+        async function initialize() {
+            try {
+                console.log("Initializing WASM module...");
+                wasmModule = await init();
+                console.log("WASM module loaded successfully");
+
+                // Create runtime
+                runtime = create_leader_follower_simulation(1000, 680);
+                console.log("Runtime created");
+
+                // Set up event listeners
+                setupEventListeners();
+                console.log("Event listeners set up");
+
+                // Start simulation loop
+                simulationRunning = true;
+                console.log("Starting simulation loop");
+                requestAnimationFrame(simulationLoop);
+
+                console.log("Initialization complete!");
+
+            } catch (error) {
+                console.error('Initialization failed:', error);
+            }
+        }
+
+        // Set up event listeners
+        function setupEventListeners() {
+            const canvas = document.getElementById('canvas');
+            const addLeaderBtn = document.getElementById('addLeaderBtn');
+            const addFollowerBtn = document.getElementById('addFollowerBtn');
+            const clearAllBtn = document.getElementById('clearAllBtn');
+
+            // Canvas click handler
+            canvas.addEventListener('click', (event) => {
+                if (!runtime || !placementMode) return;
+
+                const rect = canvas.getBoundingClientRect();
+                const x = event.clientX - rect.left;
+                const y = event.clientY - rect.top;
+
+                try {
+                    const isLeader = placementMode === 'leader';
+                    const agentId = add_simulation_agent(runtime, x, y, isLeader);
+
+                    if (agentId) {
+                        console.log(`Added ${isLeader ? 'leader' : 'follower'} "${agentId}" at (${x}, ${y})`);
+                        placementMode = null;
+                        updateButtonStates();
+                        updateAgentList();
+                    } else {
+                        console.log(`Failed to add ${isLeader ? 'leader' : 'follower'} at (${x}, ${y})`);
+                    }
+                } catch (error) {
+                    console.error('Error adding agent:', error.message);
+                }
+            });
+
+            // Button handlers
+            addLeaderBtn.addEventListener('click', () => {
+                placementMode = 'leader';
+                updateButtonStates();
+                console.log("Leader placement mode activated");
+            });
+
+            addFollowerBtn.addEventListener('click', () => {
+                placementMode = 'follower';
+                updateButtonStates();
+                console.log("Follower placement mode activated");
+            });
+
+            clearAllBtn.addEventListener('click', () => {
+                if (!runtime) return;
+
+                try {
+                    // Remove all agents from runtime
+                    const removed = runtime.removeAllAgents();
+
+                    // Clear shared state and reset counters  
+                    clear_all_agents();
+
+                    console.log(`Cleared ${removed} agents and reset state`);
+                    placementMode = null;
+                    updateButtonStates();
+                    updateAgentList();
+                } catch (error) {
+                    console.error('Error clearing agents:', error.message);
+                }
+            });
+        }
+
+        // Update button states
+        function updateButtonStates() {
+            const addLeaderBtn = document.getElementById('addLeaderBtn');
+            const addFollowerBtn = document.getElementById('addFollowerBtn');
+
+            if (placementMode === 'leader') {
+                addLeaderBtn.textContent = 'Click Canvas';
+                addLeaderBtn.style.background = '#10b981';
+            } else {
+                addLeaderBtn.textContent = 'Add Leader';
+                addLeaderBtn.style.background = '';
+            }
+
+            if (placementMode === 'follower') {
+                addFollowerBtn.textContent = 'Click Canvas';
+                addFollowerBtn.style.background = '#10b981';
+            } else {
+                addFollowerBtn.textContent = 'Add Follower';
+                addFollowerBtn.style.background = '';
+            }
+        }
+
+        // Start the application
+        initialize().catch(console.error);
+    </script>
+</body>
+
+</html>
