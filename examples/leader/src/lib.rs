@@ -268,12 +268,21 @@ pub fn get_agent_positions() -> String {
   }
 }
 
+// Global canvas height and width
+static mut CANVAS_HEIGHT: f64 = 0.0;
+static mut CANVAS_WIDTH: f64 = 0.0;
+
 /// Initialize the leader-follower simulation with shared state
 #[wasm_bindgen]
-pub fn create_leader_follower_simulation(_canvas_width: f64, _canvas_height: f64) -> Runtime {
+pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) -> Runtime {
   console_error_panic_hook::set_once();
 
   let runtime = Runtime::new();
+
+  unsafe {
+    CANVAS_WIDTH = canvas_width;
+    CANVAS_HEIGHT = canvas_height;
+  }
 
   // Initialize shared state
   let _shared_state = get_shared_agent_state();
@@ -338,18 +347,20 @@ pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bo
   };
 
   let success = if is_leader {
-    let leader = Leader::new(agent_id.clone(), 1000.0, 680.0, x, y);
-    let leader_agent = Agent::new(leader).with_handler::<Tick>();
+    unsafe {
+      let leader = Leader::new(agent_id.clone(), CANVAS_WIDTH, CANVAS_HEIGHT, x, y);
+      let leader_agent = Agent::new(leader).with_handler::<Tick>();
 
-    match runtime.spawn_named_agent(&agent_id, leader_agent) {
-      Ok(_) => {
-        console::log_1(&format!("🔴 {agent_id} created and started").into());
-        true
-      },
-      Err(e) => {
-        console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-        false
-      },
+      match runtime.spawn_named_agent(&agent_id, leader_agent) {
+        Ok(_) => {
+          console::log_1(&format!("🔴 {agent_id} created and started").into());
+          true
+        },
+        Err(e) => {
+          console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+          false
+        },
+      }
     }
   } else {
     let follower = Follower::new(agent_id.clone(), x, y);
