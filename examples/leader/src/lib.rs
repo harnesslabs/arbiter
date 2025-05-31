@@ -494,8 +494,7 @@ pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) 
     .with_handler::<Tick>();
 
   // Register and start the canvas agent
-  runtime.register_named_agent("canvas", canvas_agent).unwrap();
-  runtime.start_agent_by_name("canvas").unwrap();
+  runtime.spawn_named_agent("canvas", canvas_agent).unwrap();
 
   console::log_1(&"🎨 Canvas initialized and started".into());
 
