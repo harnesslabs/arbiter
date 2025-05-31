@@ -122,7 +122,7 @@ impl Leader {
     let mut new_pos = Position::new(self.position.x + dx, self.position.y + dy);
 
     // Bounce off walls
-    let margin = 20.0;
+    let margin = 10.0;
     if new_pos.x < margin || new_pos.x > self.canvas_width - margin {
       self.current_direction = std::f64::consts::PI - self.current_direction;
       new_pos.x = new_pos.x.max(margin).min(self.canvas_width - margin);
@@ -292,6 +292,16 @@ pub fn simulation_tick(runtime: &mut Runtime) {
   runtime.run();
 }
 
+/// Remove a single agent from shared state
+#[wasm_bindgen]
+pub fn remove_single_agent(agent_id: &str) {
+  if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+    if shared_agents.remove(agent_id).is_some() {
+      console::log_1(&format!("🗑️ Removed {} from shared state", agent_id).into());
+    }
+  }
+}
+
 /// Clear all agents from shared state and reset counters
 #[wasm_bindgen]
 pub fn clear_all_agents() {
@@ -328,7 +338,7 @@ pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bo
   };
 
   let success = if is_leader {
-    let leader = Leader::new(agent_id.clone(), 800.0, 600.0, x, y);
+    let leader = Leader::new(agent_id.clone(), 1000.0, 680.0, x, y);
     let leader_agent = Agent::new(leader).with_handler::<Tick>();
 
     match runtime.spawn_named_agent(&agent_id, leader_agent) {
