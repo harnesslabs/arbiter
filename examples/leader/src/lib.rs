@@ -122,14 +122,6 @@ impl Handler<UpdatePosition> for Canvas {
   type Reply = ();
 
   fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
-    console::log_1(
-      &format!(
-        "🎨 Canvas received UpdatePosition: {} at ({}, {})",
-        message.agent_id, message.position.x, message.position.y
-      )
-      .into(),
-    );
-
     // Update both local and shared state
     self
       .agents
@@ -138,9 +130,6 @@ impl Handler<UpdatePosition> for Canvas {
     // Write to shared state that JavaScript can access
     if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
       shared_agents.insert(message.agent_id, (message.agent_type, message.position));
-      console::log_1(
-        &format!("🎨 Canvas updated shared state with {} agents", shared_agents.len()).into(),
-      );
     }
   }
 }
@@ -224,43 +213,18 @@ impl Handler<Tick> for Leader {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
-    console::log_1(
-      &format!(
-        "🔴 {} handling Tick, current pos: ({}, {})",
-        self.id, self.position.x, self.position.y
-      )
-      .into(),
-    );
-
     self.move_agent();
 
     // Write directly to shared state
     if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
       shared_agents.insert(self.id.clone(), ("leader".to_string(), self.position.clone()));
-      console::log_1(
-        &format!(
-          "🔴 {} wrote directly to shared state at ({}, {})",
-          self.id, self.position.x, self.position.y
-        )
-        .into(),
-      );
     }
 
-    let update = UpdatePosition {
+    UpdatePosition {
       agent_id:   self.id.clone(),
       position:   self.position.clone(),
       agent_type: "leader".to_string(),
-    };
-
-    console::log_1(
-      &format!(
-        "🔴 {} moved to ({}, {}) - returning UpdatePosition",
-        self.id, self.position.x, self.position.y
-      )
-      .into(),
-    );
-
-    update
+    }
   }
 }
 
@@ -299,51 +263,23 @@ impl Follower {
 
     for (leader_id, leader_pos) in &self.leader_positions {
       let distance = self.position.distance_to(leader_pos);
-      console::log_1(&format!("🔵 {} distance to {}: {:.1}", self.id, leader_id, distance).into());
       if distance < closest_distance {
         closest_distance = distance;
         closest_leader = Some(leader_id.clone());
       }
     }
 
-    self.target_leader_id = closest_leader.clone();
-    if let Some(target) = &closest_leader {
-      console::log_1(
-        &format!("🔵 {} targeting leader {} (distance: {:.1})", self.id, target, closest_distance)
-          .into(),
-      );
-    }
+    self.target_leader_id = closest_leader;
   }
 
   fn follow_target(&mut self) {
     if let Some(target_id) = &self.target_leader_id {
       if let Some(leader_pos) = self.leader_positions.get(target_id) {
         let distance = self.position.distance_to(leader_pos);
-        console::log_1(
-          &format!(
-            "🔵 {} following {} - distance: {:.1}, follow_distance: {:.1}",
-            self.id, target_id, distance, self.follow_distance
-          )
-          .into(),
-        );
         if distance > self.follow_distance {
-          let old_pos = self.position.clone();
           self.position.move_towards(leader_pos, self.speed);
-          console::log_1(
-            &format!(
-              "🔵 {} moved from ({:.1}, {:.1}) to ({:.1}, {:.1})",
-              self.id, old_pos.x, old_pos.y, self.position.x, self.position.y
-            )
-            .into(),
-          );
-        } else {
-          console::log_1(
-            &format!("🔵 {} close enough to {} - not moving", self.id, target_id).into(),
-          );
         }
       }
-    } else {
-      console::log_1(&format!("🔵 {} has no target leader", self.id).into());
     }
   }
 }
@@ -371,13 +307,6 @@ impl Handler<Tick> for Follower {
       for (agent_id, (agent_type, position)) in shared_agents.iter() {
         if agent_type == "leader" {
           self.leader_positions.insert(agent_id.clone(), position.clone());
-          console::log_1(
-            &format!(
-              "🔵 {} found leader {} at ({}, {})",
-              self.id, agent_id, position.x, position.y
-            )
-            .into(),
-          );
         }
       }
     }
@@ -389,13 +318,6 @@ impl Handler<Tick> for Follower {
     // Write directly to shared state
     if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
       shared_agents.insert(self.id.clone(), ("follower".to_string(), self.position.clone()));
-      console::log_1(
-        &format!(
-          "🔵 {} wrote directly to shared state at ({}, {})",
-          self.id, self.position.x, self.position.y
-        )
-        .into(),
-      );
     }
 
     UpdatePosition {
@@ -427,7 +349,6 @@ pub fn get_agent_positions() -> String {
       }
 
       agents_json.push(']');
-      console::log_1(&format!("📊 get_agent_positions returning: {}", agents_json).into());
       agents_json
     },
     Err(_) => {
@@ -455,18 +376,11 @@ pub fn create_leader_follower_simulation(_canvas_width: f64, _canvas_height: f64
 #[wasm_bindgen]
 pub fn simulation_tick(runtime: &mut Runtime) {
   // Broadcast Tick to all agents
-  let delivered = runtime.broadcast_message(Tick { leader_positions: Vec::new() });
-  console::log_1(&format!("📡 Broadcast Tick to {} agents", delivered).into());
+  runtime.broadcast_message(Tick { leader_positions: Vec::new() });
 
-  let processed1 = runtime.step(); // Process Tick messages, agents move and return UpdatePosition
-  console::log_1(
-    &format!("⚡ Step 1: processed {} messages, generated {} replies", processed1, processed1)
-      .into(),
-  );
-
-  // Simple approach: process any remaining messages
-  let processed2 = runtime.step();
-  console::log_1(&format!("⚡ Step 2: processed {} messages", processed2).into());
+  // Process tick messages and any resulting updates
+  runtime.step();
+  runtime.step();
 }
 
 /// Add an agent at the specified position  
