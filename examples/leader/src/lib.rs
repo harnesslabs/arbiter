@@ -5,21 +5,24 @@
 
 #![cfg(target_arch = "wasm32")]
 
-use std::collections::HashMap;
+use std::{
+  collections::HashMap,
+  sync::{Arc, Mutex, OnceLock},
+};
 
 use arbiter_core::{
   agent::{Agent, LifeCycle},
   handler::Handler,
   runtime::Runtime,
 };
-use serde::{Deserialize, Serialize};
+use serde_json;
 use wasm_bindgen::prelude::*;
-use web_sys::{console, CanvasRenderingContext2d, HtmlCanvasElement};
+use web_sys::console;
 
 // Enable better error messages in debug mode
 extern crate console_error_panic_hook;
 
-/// Generate a pseudo-random number between 0 and 1
+/// Simple PRNG for WASM compatibility
 fn random() -> f64 {
   static mut SEED: u32 = 12345;
   unsafe {
@@ -29,7 +32,7 @@ fn random() -> f64 {
 }
 
 /// Position in 2D space
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug)]
 pub struct Position {
   pub x: f64,
   pub y: f64,
@@ -55,173 +58,61 @@ impl Position {
   }
 }
 
-/// Agent types in our simulation
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum AgentType {
-  Leader,
-  Follower,
-}
-
-/// Message to update agent position
-#[derive(Clone, Debug)]
-pub struct UpdatePosition {
-  pub agent_id: String,
-  pub position: Position,
-}
-
-/// Message to tick the simulation (move agents) - enriched with leader positions
+/// Message to tick all agents (contains leader positions for followers)
 #[derive(Clone, Debug)]
 pub struct Tick {
   pub leader_positions: Vec<(String, Position)>,
 }
 
-/// Message to register an agent type with canvas
+/// Message to update agent position (sent to Canvas for data storage)
 #[derive(Clone, Debug)]
-pub struct RegisterAgent {
+pub struct UpdatePosition {
   pub agent_id:   String,
-  pub agent_type: AgentType,
+  pub position:   Position,
+  pub agent_type: String, // "leader" or "follower"
 }
 
-/// Message to remove an agent from canvas tracking
-#[derive(Clone, Debug)]
-pub struct RemoveAgent {
-  pub agent_id: String,
+// Global shared state accessible from both Rust and JavaScript
+static SHARED_AGENT_STATE: OnceLock<Arc<Mutex<HashMap<String, (String, Position)>>>> =
+  OnceLock::new();
+
+fn get_shared_agent_state() -> &'static Arc<Mutex<HashMap<String, (String, Position)>>> {
+  SHARED_AGENT_STATE.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
 }
 
-/// Message to clear all agents from canvas tracking
-#[derive(Clone, Debug)]
-pub struct ClearAllAgents;
-
-/// Message containing leader positions for followers
-#[derive(Clone, Debug)]
-pub struct LeaderPositions {
-  pub positions: Vec<(String, Position)>,
-}
-
-/// Canvas agent that manages world state and rendering
+/// Simple Canvas agent that writes to shared state
 #[derive(Clone)]
 pub struct Canvas {
-  pub canvas_width:  f64,
-  pub canvas_height: f64,
-  pub agents:        HashMap<String, (AgentType, Position)>,
-}
-
-fn get_canvas_context() -> Option<CanvasRenderingContext2d> {
-  let window = web_sys::window()?;
-  let document = window.document()?;
-  let canvas = document.get_element_by_id("canvas")?;
-  let canvas: web_sys::HtmlCanvasElement = canvas.dyn_into().ok()?;
-  let context = canvas.get_context("2d").ok()??;
-  let context: web_sys::CanvasRenderingContext2d = context.dyn_into().ok()?;
-  Some(context)
+  pub agents: HashMap<String, (String, Position)>, // Local copy for compatibility
 }
 
 impl Canvas {
-  pub fn new(canvas_width: f64, canvas_height: f64) -> Self {
-    Self { canvas_width, canvas_height, agents: HashMap::new() }
-  }
+  pub fn new() -> Self { Self { agents: HashMap::new() } }
 
-  fn render(&self) {
-    let render_id = random() * 1000.0;
-    console::log_1(
-      &format!("🎨 [Render {}] Canvas rendering {} agents", render_id as u32, self.agents.len())
-        .into(),
-    );
+  pub fn get_agent_data(&self) -> String {
+    // Read from shared state instead of local state
+    match get_shared_agent_state().lock() {
+      Ok(shared_agents) => {
+        let mut agents_json = String::from("[");
+        let mut first = true;
 
-    let context = match get_canvas_context() {
-      Some(ctx) => {
-        console::log_1(
-          &format!("✅ [Render {}] Successfully got canvas context", render_id as u32).into(),
-        );
-        ctx
-      },
-      None => {
-        console::log_1(
-          &format!("❌ [Render {}] Failed to get canvas context", render_id as u32).into(),
-        );
-        return;
-      },
-    };
+        for (agent_id, (agent_type, position)) in shared_agents.iter() {
+          if !first {
+            agents_json.push(',');
+          }
+          first = false;
 
-    // Clear canvas with white background
-    console::log_1(&format!("🧹 [Render {}] Clearing canvas...", render_id as u32).into());
-    context.set_fill_style(&wasm_bindgen::JsValue::from_str("#ffffff")); // Clean white background
-    context.fill_rect(0.0, 0.0, self.canvas_width, self.canvas_height);
-    console::log_1(
-      &format!("✅ [Render {}] Canvas cleared with white background", render_id as u32).into(),
-    );
-
-    // Log all current agents before drawing
-    console::log_1(&format!("📍 [Render {}] Current agents:", render_id as u32).into());
-    for (agent_id, (agent_type, position)) in &self.agents {
-      console::log_1(
-        &format!("    {} -> {:?} at ({:.2}, {:.2})", agent_id, agent_type, position.x, position.y)
-          .into(),
-      );
-    }
-
-    // Draw actual agents
-    console::log_1(
-      &format!("🎯 [Render {}] Drawing {} agents", render_id as u32, self.agents.len()).into(),
-    );
-    for (agent_id, (agent_type, position)) in &self.agents {
-      console::log_1(
-        &format!(
-          "  🎯 [Render {}] Drawing {} at ({:.2}, {:.2})",
-          render_id as u32, agent_id, position.x, position.y
-        )
-        .into(),
-      );
-
-      match agent_type {
-        AgentType::Leader => {
-          // Draw leader as red circle
-          context.set_fill_style(&wasm_bindgen::JsValue::from_str("#dc2626"));
-          context.begin_path();
-          context.arc(position.x, position.y, 12.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
-          context.fill();
-          console::log_1(
-            &format!(
-              "  ✅ [Render {}] Leader {} drawn at ({:.2}, {:.2})",
-              render_id as u32, agent_id, position.x, position.y
-            )
-            .into(),
-          );
-        },
-        AgentType::Follower => {
-          // Draw follower as blue circle
-          context.set_fill_style(&wasm_bindgen::JsValue::from_str("#2563eb"));
-          context.begin_path();
-          context.arc(position.x, position.y, 8.0, 0.0, 2.0 * std::f64::consts::PI).unwrap();
-          context.fill();
-          console::log_1(
-            &format!(
-              "  ✅ [Render {}] Follower {} drawn at ({:.2}, {:.2})",
-              render_id as u32, agent_id, position.x, position.y
-            )
-            .into(),
-          );
-        },
-      }
-    }
-
-    console::log_1(&format!("🎨 [Render {}] Render complete!", render_id as u32).into());
-  }
-
-  fn get_leader_positions(&self) -> Vec<(String, Position)> {
-    let leaders: Vec<(String, Position)> = self
-      .agents
-      .iter()
-      .filter_map(|(id, (agent_type, position))| {
-        if matches!(agent_type, AgentType::Leader) {
-          Some((id.clone(), position.clone()))
-        } else {
-          None
+          agents_json.push_str(&format!(
+            r#"{{"id":"{}","type":"{}","x":{},"y":{}}}"#,
+            agent_id, agent_type, position.x, position.y
+          ));
         }
-      })
-      .collect();
 
-    leaders
+        agents_json.push(']');
+        agents_json
+      },
+      Err(_) => "[]".to_string(),
+    }
   }
 }
 
@@ -233,83 +124,24 @@ impl Handler<UpdatePosition> for Canvas {
   fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
     console::log_1(
       &format!(
-        "🎨 Canvas received position update for {}: ({}, {})",
+        "🎨 Canvas received UpdatePosition: {} at ({}, {})",
         message.agent_id, message.position.x, message.position.y
       )
       .into(),
     );
 
-    // Update position while preserving agent type
-    if let Some((agent_type, _)) = self.agents.get(&message.agent_id) {
-      let agent_type = agent_type.clone();
-      self.agents.insert(message.agent_id.clone(), (agent_type, message.position));
+    // Update both local and shared state
+    self
+      .agents
+      .insert(message.agent_id.clone(), (message.agent_type.clone(), message.position.clone()));
+
+    // Write to shared state that JavaScript can access
+    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+      shared_agents.insert(message.agent_id, (message.agent_type, message.position));
       console::log_1(
-        &format!("🎨 Updated position for existing agent {}", message.agent_id).into(),
-      );
-    } else {
-      console::log_1(
-        &format!("⚠️ Received position update for unknown agent {}", message.agent_id).into(),
+        &format!("🎨 Canvas updated shared state with {} agents", shared_agents.len()).into(),
       );
     }
-
-    console::log_1(&format!("🎨 Canvas now has {} agents", self.agents.len()).into());
-    self.render();
-  }
-}
-
-impl Handler<RegisterAgent> for Canvas {
-  type Reply = ();
-
-  fn handle(&mut self, message: RegisterAgent) -> Self::Reply {
-    console::log_1(
-      &format!("🎨 Canvas registering agent {} as {:?}", message.agent_id, message.agent_type)
-        .into(),
-    );
-
-    // Register agent with default position (will be updated later)
-    let default_position = Position::new(0.0, 0.0);
-    self.agents.insert(message.agent_id, (message.agent_type, default_position));
-    console::log_1(
-      &format!("🎨 Canvas now has {} agents after registration", self.agents.len()).into(),
-    );
-    self.render();
-  }
-}
-
-impl Handler<RemoveAgent> for Canvas {
-  type Reply = ();
-
-  fn handle(&mut self, message: RemoveAgent) -> Self::Reply {
-    console::log_1(&format!("🎨 Canvas removing agent {}", message.agent_id).into());
-    self.agents.remove(&message.agent_id);
-    console::log_1(&format!("🎨 Canvas now has {} agents after removal", self.agents.len()).into());
-    self.render();
-  }
-}
-
-impl Handler<ClearAllAgents> for Canvas {
-  type Reply = ();
-
-  fn handle(&mut self, _message: ClearAllAgents) -> Self::Reply {
-    console::log_1(&"🎨 Canvas clearing all agents".into());
-
-    // Clear all agent data
-    self.agents.clear();
-
-    console::log_1(&format!("🎨 Canvas cleared - {} agents remain", self.agents.len()).into());
-
-    // Re-render to show empty canvas
-    self.render();
-  }
-}
-
-impl Handler<Tick> for Canvas {
-  type Reply = Tick;
-
-  fn handle(&mut self, message: Tick) -> Self::Reply {
-    console::log_1(&"🎨 Canvas received tick, rendering and getting leader positions".into());
-    self.render();
-    Tick { leader_positions: self.get_leader_positions() }
   }
 }
 
@@ -353,7 +185,7 @@ impl Leader {
     if self.direction_steps >= self.max_direction_steps {
       let direction_change = (random() - 0.5) * 0.5;
       self.current_direction += direction_change;
-      self.current_direction %= (2.0 * std::f64::consts::PI);
+      self.current_direction %= 2.0 * std::f64::consts::PI;
       self.direction_steps = 0;
       self.max_direction_steps = 100 + (random() * 100.0) as u32;
     }
@@ -392,17 +224,43 @@ impl Handler<Tick> for Leader {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
-    console::log_1(&format!("🔴 {} received tick", self.id).into());
-    self.move_agent();
-    let reply = UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() };
     console::log_1(
       &format!(
-        "🔴 {} generating UpdatePosition reply: ({}, {})",
-        self.id, reply.position.x, reply.position.y
+        "🔴 {} handling Tick, current pos: ({}, {})",
+        self.id, self.position.x, self.position.y
       )
       .into(),
     );
-    reply
+
+    self.move_agent();
+
+    // Write directly to shared state
+    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+      shared_agents.insert(self.id.clone(), ("leader".to_string(), self.position.clone()));
+      console::log_1(
+        &format!(
+          "🔴 {} wrote directly to shared state at ({}, {})",
+          self.id, self.position.x, self.position.y
+        )
+        .into(),
+      );
+    }
+
+    let update = UpdatePosition {
+      agent_id:   self.id.clone(),
+      position:   self.position.clone(),
+      agent_type: "leader".to_string(),
+    };
+
+    console::log_1(
+      &format!(
+        "🔴 {} moved to ({}, {}) - returning UpdatePosition",
+        self.id, self.position.x, self.position.y
+      )
+      .into(),
+    );
+
+    update
   }
 }
 
@@ -414,21 +272,23 @@ pub struct Follower {
   pub speed:            f64,
   pub follow_distance:  f64,
   pub target_leader_id: Option<String>,
+  pub leader_positions: HashMap<String, Position>, // Store leader positions
 }
 
 impl Follower {
-  pub const fn new(id: String, x: f64, y: f64) -> Self {
+  pub fn new(id: String, x: f64, y: f64) -> Self {
     Self {
       id,
       position: Position::new(x, y),
       speed: 0.3,
       follow_distance: 50.0,
       target_leader_id: None,
+      leader_positions: HashMap::new(),
     }
   }
 
-  fn find_closest_leader(&mut self, leader_positions: &[(String, Position)]) {
-    if leader_positions.is_empty() {
+  fn find_closest_leader(&mut self) {
+    if self.leader_positions.is_empty() {
       self.target_leader_id = None;
       return;
     }
@@ -436,7 +296,7 @@ impl Follower {
     let mut closest_distance = f64::INFINITY;
     let mut closest_leader = None;
 
-    for (leader_id, leader_pos) in leader_positions {
+    for (leader_id, leader_pos) in &self.leader_positions {
       let distance = self.position.distance_to(leader_pos);
       if distance < closest_distance {
         closest_distance = distance;
@@ -447,16 +307,12 @@ impl Follower {
     self.target_leader_id = closest_leader;
   }
 
-  fn follow_target(&mut self, leader_positions: &[(String, Position)]) {
+  fn follow_target(&mut self) {
     if let Some(target_id) = &self.target_leader_id {
-      for (leader_id, leader_pos) in leader_positions {
-        if leader_id == target_id {
-          let distance = self.position.distance_to(leader_pos);
-
-          if distance > self.follow_distance {
-            self.position.move_towards(leader_pos, self.speed);
-          }
-          break;
+      if let Some(leader_pos) = self.leader_positions.get(target_id) {
+        let distance = self.position.distance_to(leader_pos);
+        if distance > self.follow_distance {
+          self.position.move_towards(leader_pos, self.speed);
         }
       }
     }
@@ -465,42 +321,86 @@ impl Follower {
 
 impl LifeCycle for Follower {}
 
-impl Handler<Tick> for Follower {
-  type Reply = UpdatePosition;
+impl Handler<UpdatePosition> for Follower {
+  type Reply = ();
 
-  fn handle(&mut self, message: Tick) -> Self::Reply {
-    console::log_1(&format!("🔵 {} received tick", self.id).into());
-    self.find_closest_leader(&message.leader_positions);
-    self.follow_target(&message.leader_positions);
-
-    UpdatePosition { agent_id: self.id.clone(), position: self.position.clone() }
+  fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
+    // Store leader positions when we receive UpdatePosition messages
+    if message.agent_type == "leader" {
+      self.leader_positions.insert(message.agent_id, message.position);
+    }
   }
 }
 
-/// Initialize the leader-follower simulation
+impl Handler<Tick> for Follower {
+  type Reply = UpdatePosition;
+
+  fn handle(&mut self, _message: Tick) -> Self::Reply {
+    // Use stored leader positions to follow
+    self.find_closest_leader();
+    self.follow_target();
+
+    // Write directly to shared state
+    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+      shared_agents.insert(self.id.clone(), ("follower".to_string(), self.position.clone()));
+      console::log_1(
+        &format!(
+          "🔵 {} wrote directly to shared state at ({}, {})",
+          self.id, self.position.x, self.position.y
+        )
+        .into(),
+      );
+    }
+
+    UpdatePosition {
+      agent_id:   self.id.clone(),
+      position:   self.position.clone(),
+      agent_type: "follower".to_string(),
+    }
+  }
+}
+
+/// Get all agent positions for rendering (called from JavaScript)
 #[wasm_bindgen]
-pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) -> Runtime {
+pub fn get_agent_positions() -> String {
+  match get_shared_agent_state().lock() {
+    Ok(shared_agents) => {
+      let mut agents_json = String::from("[");
+      let mut first = true;
+
+      for (agent_id, (agent_type, position)) in shared_agents.iter() {
+        if !first {
+          agents_json.push(',');
+        }
+        first = false;
+
+        agents_json.push_str(&format!(
+          r#"{{"id":"{}","type":"{}","x":{},"y":{}}}"#,
+          agent_id, agent_type, position.x, position.y
+        ));
+      }
+
+      agents_json.push(']');
+      console::log_1(&format!("📊 get_agent_positions returning: {}", agents_json).into());
+      agents_json
+    },
+    Err(_) => {
+      console::log_1(&"❌ Failed to lock shared agent state".into());
+      "[]".to_string()
+    },
+  }
+}
+
+/// Initialize the leader-follower simulation with shared state
+#[wasm_bindgen]
+pub fn create_leader_follower_simulation(_canvas_width: f64, _canvas_height: f64) -> Runtime {
   console_error_panic_hook::set_once();
 
-  let mut runtime = Runtime::new();
+  let runtime = Runtime::new();
 
-  // Create and register Canvas agent with all its handlers
-  let canvas = Canvas::new(canvas_width, canvas_height);
-  let canvas_agent = Agent::new(canvas)
-    .with_handler::<UpdatePosition>()
-    .with_handler::<RegisterAgent>()
-    .with_handler::<RemoveAgent>()
-    .with_handler::<ClearAllAgents>()
-    .with_handler::<Tick>();
-
-  // Register and start the canvas agent
-  runtime.spawn_named_agent("canvas", canvas_agent).unwrap();
-
-  console::log_1(&"🎨 Canvas initialized and started".into());
-
-  // Send initial tick to set up the system
-  runtime.broadcast_message(Tick { leader_positions: Vec::new() });
-  runtime.step();
+  // Initialize shared state
+  let _shared_state = get_shared_agent_state();
+  console::log_1(&"🎨 Shared agent state initialized".into());
 
   runtime
 }
@@ -508,100 +408,73 @@ pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) 
 /// Step the simulation forward by one tick
 #[wasm_bindgen]
 pub fn simulation_tick(runtime: &mut Runtime) {
+  // Broadcast Tick to all agents
+  let delivered = runtime.broadcast_message(Tick { leader_positions: Vec::new() });
+  console::log_1(&format!("📡 Broadcast Tick to {} agents", delivered).into());
+
+  let processed1 = runtime.step(); // Process Tick messages, agents move and return UpdatePosition
   console::log_1(
-    &format!("=== Starting simulation tick, agent count: {} ===", runtime.agent_count()).into(),
+    &format!("⚡ Step 1: processed {} messages, generated {} replies", processed1, processed1)
+      .into(),
   );
 
-  runtime.step();
+  // Simple approach: process any remaining messages
+  let processed2 = runtime.step();
+  console::log_1(&format!("⚡ Step 2: processed {} messages", processed2).into());
 }
 
-/// Add an agent at the specified position
+/// Add an agent at the specified position  
 #[wasm_bindgen]
 pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bool) -> String {
   static mut LEADER_COUNT: u32 = 0;
   static mut FOLLOWER_COUNT: u32 = 0;
 
-  let (agent_id, agent_type) = if is_leader {
+  let agent_id = if is_leader {
     unsafe {
       LEADER_COUNT += 1;
-      (format!("Leader {LEADER_COUNT}"), AgentType::Leader)
+      format!("Leader {LEADER_COUNT}")
     }
   } else {
     unsafe {
       FOLLOWER_COUNT += 1;
-      (format!("Follower {FOLLOWER_COUNT}"), AgentType::Follower)
+      format!("Follower {FOLLOWER_COUNT}")
     }
   };
 
-  let success = match &agent_type {
-    AgentType::Leader => {
-      let leader = Leader::new(agent_id.clone(), 800.0, 600.0, x, y);
-      let leader_agent = Agent::new(leader).with_handler::<Tick>();
+  let success = if is_leader {
+    let leader = Leader::new(agent_id.clone(), 800.0, 600.0, x, y);
+    let leader_agent = Agent::new(leader).with_handler::<Tick>();
 
-      match runtime.spawn_named_agent(&agent_id, leader_agent) {
-        Ok(_) => {
-          console::log_1(&format!("🔴 {agent_id} created and started").into());
-          true
-        },
-        Err(e) => {
-          console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-          false
-        },
-      }
-    },
-    AgentType::Follower => {
-      let follower = Follower::new(agent_id.clone(), x, y);
-      let follower_agent = Agent::new(follower).with_handler::<Tick>();
+    match runtime.spawn_named_agent(&agent_id, leader_agent) {
+      Ok(_) => {
+        console::log_1(&format!("🔴 {agent_id} created and started").into());
+        true
+      },
+      Err(e) => {
+        console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+        false
+      },
+    }
+  } else {
+    let follower = Follower::new(agent_id.clone(), x, y);
+    let follower_agent =
+      Agent::new(follower).with_handler::<Tick>().with_handler::<UpdatePosition>();
 
-      match runtime.spawn_named_agent(&agent_id, follower_agent) {
-        Ok(_) => {
-          console::log_1(&format!("🔵 {agent_id} created and started").into());
-          true
-        },
-        Err(e) => {
-          console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-          false
-        },
-      }
-    },
+    match runtime.spawn_named_agent(&agent_id, follower_agent) {
+      Ok(_) => {
+        console::log_1(&format!("🔵 {agent_id} created and started").into());
+        true
+      },
+      Err(e) => {
+        console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
+        false
+      },
+    }
   };
 
   if success {
-    // Send agent type registration to Canvas
-    runtime.broadcast_message(RegisterAgent { agent_id: agent_id.clone(), agent_type });
-
     agent_id
   } else {
     String::new()
   }
-}
-
-/// Test function to manually send UpdatePosition to Canvas
-#[wasm_bindgen]
-pub fn test_update_position(runtime: &mut Runtime, x: f64, y: f64) {
-  console::log_1(&format!("🧪 Testing manual UpdatePosition to Canvas: ({}, {})", x, y).into());
-
-  // First register the test agent as a Leader
-  let register_message =
-    RegisterAgent { agent_id: "TEST_AGENT".to_string(), agent_type: AgentType::Leader };
-
-  if let Err(e) = runtime.send_to_agent_by_name("canvas", register_message) {
-    console::log_1(&format!("❌ Failed to register TEST_AGENT: {}", e).into());
-  } else {
-    console::log_1(&"✅ RegisterAgent sent to Canvas".into());
-  }
-
-  // Then send the position update
-  let test_message =
-    UpdatePosition { agent_id: "TEST_AGENT".to_string(), position: Position::new(x, y) };
-
-  if let Err(e) = runtime.send_to_agent_by_name("canvas", test_message) {
-    console::log_1(&format!("❌ Failed to send UpdatePosition to Canvas: {}", e).into());
-  } else {
-    console::log_1(&"✅ UpdatePosition sent to Canvas".into());
-  }
-
-  // Process the messages
-  let processed = runtime.step();
-  console::log_1(&format!("🔄 Processed {} messages", processed).into());
 }
