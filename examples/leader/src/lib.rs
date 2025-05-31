@@ -96,7 +96,7 @@ impl Leader {
       position: Position::new(x, y),
       canvas_width,
       canvas_height,
-      speed: 0.5,
+      speed: 1.3,
       current_direction: random() * 2.0 * std::f64::consts::PI,
       direction_steps: 0,
       max_direction_steps: (100 + (random() * 100.0) as u32),
@@ -171,7 +171,7 @@ impl Follower {
     Self {
       id,
       position: Position::new(x, y),
-      speed: 0.3,
+      speed: 0.8,
       follow_distance: 50.0,
       target_leader_id: None,
       leader_positions: HashMap::new(),
@@ -292,12 +292,29 @@ pub fn simulation_tick(runtime: &mut Runtime) {
   runtime.run();
 }
 
+/// Clear all agents from shared state and reset counters
+#[wasm_bindgen]
+pub fn clear_all_agents() {
+  // Clear shared state
+  if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+    shared_agents.clear();
+    console::log_1(&"🧹 Cleared all agents from shared state".into());
+  }
+
+  // Reset counters
+  unsafe {
+    LEADER_COUNT = 0;
+    FOLLOWER_COUNT = 0;
+  }
+}
+
+// Global counters for agent IDs
+static mut LEADER_COUNT: u32 = 0;
+static mut FOLLOWER_COUNT: u32 = 0;
+
 /// Add an agent at the specified position  
 #[wasm_bindgen]
 pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bool) -> String {
-  static mut LEADER_COUNT: u32 = 0;
-  static mut FOLLOWER_COUNT: u32 = 0;
-
   let agent_id = if is_leader {
     unsafe {
       LEADER_COUNT += 1;
