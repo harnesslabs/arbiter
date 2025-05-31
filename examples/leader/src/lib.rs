@@ -290,6 +290,7 @@ impl Follower {
   fn find_closest_leader(&mut self) {
     if self.leader_positions.is_empty() {
       self.target_leader_id = None;
+      console::log_1(&format!("🔵 {} has no leaders to follow", self.id).into());
       return;
     }
 
@@ -298,23 +299,51 @@ impl Follower {
 
     for (leader_id, leader_pos) in &self.leader_positions {
       let distance = self.position.distance_to(leader_pos);
+      console::log_1(&format!("🔵 {} distance to {}: {:.1}", self.id, leader_id, distance).into());
       if distance < closest_distance {
         closest_distance = distance;
         closest_leader = Some(leader_id.clone());
       }
     }
 
-    self.target_leader_id = closest_leader;
+    self.target_leader_id = closest_leader.clone();
+    if let Some(target) = &closest_leader {
+      console::log_1(
+        &format!("🔵 {} targeting leader {} (distance: {:.1})", self.id, target, closest_distance)
+          .into(),
+      );
+    }
   }
 
   fn follow_target(&mut self) {
     if let Some(target_id) = &self.target_leader_id {
       if let Some(leader_pos) = self.leader_positions.get(target_id) {
         let distance = self.position.distance_to(leader_pos);
+        console::log_1(
+          &format!(
+            "🔵 {} following {} - distance: {:.1}, follow_distance: {:.1}",
+            self.id, target_id, distance, self.follow_distance
+          )
+          .into(),
+        );
         if distance > self.follow_distance {
+          let old_pos = self.position.clone();
           self.position.move_towards(leader_pos, self.speed);
+          console::log_1(
+            &format!(
+              "🔵 {} moved from ({:.1}, {:.1}) to ({:.1}, {:.1})",
+              self.id, old_pos.x, old_pos.y, self.position.x, self.position.y
+            )
+            .into(),
+          );
+        } else {
+          console::log_1(
+            &format!("🔵 {} close enough to {} - not moving", self.id, target_id).into(),
+          );
         }
       }
+    } else {
+      console::log_1(&format!("🔵 {} has no target leader", self.id).into());
     }
   }
 }
@@ -336,6 +365,23 @@ impl Handler<Tick> for Follower {
   type Reply = UpdatePosition;
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
+    // Read leader positions directly from shared state instead of relying on messages
+    if let Ok(shared_agents) = get_shared_agent_state().lock() {
+      self.leader_positions.clear();
+      for (agent_id, (agent_type, position)) in shared_agents.iter() {
+        if agent_type == "leader" {
+          self.leader_positions.insert(agent_id.clone(), position.clone());
+          console::log_1(
+            &format!(
+              "🔵 {} found leader {} at ({}, {})",
+              self.id, agent_id, position.x, position.y
+            )
+            .into(),
+          );
+        }
+      }
+    }
+
     // Use stored leader positions to follow
     self.find_closest_leader();
     self.follow_target();
