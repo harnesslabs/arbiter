@@ -15,7 +15,6 @@ use arbiter_core::{
   handler::Handler,
   runtime::Runtime,
 };
-use serde_json;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 
@@ -59,18 +58,8 @@ impl Position {
 }
 
 /// Message to tick all agents (contains leader positions for followers)
-#[derive(Clone, Debug)]
-pub struct Tick {
-  pub leader_positions: Vec<(String, Position)>,
-}
-
-/// Message to update agent position (sent to Canvas for data storage)
-#[derive(Clone, Debug)]
-pub struct UpdatePosition {
-  pub agent_id:   String,
-  pub position:   Position,
-  pub agent_type: String, // "leader" or "follower"
-}
+#[derive(Clone, Copy)]
+pub struct Tick;
 
 // Global shared state accessible from both Rust and JavaScript
 static SHARED_AGENT_STATE: OnceLock<Arc<Mutex<HashMap<String, (String, Position)>>>> =
@@ -80,67 +69,11 @@ fn get_shared_agent_state() -> &'static Arc<Mutex<HashMap<String, (String, Posit
   SHARED_AGENT_STATE.get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
 }
 
-/// Simple Canvas agent that writes to shared state
-#[derive(Clone)]
-pub struct Canvas {
-  pub agents: HashMap<String, (String, Position)>, // Local copy for compatibility
-}
-
-impl Canvas {
-  pub fn new() -> Self { Self { agents: HashMap::new() } }
-
-  pub fn get_agent_data(&self) -> String {
-    // Read from shared state instead of local state
-    match get_shared_agent_state().lock() {
-      Ok(shared_agents) => {
-        let mut agents_json = String::from("[");
-        let mut first = true;
-
-        for (agent_id, (agent_type, position)) in shared_agents.iter() {
-          if !first {
-            agents_json.push(',');
-          }
-          first = false;
-
-          agents_json.push_str(&format!(
-            r#"{{"id":"{}","type":"{}","x":{},"y":{}}}"#,
-            agent_id, agent_type, position.x, position.y
-          ));
-        }
-
-        agents_json.push(']');
-        agents_json
-      },
-      Err(_) => "[]".to_string(),
-    }
-  }
-}
-
-impl LifeCycle for Canvas {}
-
-impl Handler<UpdatePosition> for Canvas {
-  type Reply = ();
-
-  fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
-    // Update both local and shared state
-    self
-      .agents
-      .insert(message.agent_id.clone(), (message.agent_type.clone(), message.position.clone()));
-
-    // Write to shared state that JavaScript can access
-    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
-      shared_agents.insert(message.agent_id, (message.agent_type, message.position));
-    }
-  }
-}
-
 /// Initialize the WASM module
 #[wasm_bindgen(start)]
 pub fn main() {
   console_error_panic_hook::set_once();
-  console::log_1(
-    &"🦀 Leader-Follower Simulation WASM module initialized with Arbiter-Core!".into(),
-  );
+  console::log_1(&"Leader-Follower Simulation WASM module initialized with Arbiter-Core!".into());
 }
 
 /// Simple leader agent that moves randomly
@@ -210,7 +143,7 @@ impl Leader {
 impl LifeCycle for Leader {}
 
 impl Handler<Tick> for Leader {
-  type Reply = UpdatePosition;
+  type Reply = ();
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
     self.move_agent();
@@ -218,12 +151,6 @@ impl Handler<Tick> for Leader {
     // Write directly to shared state
     if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
       shared_agents.insert(self.id.clone(), ("leader".to_string(), self.position.clone()));
-    }
-
-    UpdatePosition {
-      agent_id:   self.id.clone(),
-      position:   self.position.clone(),
-      agent_type: "leader".to_string(),
     }
   }
 }
@@ -286,19 +213,8 @@ impl Follower {
 
 impl LifeCycle for Follower {}
 
-impl Handler<UpdatePosition> for Follower {
-  type Reply = ();
-
-  fn handle(&mut self, message: UpdatePosition) -> Self::Reply {
-    // Store leader positions when we receive UpdatePosition messages
-    if message.agent_type == "leader" {
-      self.leader_positions.insert(message.agent_id, message.position);
-    }
-  }
-}
-
 impl Handler<Tick> for Follower {
-  type Reply = UpdatePosition;
+  type Reply = ();
 
   fn handle(&mut self, _message: Tick) -> Self::Reply {
     // Read leader positions directly from shared state instead of relying on messages
@@ -318,12 +234,6 @@ impl Handler<Tick> for Follower {
     // Write directly to shared state
     if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
       shared_agents.insert(self.id.clone(), ("follower".to_string(), self.position.clone()));
-    }
-
-    UpdatePosition {
-      agent_id:   self.id.clone(),
-      position:   self.position.clone(),
-      agent_type: "follower".to_string(),
     }
   }
 }
@@ -376,11 +286,10 @@ pub fn create_leader_follower_simulation(_canvas_width: f64, _canvas_height: f64
 #[wasm_bindgen]
 pub fn simulation_tick(runtime: &mut Runtime) {
   // Broadcast Tick to all agents
-  runtime.broadcast_message(Tick { leader_positions: Vec::new() });
+  runtime.broadcast_message(Tick);
 
   // Process tick messages and any resulting updates
-  runtime.step();
-  runtime.step();
+  runtime.run();
 }
 
 /// Add an agent at the specified position  
@@ -417,8 +326,7 @@ pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bo
     }
   } else {
     let follower = Follower::new(agent_id.clone(), x, y);
-    let follower_agent =
-      Agent::new(follower).with_handler::<Tick>().with_handler::<UpdatePosition>();
+    let follower_agent = Agent::new(follower).with_handler::<Tick>();
 
     match runtime.spawn_named_agent(&agent_id, follower_agent) {
       Ok(_) => {
