@@ -1,42 +1,35 @@
-use std::{any::Any, sync::Arc};
+use std::{any::Any, rc::Rc};
 
 /// Trait for types that can be sent as messages between agents
-pub trait Message: Any + Send + Sync + 'static {}
+pub trait Message: Any + 'static {}
 
 // Blanket implementation for all types that meet the requirements
-impl<T> Message for T where T: Any + Send + Sync + 'static {}
+impl<T> Message for T where T: Any + 'static {}
 
-pub trait Handler<M> {
-  type Reply;
+pub trait Handler<M: Message> {
+  type Reply: Message;
 
   fn handle(&mut self, message: M) -> Self::Reply;
 }
 
-// Trait object for handling any message type
-pub trait MessageHandler: Send + Sync {
-  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Arc<dyn Any + Send + Sync>;
-}
+// Simplified handler function type - no more complex wrapper
+pub type MessageHandlerFn = Box<dyn Fn(&mut dyn Any, &dyn Any) -> Rc<dyn Any>>;
 
-// Wrapper to make Handler<M> work as MessageHandler
-pub(crate) struct HandlerWrapper<A, M> {
-  pub(crate) _phantom: std::marker::PhantomData<(A, M)>,
-}
-
-impl<A, M> MessageHandler for HandlerWrapper<A, M>
+/// Create a handler function for a specific message type
+pub fn create_handler<A, M>() -> MessageHandlerFn
 where
-  A: Handler<M> + Send + Sync + 'static,
+  A: Handler<M> + 'static,
   M: Message + Clone,
-  <A as Handler<M>>::Reply: Send + Sync + 'static,
-{
-  fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Arc<dyn Any + Send + Sync> {
+  A::Reply: 'static, {
+  Box::new(|agent: &mut dyn Any, message: &dyn Any| {
     if let (Some(typed_agent), Some(typed_message)) =
       (agent.downcast_mut::<A>(), message.downcast_ref::<M>())
     {
       let reply = typed_agent.handle(typed_message.clone());
-      Arc::new(reply)
+      Rc::new(reply)
     } else {
       // Return unit if types don't match
-      Arc::new(())
+      Rc::new(())
     }
-  }
+  })
 }

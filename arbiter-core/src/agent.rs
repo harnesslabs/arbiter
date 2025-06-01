@@ -1,13 +1,11 @@
 use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
-  sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-  },
+  rc::Rc,
+  sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::handler::{Handler, HandlerWrapper, Message, MessageHandler};
+use crate::handler::{create_handler, Handler, Message, MessageHandlerFn};
 
 /// Unique identifier for agents - uses atomic counter for WASM compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -31,7 +29,7 @@ impl std::fmt::Display for AgentId {
 }
 
 // Enhanced trait for things that can be agents with lifecycle management
-pub trait LifeCycle: Send + Sync + 'static {
+pub trait LifeCycle: 'static {
   // Lifecycle hooks - agents can override these for custom behavior
   fn on_start(&mut self) {
     // Default implementation does nothing
@@ -56,8 +54,8 @@ pub struct Agent<S: LifeCycle> {
   name:                 Option<String>,
   inner:                S,
   state:                AgentState,
-  mailbox:              VecDeque<Arc<dyn Any + Send + Sync>>,
-  handlers:             HashMap<TypeId, Box<dyn MessageHandler>>,
+  mailbox:              VecDeque<Rc<dyn Any>>,
+  handlers:             HashMap<TypeId, MessageHandlerFn>,
   has_pending_messages: bool, // Clear flag indicating mailbox has messages to process
 }
 
@@ -147,8 +145,8 @@ impl<A: LifeCycle> Agent<A> {
 
   // Convenient method to send typed messages to mailbox
   pub fn enqueue_message<M>(&mut self, message: M)
-  where M: Any + Send + Sync + 'static {
-    let boxed_message = Arc::new(message);
+  where M: Message {
+    let boxed_message = Rc::new(message);
     match self.state {
       AgentState::Running | AgentState::Paused => {
         self.mailbox.push_back(boxed_message);
@@ -161,8 +159,8 @@ impl<A: LifeCycle> Agent<A> {
   }
 
   // TODO: This function seems redundant.  We should just use process_any_message.
-  pub fn process_message<M>(&mut self, message: M) -> Vec<Arc<dyn Any + Send + Sync>>
-  where M: Any + Clone + Send + Sync + 'static {
+  pub fn process_message<M>(&mut self, message: M) -> Vec<Rc<dyn Any>>
+  where M: Message + Clone {
     if !self.is_active() {
       return Vec::new();
     }
@@ -172,7 +170,7 @@ impl<A: LifeCycle> Agent<A> {
     if let Some(handler) = self.handlers.get(&type_id) {
       let agent_any: &mut dyn Any = &mut self.inner;
       let message_any: &dyn Any = &message;
-      let reply = handler.handle_message(agent_any, message_any);
+      let reply = handler(agent_any, message_any);
       replies.push(reply);
     }
     replies
@@ -181,12 +179,9 @@ impl<A: LifeCycle> Agent<A> {
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message + Clone,
-    A: Handler<M> + Send + Sync + 'static,
-    A::Reply: Send + Sync + 'static, {
-    self.handlers.insert(
-      TypeId::of::<M>(),
-      Box::new(HandlerWrapper::<A, M> { _phantom: std::marker::PhantomData }),
-    );
+    A: Handler<M> + 'static,
+    A::Reply: 'static, {
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<A, M>());
     self
   }
 }
@@ -199,7 +194,7 @@ pub enum AgentState {
 }
 
 // Trait for runtime-manageable agents
-pub trait RuntimeAgent: Send + Sync {
+pub trait RuntimeAgent {
   fn id(&self) -> AgentId;
   fn name(&self) -> Option<&str>;
   fn start(&mut self);
@@ -209,12 +204,12 @@ pub trait RuntimeAgent: Send + Sync {
   fn state(&self) -> AgentState;
   fn is_active(&self) -> bool;
   fn should_process_mailbox(&self) -> bool;
-  fn enqueue_shared_message(&mut self, message: Arc<dyn Any + Send + Sync>);
-  fn process_pending_messages(&mut self) -> Vec<Arc<dyn Any + Send + Sync>>;
+  fn enqueue_shared_message(&mut self, message: Rc<dyn Any>);
+  fn process_pending_messages(&mut self) -> Vec<Rc<dyn Any>>;
   fn agent_type_name(&self) -> &'static str;
-  fn handlers(&self) -> &HashMap<TypeId, Box<dyn MessageHandler>>;
-  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Box<dyn MessageHandler>>;
-  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>>;
+  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn>;
+  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, MessageHandlerFn>;
+  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Rc<dyn Any>>;
 
   /// Access the inner agent as Any for testing and introspection
   fn inner_as_any(&self) -> &dyn Any;
@@ -239,7 +234,7 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
   fn should_process_mailbox(&self) -> bool { self.has_pending_messages && self.is_active() }
 
-  fn enqueue_shared_message(&mut self, message: Arc<dyn Any + Send + Sync>) {
+  fn enqueue_shared_message(&mut self, message: Rc<dyn Any>) {
     match self.state {
       AgentState::Running | AgentState::Paused => {
         self.mailbox.push_back(message);
@@ -251,7 +246,7 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     }
   }
 
-  fn process_pending_messages(&mut self) -> Vec<Arc<dyn Any + Send + Sync>> {
+  fn process_pending_messages(&mut self) -> Vec<Rc<dyn Any>> {
     let mut all_replies = Vec::new();
 
     if !self.is_active() {
@@ -269,11 +264,11 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
   fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
 
-  fn handlers(&self) -> &HashMap<TypeId, Box<dyn MessageHandler>> { &self.handlers }
+  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn> { &self.handlers }
 
-  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Box<dyn MessageHandler>> { &mut self.handlers }
+  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, MessageHandlerFn> { &mut self.handlers }
 
-  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>> {
+  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Rc<dyn Any>> {
     if !self.is_active() {
       return Vec::new();
     }
@@ -282,7 +277,7 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     let type_id = message.type_id();
     if let Some(handler) = self.handlers.get(&type_id) {
       let agent_any: &mut dyn Any = &mut self.inner;
-      let reply = handler.handle_message(agent_any, message);
+      let reply = handler(agent_any, message);
       replies.push(reply);
     }
     replies

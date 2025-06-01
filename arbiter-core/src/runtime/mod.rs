@@ -1,14 +1,17 @@
 use std::{
   any::{Any, TypeId},
   collections::HashMap,
-  sync::{Arc, Mutex},
+  rc::Rc,
 };
 
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")] pub mod wasm;
 
-use crate::agent::{Agent, AgentId, AgentState, LifeCycle, RuntimeAgent};
+use crate::{
+  agent::{Agent, AgentId, AgentState, LifeCycle, RuntimeAgent},
+  handler::Message,
+};
 
 /// A multi-agent runtime that manages agent lifecycles and message routing
 #[cfg_attr(feature = "wasm", wasm_bindgen)]
@@ -21,12 +24,9 @@ impl Runtime {
   /// Create a new runtime
   pub fn new() -> Self { Self { agents: HashMap::new(), name_to_id: HashMap::new() } }
 
-  /// Create a shared runtime wrapped in Arc<Mutex<>> for concurrent access
-  pub fn shared() -> Arc<Mutex<Self>> { Arc::new(Mutex::new(Self::new())) }
-
   /// Register an agent with the runtime
   pub fn register_agent<A>(&mut self, agent: Agent<A>) -> AgentId
-  where A: LifeCycle + 'static {
+  where A: LifeCycle {
     let id = agent.id();
     self.agents.insert(id, Box::new(agent));
     id
@@ -39,7 +39,7 @@ impl Runtime {
     agent: Agent<A>,
   ) -> Result<AgentId, String>
   where
-    A: LifeCycle + 'static,
+    A: LifeCycle,
   {
     let name = name.into();
     if self.name_to_id.contains_key(&name) {
@@ -54,7 +54,7 @@ impl Runtime {
 
   /// Register an agent and start it immediately
   pub fn spawn_agent<A>(&mut self, agent: Agent<A>) -> AgentId
-  where A: LifeCycle + 'static {
+  where A: LifeCycle {
     let id = self.register_agent(agent);
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
     id
@@ -81,14 +81,14 @@ impl Runtime {
 
   /// Send a message to all agents that can handle it
   pub fn broadcast_message<M>(&mut self, message: M) -> usize
-  where M: Any + Clone + Send + Sync + 'static {
+  where M: Any + Clone + 'static {
     let message_type = TypeId::of::<M>();
     let mut delivered_count = 0;
 
     for agent in self.agents.values_mut() {
       // Check if agent has handlers for this message type
       if agent.handlers().contains_key(&message_type) {
-        agent.enqueue_shared_message(Arc::new(message.clone()));
+        agent.enqueue_shared_message(Rc::new(message.clone()));
         delivered_count += 1;
       }
     }
@@ -98,10 +98,10 @@ impl Runtime {
 
   /// Send a message to a specific agent by ID
   pub fn send_to_agent_by_id<M>(&mut self, agent_id: AgentId, message: M) -> Result<(), String>
-  where M: Any + Send + Sync + 'static {
+  where M: Message {
     match self.agents.get_mut(&agent_id) {
       Some(agent) => {
-        agent.enqueue_shared_message(Arc::new(message));
+        agent.enqueue_shared_message(Rc::new(message));
         Ok(())
       },
       None => Err(format!("Agent with ID {} not found", agent_id)),
@@ -110,7 +110,7 @@ impl Runtime {
 
   /// Send a message to a specific agent by name
   pub fn send_to_agent_by_name<M>(&mut self, agent_name: &str, message: M) -> Result<(), String>
-  where M: Any + Send + Sync + 'static {
+  where M: Message {
     let agent_id = self
       .agent_id_by_name(agent_name)
       .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
@@ -414,7 +414,7 @@ impl Runtime {
   }
 
   /// Helper function to route reply messages back into the system
-  fn route_reply_to_agents(&mut self, reply: Arc<dyn Any + Send + Sync>) {
+  fn route_reply_to_agents(&mut self, reply: Rc<dyn Any>) {
     let reply_type = reply.as_ref().type_id(); // Get the TypeId of the inner value
 
     // Route replies directly without collecting intermediate vectors
@@ -722,7 +722,7 @@ mod tests {
 
   #[test]
   fn test_reply_routing_and_memory_cleanup() {
-    use std::sync::{Arc, Weak};
+    use std::rc::{Rc, Weak};
 
     let mut runtime = Runtime::new();
 
@@ -747,14 +747,14 @@ mod tests {
     runtime.start_agent_by_id(consumer2_id).unwrap();
 
     // Create a message and keep a weak reference to test cleanup
-    let request = Arc::new(RequestData { value: 10 });
-    let weak_request = Arc::downgrade(&request);
+    let request = Rc::new(RequestData { value: 10 });
+    let weak_request = Rc::downgrade(&request);
 
     // Send the request to the producer
     runtime.send_to_agent_by_id(producer_id, (*request).clone()).unwrap();
 
-    // Check initial reference count (1 for our Arc, plus any internal references)
-    let initial_strong_count = Arc::strong_count(&request);
+    // Check initial reference count (1 for our Rc, plus any internal references)
+    let initial_strong_count = Rc::strong_count(&request);
     assert!(initial_strong_count >= 1);
 
     // Drop our reference to the original message
@@ -789,8 +789,8 @@ mod tests {
 
     // Test multiple message cycles to ensure no memory accumulation
     for i in 1..=5 {
-      let request = Arc::new(RequestData { value: i });
-      let weak_ref = Arc::downgrade(&request);
+      let request = Rc::new(RequestData { value: i });
+      let weak_ref = Rc::downgrade(&request);
 
       runtime.send_to_agent_by_id(producer_id, (*request).clone()).unwrap();
       drop(request);
@@ -831,18 +831,18 @@ mod tests {
     runtime.start_agent_by_id(counter2_id).unwrap();
     runtime.start_agent_by_id(counter3_id).unwrap();
 
-    // Create a message with a known Arc
-    let message = Arc::new(NumberMessage { value: 42 });
-    let message_weak = Arc::downgrade(&message);
+    // Create a message with a known Rc
+    let message = Rc::new(NumberMessage { value: 42 });
+    let message_weak = Rc::downgrade(&message);
 
-    // Broadcast should share the Arc among all agents
+    // Broadcast should share the Rc among all agents
     let delivered = runtime.broadcast_message((*message).clone());
     assert_eq!(delivered, 3); // All three counters should receive it
 
     // Drop our reference
     drop(message);
 
-    // Process messages - this should consume the shared Arcs
+    // Process messages - this should consume the shared Rcs
     let processed = runtime.process_all_pending_messages();
     assert_eq!(processed, 3); // Each counter generates a () reply, so 3 replies total
 
