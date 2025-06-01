@@ -415,25 +415,11 @@ impl Runtime {
 
   /// Helper function to route reply messages back into the system
   fn route_reply_to_agents(&mut self, reply: Arc<dyn Any + Send + Sync>) {
-    let reply_type = reply.type_id();
+    let reply_type = reply.as_ref().type_id(); // Get the TypeId of the inner value
 
-    // Find all agents that can handle this reply type
-    let target_agent_ids: Vec<AgentId> = self
-      .agents
-      .iter()
-      .filter_map(
-        |(id, agent)| {
-          if agent.handlers().contains_key(&reply_type) {
-            Some(*id)
-          } else {
-            None
-          }
-        },
-      )
-      .collect();
-
-    for agent_id in target_agent_ids {
-      if let Some(agent) = self.agents.get_mut(&agent_id) {
+    // Route replies directly without collecting intermediate vectors
+    for agent in self.agents.values_mut() {
+      if agent.handlers().contains_key(&reply_type) {
         agent.enqueue_shared_message(reply.clone());
       }
     }
@@ -609,9 +595,10 @@ mod tests {
     let agent1_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
     let agent2_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
     let agent3_id = runtime.register_agent(Agent::new(Counter { total: 0 }));
-    assert_eq!(agent1_id.value(), 1);
-    assert_eq!(agent2_id.value(), 2);
-    assert_eq!(agent3_id.value(), 3);
+    // Don't test specific ID values as they depend on global counter state
+    assert_ne!(agent1_id, agent2_id);
+    assert_ne!(agent2_id, agent3_id);
+    assert_ne!(agent1_id, agent3_id);
 
     // All should be stopped initially
     assert_eq!(runtime.statistics().stopped_agents, 3);
@@ -688,54 +675,54 @@ mod tests {
     assert!(result.reached_stable_state);
   }
 
+  // Custom message and reply types for testing
+  #[derive(Debug, Clone)]
+  struct RequestData {
+    value: i32,
+  }
+
+  #[derive(Debug, Clone)]
+  struct ResponseData {
+    result: i32,
+  }
+
+  // Producer agent that generates responses
+  #[derive(Clone)]
+  struct Producer {
+    multiplier: i32,
+  }
+
+  impl LifeCycle for Producer {}
+
+  impl Handler<RequestData> for Producer {
+    type Reply = ResponseData;
+
+    fn handle(&mut self, message: RequestData) -> Self::Reply {
+      ResponseData { result: message.value * self.multiplier }
+    }
+  }
+
+  // Consumer agent that processes responses
+  #[derive(Clone)]
+  struct Consumer {
+    total:              i32,
+    responses_received: usize,
+  }
+
+  impl LifeCycle for Consumer {}
+
+  impl Handler<ResponseData> for Consumer {
+    type Reply = ();
+
+    fn handle(&mut self, message: ResponseData) -> Self::Reply {
+      self.total += message.result;
+      self.responses_received += 1;
+    }
+  }
+
   #[test]
   fn test_reply_routing_and_memory_cleanup() {
     use std::sync::{Arc, Weak};
-
-    // Custom message and reply types for testing
-    #[derive(Debug, Clone)]
-    struct RequestData {
-      value: i32,
-    }
-
-    #[derive(Debug, Clone)]
-    struct ResponseData {
-      result: i32,
-    }
-
-    // Producer agent that generates responses
-    #[derive(Clone)]
-    struct Producer {
-      multiplier: i32,
-    }
-
-    impl LifeCycle for Producer {}
-
-    impl Handler<RequestData> for Producer {
-      type Reply = ResponseData;
-
-      fn handle(&mut self, message: RequestData) -> Self::Reply {
-        ResponseData { result: message.value * self.multiplier }
-      }
-    }
-
-    // Consumer agent that processes responses
-    #[derive(Clone)]
-    struct Consumer {
-      total:              i32,
-      responses_received: usize,
-    }
-
-    impl LifeCycle for Consumer {}
-
-    impl Handler<ResponseData> for Consumer {
-      type Reply = ();
-
-      fn handle(&mut self, message: ResponseData) -> Self::Reply {
-        self.total += message.result;
-        self.responses_received += 1;
-      }
-    }
 
     let mut runtime = Runtime::new();
 
@@ -868,6 +855,44 @@ mod tests {
       if let Some(counter) = agent.inner_as_any().downcast_ref::<Counter>() {
         assert_eq!(counter.total, 42);
       }
+    }
+  }
+
+  #[test]
+  fn test_simple_reply_routing() {
+    let mut runtime = Runtime::new();
+
+    // Create a simple producer-consumer pair
+    let producer = Agent::new(Producer { multiplier: 2 }).with_handler::<RequestData>();
+    let consumer =
+      Agent::new(Consumer { total: 0, responses_received: 0 }).with_handler::<ResponseData>();
+
+    let producer_id = producer.id();
+    let consumer_id = consumer.id();
+
+    runtime.register_agent(producer);
+    runtime.register_agent(consumer);
+
+    // Start both agents
+    runtime.start_agent_by_id(producer_id).unwrap();
+    runtime.start_agent_by_id(consumer_id).unwrap();
+
+    // Send a request to the producer
+    runtime.send_to_agent_by_id(producer_id, RequestData { value: 5 }).unwrap();
+
+    // Step 1: Producer processes request and generates ResponseData
+    let step1_processed = runtime.step();
+    assert_eq!(step1_processed, 1); // Producer processed 1 message and generated 1 reply
+
+    // Step 2: Consumer should process the ResponseData
+    let step2_processed = runtime.step();
+    assert_eq!(step2_processed, 1); // Consumer processed 1 message (the ResponseData)
+
+    // Verify the consumer received and processed the response
+    let consumer_agent = runtime.agents.get(&consumer_id).unwrap();
+    if let Some(consumer) = consumer_agent.inner_as_any().downcast_ref::<Consumer>() {
+      assert_eq!(consumer.total, 10); // 5 * 2 = 10
+      assert_eq!(consumer.responses_received, 1);
     }
   }
 }

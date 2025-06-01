@@ -7,7 +7,7 @@ use std::{
   },
 };
 
-use crate::handler::{Handler, HandlerWrapper, MessageHandler};
+use crate::handler::{Handler, HandlerWrapper, Message, MessageHandler};
 
 /// Unique identifier for agents - uses atomic counter for WASM compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -57,7 +57,7 @@ pub struct Agent<S: LifeCycle> {
   inner:                S,
   state:                AgentState,
   mailbox:              VecDeque<Arc<dyn Any + Send + Sync>>,
-  handlers:             HashMap<TypeId, Vec<Box<dyn MessageHandler>>>,
+  handlers:             HashMap<TypeId, Box<dyn MessageHandler>>,
   has_pending_messages: bool, // Clear flag indicating mailbox has messages to process
 }
 
@@ -169,27 +169,24 @@ impl<A: LifeCycle> Agent<A> {
 
     let mut replies = Vec::new();
     let type_id = TypeId::of::<M>();
-    if let Some(handlers) = self.handlers.get(&type_id) {
-      for handler in handlers {
-        let agent_any: &mut dyn Any = &mut self.inner;
-        let message_any: &dyn Any = &message;
-        let reply = handler.handle_message(agent_any, message_any);
-        replies.push(reply);
-      }
+    if let Some(handler) = self.handlers.get(&type_id) {
+      let agent_any: &mut dyn Any = &mut self.inner;
+      let message_any: &dyn Any = &message;
+      let reply = handler.handle_message(agent_any, message_any);
+      replies.push(reply);
     }
     replies
   }
 
   pub fn with_handler<M>(mut self) -> Self
   where
-    M: Clone + Send + Sync + 'static,
+    M: Message + Clone,
     A: Handler<M> + Send + Sync + 'static,
     A::Reply: Send + Sync + 'static, {
-    self
-      .handlers
-      .entry(TypeId::of::<M>())
-      .or_default()
-      .push(Box::new(HandlerWrapper::<A, M> { _phantom: std::marker::PhantomData }));
+    self.handlers.insert(
+      TypeId::of::<M>(),
+      Box::new(HandlerWrapper::<A, M> { _phantom: std::marker::PhantomData }),
+    );
     self
   }
 }
@@ -215,8 +212,8 @@ pub trait RuntimeAgent: Send + Sync {
   fn enqueue_shared_message(&mut self, message: Arc<dyn Any + Send + Sync>);
   fn process_pending_messages(&mut self) -> Vec<Arc<dyn Any + Send + Sync>>;
   fn agent_type_name(&self) -> &'static str;
-  fn handlers(&self) -> &HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
-  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>>;
+  fn handlers(&self) -> &HashMap<TypeId, Box<dyn MessageHandler>>;
+  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Box<dyn MessageHandler>>;
   fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>>;
 
   /// Access the inner agent as Any for testing and introspection
@@ -272,11 +269,9 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
   fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
 
-  fn handlers(&self) -> &HashMap<TypeId, Vec<Box<dyn MessageHandler>>> { &self.handlers }
+  fn handlers(&self) -> &HashMap<TypeId, Box<dyn MessageHandler>> { &self.handlers }
 
-  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Vec<Box<dyn MessageHandler>>> {
-    &mut self.handlers
-  }
+  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, Box<dyn MessageHandler>> { &mut self.handlers }
 
   fn process_any_message(&mut self, message: &dyn Any) -> Vec<Arc<dyn Any + Send + Sync>> {
     if !self.is_active() {
@@ -285,12 +280,10 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
 
     let mut replies = Vec::new();
     let type_id = message.type_id();
-    if let Some(handlers) = self.handlers.get(&type_id) {
-      for handler in handlers {
-        let agent_any: &mut dyn Any = &mut self.inner;
-        let reply = handler.handle_message(agent_any, message);
-        replies.push(reply);
-      }
+    if let Some(handler) = self.handlers.get(&type_id) {
+      let agent_any: &mut dyn Any = &mut self.inner;
+      let reply = handler.handle_message(agent_any, message);
+      replies.push(reply);
     }
     replies
   }
@@ -343,7 +336,8 @@ mod tests {
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
     let mut shared_agent = Agent::new(arithmetic);
-    assert_eq!(shared_agent.id(), AgentId(1));
+    // Don't test specific ID values as they depend on global counter state
+    assert!(shared_agent.id().value() > 0);
 
     assert_eq!(shared_agent.state(), AgentState::Stopped);
 

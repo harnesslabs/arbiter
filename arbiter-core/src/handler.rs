@@ -1,5 +1,11 @@
 use std::{any::Any, sync::Arc};
 
+/// Trait for types that can be sent as messages between agents
+pub trait Message: Any + Send + Sync + 'static {}
+
+// Blanket implementation for all types that meet the requirements
+impl<T> Message for T where T: Any + Send + Sync + 'static {}
+
 pub trait Handler<M> {
   type Reply;
 
@@ -15,10 +21,11 @@ pub trait MessageHandler: Send + Sync {
 pub(crate) struct HandlerWrapper<A, M> {
   pub(crate) _phantom: std::marker::PhantomData<(A, M)>,
 }
+
 impl<A, M> MessageHandler for HandlerWrapper<A, M>
 where
   A: Handler<M> + Send + Sync + 'static,
-  M: Any + Clone + Send + Sync,
+  M: Message + Clone,
   <A as Handler<M>>::Reply: Send + Sync + 'static,
 {
   fn handle_message(&self, agent: &mut dyn Any, message: &dyn Any) -> Arc<dyn Any + Send + Sync> {
