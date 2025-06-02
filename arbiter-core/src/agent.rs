@@ -75,12 +75,6 @@ impl<A: LifeCycle> Agent<A> {
     }
   }
 
-  /// Get the agent's unique ID
-  pub const fn id(&self) -> AgentId { self.id }
-
-  /// Get the agent's name, if set
-  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
-
   /// Set the agent's name
   pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
 
@@ -194,10 +188,10 @@ pub trait RuntimeAgent {
   fn should_process_mailbox(&self) -> bool;
   fn enqueue_shared_message(&mut self, message: Rc<dyn Any>);
   fn process_pending_messages(&mut self) -> Vec<Rc<dyn Any>>;
-  fn agent_type_name(&self) -> &'static str;
   fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn>;
-  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, MessageHandlerFn>;
-  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Rc<dyn Any>>;
+
+  #[cfg(test)]
+  fn inner_as_any(&self) -> &dyn Any;
 }
 
 impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
@@ -239,34 +233,22 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     }
 
     while let Some(message) = self.mailbox.pop_front() {
-      let replies = self.process_any_message(&*message);
-      all_replies.extend(replies);
+      let type_id = message.type_id();
+      if let Some(handler) = self.handlers.get(&type_id) {
+        let agent_any: &mut dyn Any = &mut self.inner;
+        let reply = handler(agent_any, &message);
+        all_replies.push(reply);
+      }
     }
 
     self.has_pending_messages = false; // Clear flag after processing
     all_replies
   }
 
-  fn agent_type_name(&self) -> &'static str { std::any::type_name::<A>() }
-
   fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn> { &self.handlers }
 
-  fn handlers_mut(&mut self) -> &mut HashMap<TypeId, MessageHandlerFn> { &mut self.handlers }
-
-  fn process_any_message(&mut self, message: &dyn Any) -> Vec<Rc<dyn Any>> {
-    if !self.is_active() {
-      return Vec::new();
-    }
-
-    let mut replies = Vec::new();
-    let type_id = message.type_id();
-    if let Some(handler) = self.handlers.get(&type_id) {
-      let agent_any: &mut dyn Any = &mut self.inner;
-      let reply = handler(agent_any, message);
-      replies.push(reply);
-    }
-    replies
-  }
+  #[cfg(test)]
+  fn inner_as_any(&self) -> &dyn Any { &self.inner }
 }
 
 #[cfg(test)]
