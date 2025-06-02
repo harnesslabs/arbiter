@@ -16,9 +16,6 @@ impl InMemoryTransport {
   pub fn new() -> Self {
     Self { local_identity: AgentIdentity::generate(), message_queue: VecDeque::new() }
   }
-
-  /// Directly enqueue a message (used for local delivery)
-  pub fn enqueue(&mut self, envelope: Envelope<Self>) { self.message_queue.push_back(envelope); }
 }
 
 impl TransportLayer for InMemoryTransport {
