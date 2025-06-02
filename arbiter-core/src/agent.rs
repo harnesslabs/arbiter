@@ -28,24 +28,14 @@ impl std::fmt::Display for AgentId {
   }
 }
 
-// Enhanced trait for things that can be agents with lifecycle management
 pub trait LifeCycle: 'static {
-  // Lifecycle hooks - agents can override these for custom behavior
-  fn on_start(&mut self) {
-    // Default implementation does nothing
-  }
+  fn on_start(&mut self) {}
 
-  fn on_pause(&mut self) {
-    // Default implementation does nothing
-  }
+  fn on_pause(&mut self) {}
 
-  fn on_stop(&mut self) {
-    // Default implementation does nothing
-  }
+  fn on_stop(&mut self) {}
 
-  fn on_resume(&mut self) {
-    // Default implementation does nothing
-  }
+  fn on_resume(&mut self) {}
 }
 
 // TODO: I need to rename all of this stuff.  It's confusing.
@@ -186,9 +176,9 @@ impl<A: LifeCycle> Agent<A> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentState {
-  Stopped, // Agent is not processing messages
-  Running, // Agent is actively processing messages
-  Paused,  // Agent is temporarily not processing messages but can be resumed
+  Stopped,
+  Running,
+  Paused,
 }
 
 // Trait for runtime-manageable agents
@@ -208,9 +198,6 @@ pub trait RuntimeAgent {
   fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn>;
   fn handlers_mut(&mut self) -> &mut HashMap<TypeId, MessageHandlerFn>;
   fn process_any_message(&mut self, message: &dyn Any) -> Vec<Rc<dyn Any>>;
-
-  /// Access the inner agent as Any for testing and introspection
-  fn inner_as_any(&self) -> &dyn Any;
 }
 
 impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
@@ -280,9 +267,6 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     }
     replies
   }
-
-  /// Access the inner agent as Any for testing and introspection
-  fn inner_as_any(&self) -> &dyn Any { &self.inner }
 }
 
 #[cfg(test)]
