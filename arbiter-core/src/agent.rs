@@ -218,11 +218,12 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
     println!("Processing pending messages for agent {}", self.id);
 
     while let Some(message) = self.mailbox.pop_front() {
-      println!("Processing message: {:?}", message);
-      let type_id = message.type_id();
-      if let Some(handler) = self.handlers.get(&type_id) {
+      let message = &*message;
+      if let Some(handler) = self.handlers.get(&message.type_id()) {
         let agent_any: &mut dyn Any = &mut self.inner;
-        let reply = handler(agent_any, &message);
+
+        println!("Message: {:?}", message.type_id());
+        let reply = handler(agent_any, message);
         all_replies.push(reply);
       }
     }

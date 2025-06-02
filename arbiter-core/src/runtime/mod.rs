@@ -4,6 +4,7 @@ use std::{
   rc::Rc,
 };
 
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "wasm")] use wasm_bindgen::prelude::*;
 
 #[cfg(feature = "wasm")] pub mod wasm;
@@ -376,9 +377,8 @@ impl Runtime {
 
   /// Helper function to route reply messages back into the system
   fn route_reply_to_agents(&mut self, reply: Rc<dyn Any>) {
-    let reply_type = reply.as_ref().type_id(); // Get the TypeId of the inner value
+    let reply_type = reply.as_ref().type_id();
 
-    // Route replies directly without collecting intermediate vectors
     for agent in self.agents.values_mut() {
       if agent.handlers().contains_key(&reply_type) {
         agent.enqueue_shared_message(reply.clone());
@@ -392,21 +392,13 @@ impl Default for Runtime {
 }
 
 /// Statistics about the runtime state
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeStatistics {
   pub total_agents:                 usize,
   pub running_agents:               usize,
   pub paused_agents:                usize,
   pub stopped_agents:               usize,
   pub agents_with_pending_messages: usize,
-}
-
-/// Result of runtime execution
-#[derive(Debug, Clone)]
-pub struct RuntimeExecutionResult {
-  pub total_messages_processed: usize,
-  pub steps_taken:              usize,
-  pub reached_stable_state:     bool,
 }
 
 #[cfg(test)]
@@ -503,9 +495,6 @@ mod tests {
     // Send messages - should route to appropriate agents
     runtime.broadcast_message(NumberMessage { value: 42 });
     runtime.broadcast_message(TextMessage { content: "Hello".to_string() });
-
-    // Process pending messages
-    runtime.process_all_pending_messages();
 
     // Process pending messages
     let processed = runtime.process_all_pending_messages();

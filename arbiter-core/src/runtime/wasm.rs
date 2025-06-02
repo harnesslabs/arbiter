@@ -8,7 +8,7 @@
 
 use wasm_bindgen::prelude::*;
 
-use super::{Runtime, RuntimeExecutionResult, RuntimeStatistics};
+use super::{Runtime, RuntimeStatistics};
 use crate::agent::AgentState;
 
 #[wasm_bindgen]
@@ -136,8 +136,7 @@ impl Runtime {
   /// Get runtime statistics as JSON string
   #[wasm_bindgen(js_name = "statistics")]
   pub fn wasm_statistics(&self) -> String {
-    let stats = self.statistics();
-    serde_json::to_string(&WasmStatistics::from(stats)).unwrap_or_else(|_| "{}".to_string())
+    serde_json::to_string(&self.statistics()).unwrap_or_else(|_| "{}".to_string())
   }
 
   /// Get agents by state as JSON array of agent IDs
@@ -162,47 +161,5 @@ impl Runtime {
   #[wasm_bindgen(js_name = "processAllPendingMessages")]
   pub fn wasm_process_all_pending_messages(&mut self) -> usize {
     self.process_all_pending_messages()
-  }
-}
-
-// === SERIALIZABLE DATA STRUCTURES ===
-
-/// WASM-friendly version of RuntimeStatistics
-#[derive(serde::Serialize)]
-struct WasmStatistics {
-  total_agents:                 usize,
-  running_agents:               usize,
-  paused_agents:                usize,
-  stopped_agents:               usize,
-  agents_with_pending_messages: usize,
-}
-
-impl From<RuntimeStatistics> for WasmStatistics {
-  fn from(stats: RuntimeStatistics) -> Self {
-    Self {
-      total_agents:                 stats.total_agents,
-      running_agents:               stats.running_agents,
-      paused_agents:                stats.paused_agents,
-      stopped_agents:               stats.stopped_agents,
-      agents_with_pending_messages: stats.agents_with_pending_messages,
-    }
-  }
-}
-
-/// WASM-friendly version of RuntimeExecutionResult
-#[derive(serde::Serialize)]
-struct WasmExecutionResult {
-  total_messages_processed: usize,
-  steps_taken:              usize,
-  reached_stable_state:     bool,
-}
-
-impl From<RuntimeExecutionResult> for WasmExecutionResult {
-  fn from(result: RuntimeExecutionResult) -> Self {
-    Self {
-      total_messages_processed: result.total_messages_processed,
-      steps_taken:              result.steps_taken,
-      reached_stable_state:     result.reached_stable_state,
-    }
   }
 }

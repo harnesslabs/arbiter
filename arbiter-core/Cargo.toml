@@ -6,11 +6,11 @@ version = "0.1.0"
 
 [dependencies]
 # Error and logging
-thiserror.workspace = true
-tracing.workspace   = true
+serde     = { workspace = true }
+thiserror = { workspace = true }
+tracing   = { workspace = true }
 
 # WASM dependencies (optional)
-serde        = { version = "1.0", features = ["derive"], optional = true }
 serde_json   = { version = "1.0", optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 
@@ -19,4 +19,4 @@ tracing-test = { workspace = true }
 
 [features]
 default = []
-wasm    = ["wasm-bindgen", "serde", "serde_json"]
+wasm    = ["wasm-bindgen", "serde_json"]
