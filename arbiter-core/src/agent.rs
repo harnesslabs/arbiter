@@ -313,7 +313,7 @@ mod tests {
     arithmetic.start();
 
     let increment = Increment(5);
-    let _result = arithmetic.enqueue_message(increment);
+    arithmetic.enqueue_message(increment);
     arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 6);
   }
@@ -340,11 +340,11 @@ mod tests {
 
     // Now messages should be processed
     let increment = Increment(5);
-    let _result = arithmetic.enqueue_message(increment);
+    arithmetic.enqueue_message(increment);
     arithmetic.process_pending_messages();
 
     let multiply = Multiply(3);
-    let _result = arithmetic.enqueue_message(multiply);
+    arithmetic.enqueue_message(multiply);
     arithmetic.process_pending_messages();
 
     assert_eq!(arithmetic.inner.state, 18); // (1 + 5) * 3 = 18
