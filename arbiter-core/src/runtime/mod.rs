@@ -43,7 +43,7 @@ impl Runtime {
   {
     let name = name.into();
     if self.name_to_id.contains_key(&name) {
-      return Err(format!("Agent name '{}' already exists", name));
+      return Err(format!("Agent name '{name}' already exists"));
     }
 
     let id = agent.id();
@@ -67,7 +67,7 @@ impl Runtime {
     agent: Agent<A>,
   ) -> Result<AgentId, String>
   where
-    A: LifeCycle + 'static,
+    A: LifeCycle,
   {
     let id = self.register_named_agent(name, agent)?;
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
@@ -80,40 +80,40 @@ impl Runtime {
   }
 
   /// Send a message to all agents that can handle it
-  pub fn broadcast_message<M>(&mut self, message: M) -> usize
-  where M: Any + Clone + 'static {
+  pub fn broadcast_message<M>(&mut self, message: M)
+  where M: Message {
     let message_type = TypeId::of::<M>();
-    let mut delivered_count = 0;
+    // Alloc the message in the heap so we can create static shared references to put in each
+    // agent's mailbox
+    let message = Rc::new(message);
 
     for agent in self.agents.values_mut() {
-      // Check if agent has handlers for this message type
       if agent.handlers().contains_key(&message_type) {
-        agent.enqueue_shared_message(Rc::new(message.clone()));
-        delivered_count += 1;
+        agent.enqueue_shared_message(message.clone());
       }
     }
-
-    delivered_count
+    // The message will be cleaned up by the agents when they process it, the original Rc created
+    // here is dropped now.
   }
 
   /// Send a message to a specific agent by ID
   pub fn send_to_agent_by_id<M>(&mut self, agent_id: AgentId, message: M) -> Result<(), String>
   where M: Message {
-    match self.agents.get_mut(&agent_id) {
-      Some(agent) => {
-        agent.enqueue_shared_message(Rc::new(message));
+    let message = Rc::new(message);
+    self.agents.get_mut(&agent_id).map_or_else(
+      || Err(format!("Agent with ID {agent_id} not found")),
+      |agent| {
+        agent.enqueue_shared_message(message.clone());
         Ok(())
       },
-      None => Err(format!("Agent with ID {} not found", agent_id)),
-    }
+    )
   }
 
   /// Send a message to a specific agent by name
   pub fn send_to_agent_by_name<M>(&mut self, agent_name: &str, message: M) -> Result<(), String>
   where M: Message {
-    let agent_id = self
-      .agent_id_by_name(agent_name)
-      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    let agent_id =
+      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
     self.send_to_agent_by_id(agent_id, message)
   }
 
@@ -141,15 +141,13 @@ impl Runtime {
 
   /// Execute a single runtime step: process messages and route replies
   /// Returns the number of messages processed in this step
-  pub fn step(&mut self) -> usize {
-    let mut step_processed = 0;
+  pub fn step(&mut self) {
     let mut pending_replies = Vec::new();
 
     // Process all agents that have pending messages
     for agent in self.agents.values_mut() {
       if agent.should_process_mailbox() {
         let replies = agent.process_pending_messages();
-        step_processed += replies.len();
         pending_replies.extend(replies);
       }
     }
@@ -157,38 +155,6 @@ impl Runtime {
     // Route all replies to appropriate agents
     for reply in pending_replies {
       self.route_reply_to_agents(reply);
-    }
-
-    step_processed
-  }
-
-  /// Run the runtime until no more messages are being processed
-  /// Returns total messages processed and number of steps taken
-  pub fn run(&mut self) -> RuntimeExecutionResult {
-    self.run_with_limit(1000) // Default reasonable limit
-  }
-
-  /// Run the runtime with a maximum number of steps to prevent infinite loops
-  /// Returns total messages processed and number of steps taken
-  pub fn run_with_limit(&mut self, max_steps: usize) -> RuntimeExecutionResult {
-    let mut total_processed = 0;
-    let mut steps_taken = 0;
-
-    for step in 0..max_steps {
-      let processed_this_step = self.step();
-      total_processed += processed_this_step;
-      steps_taken = step + 1;
-
-      // If no messages were processed, the system has reached a stable state
-      if processed_this_step == 0 {
-        break;
-      }
-    }
-
-    RuntimeExecutionResult {
-      total_messages_processed: total_processed,
-      steps_taken,
-      reached_stable_state: steps_taken < max_steps,
     }
   }
 
@@ -211,77 +177,73 @@ impl Runtime {
 
   /// Start an agent by ID
   pub fn start_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
-    match self.agents.get_mut(&agent_id) {
-      Some(agent) => {
+    self.agents.get_mut(&agent_id).map_or_else(
+      || Err(format!("Agent with ID {agent_id} not found")),
+      |agent| {
         agent.start();
         Ok(())
       },
-      None => Err(format!("Agent with ID {} not found", agent_id)),
-    }
+    )
   }
 
   /// Start an agent by name
   pub fn start_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
-    let agent_id = self
-      .agent_id_by_name(agent_name)
-      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    let agent_id =
+      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
     self.start_agent_by_id(agent_id)
   }
 
   /// Pause an agent by ID
   pub fn pause_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
-    match self.agents.get_mut(&agent_id) {
-      Some(agent) => {
+    self.agents.get_mut(&agent_id).map_or_else(
+      || Err(format!("Agent with ID {agent_id} not found")),
+      |agent| {
         agent.pause();
         Ok(())
       },
-      None => Err(format!("Agent with ID {} not found", agent_id)),
-    }
+    )
   }
 
   /// Pause an agent by name
   pub fn pause_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
-    let agent_id = self
-      .agent_id_by_name(agent_name)
-      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    let agent_id =
+      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
     self.pause_agent_by_id(agent_id)
   }
 
   /// Resume an agent by ID
   pub fn resume_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
-    match self.agents.get_mut(&agent_id) {
-      Some(agent) => {
+    self.agents.get_mut(&agent_id).map_or_else(
+      || Err(format!("Agent with ID {agent_id} not found")),
+      |agent| {
         agent.resume();
         Ok(())
       },
-      None => Err(format!("Agent with ID {} not found", agent_id)),
-    }
+    )
   }
 
   /// Resume an agent by name
   pub fn resume_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
-    let agent_id = self
-      .agent_id_by_name(agent_name)
-      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    let agent_id =
+      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
     self.resume_agent_by_id(agent_id)
   }
 
   /// Stop an agent by ID
   pub fn stop_agent_by_id(&mut self, agent_id: AgentId) -> Result<(), String> {
-    match self.agents.get_mut(&agent_id) {
-      Some(agent) => {
+    self.agents.get_mut(&agent_id).map_or_else(
+      || Err(format!("Agent with ID {agent_id} not found")),
+      |agent| {
         agent.stop();
         Ok(())
       },
-      None => Err(format!("Agent with ID {} not found", agent_id)),
-    }
+    )
   }
 
   /// Stop an agent by name
   pub fn stop_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
-    let agent_id = self
-      .agent_id_by_name(agent_name)
-      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    let agent_id =
+      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
     self.stop_agent_by_id(agent_id)
   }
 
@@ -294,10 +256,10 @@ impl Runtime {
       }
     }
 
-    match self.agents.remove(&agent_id) {
-      Some(agent) => Ok(agent),
-      None => Err(format!("Agent with ID {} not found", agent_id)),
-    }
+    self
+      .agents
+      .remove(&agent_id)
+      .map_or_else(|| Err(format!("Agent with ID {agent_id} not found")), Ok)
   }
 
   /// Remove an agent by name and return it
@@ -305,9 +267,8 @@ impl Runtime {
     &mut self,
     agent_name: &str,
   ) -> Result<Box<dyn RuntimeAgent>, String> {
-    let agent_id = self
-      .agent_id_by_name(agent_name)
-      .ok_or_else(|| format!("Agent '{}' not found", agent_name))?;
+    let agent_id =
+      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
     self.name_to_id.remove(agent_name);
     self.remove_agent_by_id(agent_id)
   }
@@ -540,11 +501,11 @@ mod tests {
     runtime.start_agent_by_id(logger_id).unwrap();
 
     // Send messages - should route to appropriate agents
-    let delivered = runtime.broadcast_message(NumberMessage { value: 42 });
-    assert_eq!(delivered, 1); // Only counter can handle NumberMessage
+    runtime.broadcast_message(NumberMessage { value: 42 });
+    runtime.broadcast_message(TextMessage { content: "Hello".to_string() });
 
-    let delivered = runtime.broadcast_message(TextMessage { content: "Hello".to_string() });
-    assert_eq!(delivered, 1); // Only logger can handle TextMessage
+    // Process pending messages
+    runtime.process_all_pending_messages();
 
     // Process pending messages
     let processed = runtime.process_all_pending_messages();
@@ -658,21 +619,7 @@ mod tests {
 
     // Test single step execution
     assert!(runtime.has_pending_work());
-    let processed = runtime.step();
-    assert_eq!(processed, 2); // Both messages processed
-
-    // Test full runtime execution
-    runtime.broadcast_message(NumberMessage { value: 5 });
-    let result = runtime.run();
-    assert_eq!(result.total_messages_processed, 1);
-    assert_eq!(result.steps_taken, 2); // Step 1: process message, Step 2: detect no work
-    assert!(result.reached_stable_state);
-
-    // Test runtime with no work
-    let result = runtime.run();
-    assert_eq!(result.total_messages_processed, 0);
-    assert_eq!(result.steps_taken, 1); // Just one step to detect no work
-    assert!(result.reached_stable_state);
+    runtime.step();
   }
 
   // Custom message and reply types for testing
@@ -722,8 +669,6 @@ mod tests {
 
   #[test]
   fn test_reply_routing_and_memory_cleanup() {
-    use std::rc::{Rc, Weak};
-
     let mut runtime = Runtime::new();
 
     // Create producer and consumers
@@ -761,15 +706,13 @@ mod tests {
     drop(request);
 
     // Step 1: Process the request, which should generate a response
-    let processed_step1 = runtime.step();
-    assert_eq!(processed_step1, 1); // One reply generated
+    runtime.step();
 
     // Verify the original request message is cleaned up
     assert!(weak_request.upgrade().is_none(), "Original request should be cleaned up");
 
     // Step 2: Route the response to consumers
-    let processed_step2 = runtime.step();
-    assert_eq!(processed_step2, 2); // Response delivered to both consumers
+    runtime.step();
 
     // Verify no more work remains
     assert!(!runtime.has_pending_work());
@@ -811,7 +754,7 @@ mod tests {
   }
 
   #[test]
-  fn test_arc_message_sharing() {
+  fn test_rc_message_sharing() {
     let mut runtime = Runtime::new();
 
     // Create multiple agents that can handle the same message type
@@ -836,8 +779,7 @@ mod tests {
     let message_weak = Rc::downgrade(&message);
 
     // Broadcast should share the Rc among all agents
-    let delivered = runtime.broadcast_message((*message).clone());
-    assert_eq!(delivered, 3); // All three counters should receive it
+    runtime.broadcast_message((*message).clone());
 
     // Drop our reference
     drop(message);
@@ -881,12 +823,10 @@ mod tests {
     runtime.send_to_agent_by_id(producer_id, RequestData { value: 5 }).unwrap();
 
     // Step 1: Producer processes request and generates ResponseData
-    let step1_processed = runtime.step();
-    assert_eq!(step1_processed, 1); // Producer processed 1 message and generated 1 reply
+    runtime.step();
 
     // Step 2: Consumer should process the ResponseData
-    let step2_processed = runtime.step();
-    assert_eq!(step2_processed, 1); // Consumer processed 1 message (the ResponseData)
+    runtime.step();
 
     // Verify the consumer received and processed the response
     let consumer_agent = runtime.agents.get(&consumer_id).unwrap();

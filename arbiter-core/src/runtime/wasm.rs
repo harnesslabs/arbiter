@@ -22,29 +22,11 @@ impl Runtime {
   /// Execute a single runtime step
   /// Returns the number of messages processed
   #[wasm_bindgen(js_name = "step")]
-  pub fn wasm_step(&mut self) -> usize { self.step() }
-
-  /// Run the runtime until stable state or default max steps (1000)
-  /// Returns JSON string with execution results
-  #[wasm_bindgen(js_name = "run")]
-  pub fn wasm_run(&mut self) -> String {
-    let result = self.run();
-    serde_json::to_string(&WasmExecutionResult::from(result)).unwrap_or_else(|_| "{}".to_string())
-  }
-
-  /// Run the runtime with a specific step limit
-  /// Returns JSON string with execution results
-  #[wasm_bindgen(js_name = "runWithLimit")]
-  pub fn wasm_run_with_limit(&mut self, max_steps: usize) -> String {
-    let result = self.run_with_limit(max_steps);
-    serde_json::to_string(&WasmExecutionResult::from(result)).unwrap_or_else(|_| "{}".to_string())
-  }
+  pub fn wasm_step(&mut self) { self.step() }
 
   /// Check if the runtime has pending work
   #[wasm_bindgen(js_name = "hasPendingWork")]
   pub fn wasm_has_pending_work(&self) -> bool { self.has_pending_work() }
-
-  // === AGENT LIFECYCLE ===
 
   /// Start an agent by name
   /// Returns true if successful, false if agent not found
@@ -134,7 +116,7 @@ impl Runtime {
   /// Returns the agent ID or 0 if not found
   #[wasm_bindgen(js_name = "agentIdByName")]
   pub fn wasm_agent_id_by_name(&self, name: &str) -> u64 {
-    self.agent_id_by_name(name).map(|id| id.value()).unwrap_or(0)
+    self.agent_id_by_name(name).map_or(0, |id| id.value())
   }
 
   /// Get list of all agent names as JSON array
@@ -147,7 +129,7 @@ impl Runtime {
   /// Get list of all agent IDs as JSON array
   #[wasm_bindgen(js_name = "agentIds")]
   pub fn wasm_agent_ids(&self) -> String {
-    let ids: Vec<u64> = self.agent_ids().iter().map(|id| id.value()).collect();
+    let ids: Vec<u64> = self.agent_ids().iter().map(super::super::agent::AgentId::value).collect();
     serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_string())
   }
 
@@ -168,7 +150,8 @@ impl Runtime {
       _ => return "[]".to_string(),
     };
 
-    let agent_ids: Vec<u64> = self.agents_by_state(state).iter().map(|id| id.value()).collect();
+    let agent_ids: Vec<u64> =
+      self.agents_by_state(state).iter().map(super::super::agent::AgentId::value).collect();
     serde_json::to_string(&agent_ids).unwrap_or_else(|_| "[]".to_string())
   }
 

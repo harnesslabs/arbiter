@@ -289,7 +289,7 @@ pub fn simulation_tick(runtime: &mut Runtime) {
   runtime.broadcast_message(Tick);
 
   // Process tick messages and any resulting updates
-  runtime.run();
+  runtime.step();
 }
 
 /// Remove a single agent from shared state

@@ -56,7 +56,7 @@ pub struct Agent<S: LifeCycle> {
   state:                AgentState,
   mailbox:              VecDeque<Rc<dyn Any>>,
   handlers:             HashMap<TypeId, MessageHandlerFn>,
-  has_pending_messages: bool, // Clear flag indicating mailbox has messages to process
+  has_pending_messages: bool,
 }
 
 impl<A: LifeCycle> Agent<A> {
@@ -158,7 +158,6 @@ impl<A: LifeCycle> Agent<A> {
     }
   }
 
-  // TODO: This function seems redundant.  We should just use process_any_message.
   pub fn process_message<M>(&mut self, message: M) -> Vec<Rc<dyn Any>>
   where M: Message + Clone {
     if !self.is_active() {
@@ -179,8 +178,7 @@ impl<A: LifeCycle> Agent<A> {
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message + Clone,
-    A: Handler<M> + 'static,
-    A::Reply: 'static, {
+    A: Handler<M>, {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<A, M>());
     self
   }
