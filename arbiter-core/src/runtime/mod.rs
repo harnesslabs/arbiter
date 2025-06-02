@@ -90,7 +90,7 @@ impl Runtime {
 
     for agent in self.agents.values_mut() {
       if agent.handlers().contains_key(&message_type) {
-        agent.enqueue_shared_message(message.clone());
+        agent.queue_message(message.clone());
       }
     }
     // The message will be cleaned up by the agents when they process it, the original Rc created
@@ -104,7 +104,7 @@ impl Runtime {
     self.agents.get_mut(&agent_id).map_or_else(
       || Err(format!("Agent with ID {agent_id} not found")),
       |agent| {
-        agent.enqueue_shared_message(message.clone());
+        agent.queue_message(message.clone());
         Ok(())
       },
     )
@@ -381,7 +381,7 @@ impl Runtime {
 
     for agent in self.agents.values_mut() {
       if agent.handlers().contains_key(&reply_type) {
-        agent.enqueue_shared_message(reply.clone());
+        agent.queue_message(reply.clone());
       }
     }
   }

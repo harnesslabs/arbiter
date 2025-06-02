@@ -1,39 +1,38 @@
-use std::{
-  any::{Any, TypeId},
-  collections::HashMap,
-  rc::Rc,
-};
+use std::{any::Any, collections::HashMap, rc::Rc};
 
 use crate::{
   agent::{Agent, AgentState, LifeCycle, RuntimeAgent},
-  handler::Message,
   transport::{
-    memory::{InMemoryEnvelope, InMemoryTransport},
-    AgentIdentity, Envelope, FabricId, Transport, TransportLayer,
+    memory::InMemoryTransport, AgentIdentity, Envelope, FabricId, SendTarget, Transport,
   },
 };
 
 /// A generic fabric that manages agents over a specific transport layer
-pub struct Fabric<T: TransportLayer> {
+pub struct Fabric<T: Transport> {
   id:         FabricId,
   transport:  T,
-  agents:     HashMap<AgentIdentity, Box<dyn RuntimeAgent>>,
+  agents:     HashMap<AgentIdentity, Box<dyn RuntimeAgent<T>>>,
   name_to_id: HashMap<String, AgentIdentity>,
 }
 
-impl<T: TransportLayer> Fabric<T> {
+impl<T: Transport> Fabric<T> {
   /// Create a new fabric with the given transport
-  pub fn new(transport: T) -> Self {
-    Self { id: FabricId::generate(), transport, agents: HashMap::new(), name_to_id: HashMap::new() }
+  pub fn new() -> Self {
+    Self {
+      id:         FabricId::generate(),
+      transport:  T::new(),
+      agents:     HashMap::new(),
+      name_to_id: HashMap::new(),
+    }
   }
 
   /// Get the fabric's unique identifier
   pub fn id(&self) -> FabricId { self.id }
 
   /// Register an agent with the fabric
-  pub fn register_agent<A>(&mut self, agent: Agent<A>) -> AgentIdentity
+  pub fn register_agent<A>(&mut self, agent: Agent<A, T>) -> AgentIdentity
   where A: LifeCycle {
-    let id = AgentIdentity::generate(); // Generate new cross-fabric identity
+    let id = AgentIdentity::generate();
     self.agents.insert(id, Box::new(agent));
     id
   }
@@ -42,7 +41,7 @@ impl<T: TransportLayer> Fabric<T> {
   pub fn register_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A>,
+    agent: Agent<A, T>,
   ) -> Result<AgentIdentity, String>
   where
     A: LifeCycle,
@@ -59,7 +58,7 @@ impl<T: TransportLayer> Fabric<T> {
   }
 
   /// Register an agent and start it immediately
-  pub fn spawn_agent<A>(&mut self, agent: Agent<A>) -> AgentIdentity
+  pub fn spawn_agent<A>(&mut self, agent: Agent<A, T>) -> AgentIdentity
   where A: LifeCycle {
     let id = self.register_agent(agent);
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
@@ -70,7 +69,7 @@ impl<T: TransportLayer> Fabric<T> {
   pub fn spawn_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A>,
+    agent: Agent<A, T>,
   ) -> Result<AgentIdentity, String>
   where
     A: LifeCycle,
@@ -135,13 +134,23 @@ impl<T: TransportLayer> Fabric<T> {
 
   /// Execute a single fabric step: poll transport and process messages
   pub fn step(&mut self) {
-    // Poll transport for incoming envelopes
+    // Poll transport for incoming envelopes (these came from the `send` method)
     let envelopes = self.transport.poll();
 
-    // Process each envelope
+    // Process each envelope and send
     for envelope in envelopes {
-      // This needs to be implemented per transport type
-      // For now, InMemoryTransport has a specialized implementation
+      for agent in self.agents.values_mut() {
+        // TODO: WE clone here, but really should do some shared reference or something. This is not
+        // necessarily a light weight clone at all. We need some way of encapsulating what kind of
+        // sharing we are doing here.
+        // TODO: This also greedily gives the agent the message which it may not handle, but that is
+        // caught in the `process_pending_messages` method (this is okay)
+        if envelope.to == SendTarget::Address(agent.address())
+          || envelope.to == SendTarget::Broadcast
+        {
+          agent.queue_message(envelope.payload.clone());
+        }
+      }
     }
 
     // Process agent mailboxes and collect replies
@@ -160,108 +169,32 @@ impl<T: TransportLayer> Fabric<T> {
   }
 
   /// Helper function to route reply messages back into the system
-  fn route_reply_to_agents(&mut self, reply: Rc<dyn Any>) {
-    let reply_type = reply.as_ref().type_id();
+  fn route_reply_to_agents(&mut self, reply: T::Payload) {
+    let reply_type = reply.type_id();
 
     for agent in self.agents.values_mut() {
       if agent.handlers().contains_key(&reply_type) {
-        agent.enqueue_shared_message(reply.clone());
+        // TODO: We clone here, where this may be a lightweight clone like Rc<dyn Message>
+        agent.queue_message(reply.clone());
       }
+    }
+  }
+
+  pub fn broadcast_message(&mut self, message: T::Payload) {
+    for agent in self.agents.values_mut() {
+      agent.queue_message(message.clone());
     }
   }
 }
 
 impl<T> Default for Fabric<T>
-where T: TransportLayer + Default
+where T: Transport + Default
 {
-  fn default() -> Self { Self::new(T::default()) }
-}
-
-// Specialized implementation for InMemoryTransport that preserves current Runtime semantics
-impl Fabric<InMemoryTransport> {
-  /// Send a message to all agents that can handle it (broadcast)
-  pub fn broadcast_message<M>(&mut self, message: M)
-  where M: Message {
-    let message_type = TypeId::of::<M>();
-    let message = Rc::new(message);
-
-    for agent in self.agents.values_mut() {
-      if agent.handlers().contains_key(&message_type) {
-        agent.enqueue_shared_message(message.clone());
-      }
-    }
-  }
-
-  /// Send a message to a specific agent by ID
-  pub fn send_to_agent_by_id<M>(
-    &mut self,
-    agent_id: AgentIdentity,
-    message: M,
-  ) -> Result<(), String>
-  where
-    M: Message,
-  {
-    let message = Rc::new(message);
-    self.agents.get_mut(&agent_id).map_or_else(
-      || Err(format!("Agent with ID {agent_id} not found")),
-      |agent| {
-        agent.enqueue_shared_message(message.clone());
-        Ok(())
-      },
-    )
-  }
-
-  /// Send a message to a specific agent by name
-  pub fn send_to_agent_by_name<M>(&mut self, agent_name: &str, message: M) -> Result<(), String>
-  where M: Message {
-    let agent_id =
-      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
-    self.send_to_agent_by_id(agent_id, message)
-  }
-
-  /// Process all pending messages across all agents
-  pub fn process_all_pending_messages(&mut self) -> usize {
-    let mut total_processed = 0;
-    let mut all_replies = Vec::new();
-
-    // First pass: collect all replies without routing them
-    for agent in self.agents.values_mut() {
-      if agent.should_process_mailbox() {
-        let replies = agent.process_pending_messages();
-        total_processed += replies.len();
-        all_replies.extend(replies);
-      }
-    }
-
-    // Second pass: route all collected replies back into agent mailboxes
-    for reply in all_replies {
-      self.route_reply_to_agents(reply);
-    }
-
-    total_processed
-  }
-
-  /// Override process_envelope for in-memory transport
-  fn process_envelope(&mut self, envelope: InMemoryEnvelope) {
-    // For in-memory, we can directly use the Rc<dyn Any> message
-    let message = envelope.message().clone();
-    let message_type = envelope.message_type();
-
-    // Route to specific agent if addressed to one
-    if let Some(agent) = self.agents.get_mut(envelope.address_to()) {
-      if agent.handlers().contains_key(&message_type) {
-        agent.enqueue_shared_message(message);
-      }
-    }
-  }
-}
-
-/// Type alias for backward compatibility
-pub type InMemoryFabric = Fabric<InMemoryTransport>;
-
-impl Default for InMemoryTransport {
   fn default() -> Self { Self::new() }
 }
+
+/// Type alias for in-memory fabric
+pub type InMemoryFabric = Fabric<InMemoryTransport>;
 
 #[cfg(test)]
 mod tests {
@@ -318,7 +251,7 @@ mod tests {
 
   #[test]
   fn test_fabric_basics() {
-    let mut fabric = InMemoryFabric::new(InMemoryTransport::new());
+    let mut fabric = InMemoryFabric::new();
 
     // Register agents
     let counter_id = fabric.register_agent(Agent::new(Counter { total: 0 }));
@@ -337,7 +270,7 @@ mod tests {
 
   #[test]
   fn test_fabric_message_routing() {
-    let mut fabric = InMemoryFabric::new(InMemoryTransport::new());
+    let mut fabric = InMemoryFabric::new();
 
     // Register agents with specific handlers
     let counter = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
@@ -351,12 +284,18 @@ mod tests {
     fabric.start_agent_by_id(counter_id).unwrap();
     fabric.start_agent_by_id(logger_id).unwrap();
 
-    // Send messages - should route to appropriate agents
-    fabric.broadcast_message(NumberMessage { value: 42 });
-    fabric.broadcast_message(TextMessage { content: "Hello".to_string() });
+    // TODO: Implement broadcast and send methods for generic fabric
+    fabric.broadcast_message(Rc::new(NumberMessage { value: 42 }));
+    fabric.broadcast_message(Rc::new(TextMessage { content: "Hello".to_string() }));
 
     // Process pending messages
-    let processed = fabric.process_all_pending_messages();
-    assert_eq!(processed, 2); // Two messages processed
+    fabric.step();
+    let counter =
+      fabric.agents.get(&counter_id).unwrap().inner_as_any().downcast_ref::<Counter>().unwrap();
+    let logger =
+      fabric.agents.get(&logger_id).unwrap().inner_as_any().downcast_ref::<Logger>().unwrap();
+
+    assert_eq!(counter.total, 42);
+    assert_eq!(logger.message_count, 1);
   }
 }

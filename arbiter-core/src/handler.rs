@@ -1,5 +1,7 @@
 use std::{any::Any, rc::Rc};
 
+use crate::transport::Transport;
+
 /// Trait for types that can be sent as messages between agents
 pub trait Message: Any + 'static {}
 
@@ -12,7 +14,7 @@ pub trait Handler<M> {
   fn handle(&mut self, message: &M) -> Self::Reply;
 }
 
-pub type MessageHandlerFn = Box<dyn Fn(&mut dyn Any, &dyn Any) -> Rc<dyn Any>>;
+pub type MessageHandlerFn = Box<dyn Fn(&mut dyn Any, &dyn Any) -> Option<Box<dyn Message>>>;
 
 pub fn create_handler<A, M>() -> MessageHandlerFn
 where
@@ -22,10 +24,9 @@ where
     if let (Some(typed_agent), Some(typed_message)) =
       (agent.downcast_mut::<A>(), message.downcast_ref::<M>())
     {
-      let reply = typed_agent.handle(typed_message);
-      Rc::new(reply)
+      Some(Box::new(typed_agent.handle(typed_message)))
     } else {
-      Rc::new(())
+      None
     }
   })
 }

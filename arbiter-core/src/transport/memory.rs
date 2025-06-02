@@ -1,10 +1,7 @@
-use std::{
-  any::{Any, TypeId},
-  collections::VecDeque,
-  rc::Rc,
-};
+use std::{any::Any, collections::VecDeque, rc::Rc};
 
-use super::{AgentIdentity, Envelope, TransportLayer};
+use super::{AgentIdentity, Envelope, Transport};
+use crate::handler::Message;
 
 /// In-memory transport that preserves current Runtime behavior
 pub struct InMemoryTransport {
@@ -12,16 +9,20 @@ pub struct InMemoryTransport {
   message_queue:  VecDeque<Envelope<Self>>,
 }
 
-impl InMemoryTransport {
-  pub fn new() -> Self {
-    Self { local_identity: AgentIdentity::generate(), message_queue: VecDeque::new() }
-  }
+// TODO: This is a hack to get around the fact that we need to store messages in a VecDeque
+// We need to find a better way to do this.
+impl From<Box<dyn Message>> for Rc<dyn Any> {
+  fn from(message: Box<dyn Message>) -> Self { Rc::new(Box::leak(message)) }
 }
 
-impl TransportLayer for InMemoryTransport {
+impl Transport for InMemoryTransport {
   type Address = AgentIdentity;
   type Error = String;
   type Payload = Rc<dyn Any>;
+
+  fn new() -> Self {
+    Self { local_identity: AgentIdentity::generate(), message_queue: VecDeque::new() }
+  }
 
   // For in-memory transport, "sending" just enqueues locally
   fn send(&mut self, envelope: Envelope<Self>) -> Result<(), Self::Error> {
@@ -40,25 +41,6 @@ impl TransportLayer for InMemoryTransport {
   fn local_address(&self) -> Self::Address { self.local_identity }
 }
 
-/// In-memory envelope that preserves current Rc<dyn Any> semantics
-#[derive(Clone)]
-pub struct InMemoryEnvelope {
-  from:         AgentIdentity,
-  to:           AgentIdentity,
-  message:      Rc<dyn Any>,
-  message_type: TypeId,
-}
-
-impl InMemoryEnvelope {
-  pub fn new_with_message<M: Any + 'static>(
-    from: AgentIdentity,
-    to: AgentIdentity,
-    message: M,
-  ) -> Self {
-    Self { from, to, message: Rc::new(message), message_type: TypeId::of::<M>() }
-  }
-
-  pub fn message(&self) -> &Rc<dyn Any> { &self.message }
-
-  pub fn message_type(&self) -> TypeId { self.message_type }
+impl Default for InMemoryTransport {
+  fn default() -> Self { Self::new() }
 }
