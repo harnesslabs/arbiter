@@ -142,26 +142,9 @@ impl<A: LifeCycle> Agent<A> {
     }
   }
 
-  pub fn process_message<M>(&mut self, message: M) -> Vec<Rc<dyn Any>>
-  where M: Message + Clone {
-    if !self.is_active() {
-      return Vec::new();
-    }
-
-    let mut replies = Vec::new();
-    let type_id = TypeId::of::<M>();
-    if let Some(handler) = self.handlers.get(&type_id) {
-      let agent_any: &mut dyn Any = &mut self.inner;
-      let message_any: &dyn Any = &message;
-      let reply = handler(agent_any, message_any);
-      replies.push(reply);
-    }
-    replies
-  }
-
   pub fn with_handler<M>(mut self) -> Self
   where
-    M: Message + Clone,
+    M: Message,
     A: Handler<M>, {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<A, M>());
     self
@@ -232,7 +215,10 @@ impl<A: LifeCycle> RuntimeAgent for crate::agent::Agent<A> {
       return all_replies; // Only process if agent is running
     }
 
+    println!("Processing pending messages for agent {}", self.id);
+
     while let Some(message) = self.mailbox.pop_front() {
+      println!("Processing message: {:?}", message);
       let type_id = message.type_id();
       if let Some(handler) = self.handlers.get(&type_id) {
         let agent_any: &mut dyn Any = &mut self.inner;
@@ -273,7 +259,7 @@ mod tests {
   impl Handler<Increment> for Arithmetic {
     type Reply = ();
 
-    fn handle(&mut self, message: Increment) -> Self::Reply {
+    fn handle(&mut self, message: &Increment) -> Self::Reply {
       println!("Handler 1 - Received message: {message:?}");
       self.state += message.0;
       println!("Handler 1 - Updated state: {}", self.state);
@@ -283,7 +269,7 @@ mod tests {
   impl Handler<Multiply> for Arithmetic {
     type Reply = i32;
 
-    fn handle(&mut self, message: Multiply) -> Self::Reply {
+    fn handle(&mut self, message: &Multiply) -> Self::Reply {
       println!("Handler 2 - Multiplying state {} by {}", self.state, message.0);
       self.state *= message.0;
       println!("Handler 2 - Updated state: {}", self.state);
@@ -326,7 +312,8 @@ mod tests {
     arithmetic.start();
 
     let increment = Increment(5);
-    let _result = arithmetic.process_message(increment);
+    let _result = arithmetic.enqueue_message(increment);
+    arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 6);
   }
 
@@ -341,7 +328,8 @@ mod tests {
     assert!(!arithmetic.is_active());
 
     let increment = Increment(5);
-    arithmetic.process_message(increment);
+    arithmetic.enqueue_message(increment);
+    arithmetic.process_pending_messages();
     assert_eq!(arithmetic.state(), AgentState::Stopped);
     assert_eq!(arithmetic.inner.state, 1);
 
@@ -351,10 +339,12 @@ mod tests {
 
     // Now messages should be processed
     let increment = Increment(5);
-    let _result = arithmetic.process_message(increment);
+    let _result = arithmetic.enqueue_message(increment);
+    arithmetic.process_pending_messages();
 
     let multiply = Multiply(3);
-    let _result = arithmetic.process_message(multiply);
+    let _result = arithmetic.enqueue_message(multiply);
+    arithmetic.process_pending_messages();
 
     assert_eq!(arithmetic.inner.state, 18); // (1 + 5) * 3 = 18
   }

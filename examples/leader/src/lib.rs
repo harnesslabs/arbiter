@@ -145,7 +145,7 @@ impl LifeCycle for Leader {}
 impl Handler<Tick> for Leader {
   type Reply = ();
 
-  fn handle(&mut self, _message: Tick) -> Self::Reply {
+  fn handle(&mut self, _message: &Tick) -> Self::Reply {
     self.move_agent();
 
     // Write directly to shared state
@@ -216,7 +216,7 @@ impl LifeCycle for Follower {}
 impl Handler<Tick> for Follower {
   type Reply = ();
 
-  fn handle(&mut self, _message: Tick) -> Self::Reply {
+  fn handle(&mut self, _message: &Tick) -> Self::Reply {
     // Read leader positions directly from shared state instead of relying on messages
     if let Ok(shared_agents) = get_shared_agent_state().lock() {
       self.leader_positions.clear();

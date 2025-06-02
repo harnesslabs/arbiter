@@ -444,7 +444,7 @@ mod tests {
   impl Handler<NumberMessage> for Counter {
     type Reply = ();
 
-    fn handle(&mut self, message: NumberMessage) -> Self::Reply {
+    fn handle(&mut self, message: &NumberMessage) -> Self::Reply {
       self.total += message.value;
       println!("CounterAgent total is now: {}", self.total);
     }
@@ -453,7 +453,7 @@ mod tests {
   impl Handler<TextMessage> for Logger {
     type Reply = ();
 
-    fn handle(&mut self, message: TextMessage) -> Self::Reply {
+    fn handle(&mut self, message: &TextMessage) -> Self::Reply {
       self.message_count += 1;
       println!(
         "LogAgent '{}' received: '{}' (count: {})",
@@ -644,7 +644,7 @@ mod tests {
   impl Handler<RequestData> for Producer {
     type Reply = ResponseData;
 
-    fn handle(&mut self, message: RequestData) -> Self::Reply {
+    fn handle(&mut self, message: &RequestData) -> Self::Reply {
       ResponseData { result: message.value * self.multiplier }
     }
   }
@@ -661,7 +661,7 @@ mod tests {
   impl Handler<ResponseData> for Consumer {
     type Reply = ();
 
-    fn handle(&mut self, message: ResponseData) -> Self::Reply {
+    fn handle(&mut self, message: &ResponseData) -> Self::Reply {
       self.total += message.result;
       self.responses_received += 1;
     }
