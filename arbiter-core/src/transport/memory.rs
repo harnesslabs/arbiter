@@ -1,11 +1,7 @@
-use std::{any::Any, collections::VecDeque, future::Future, pin::Pin, rc::Rc};
+use std::{any::Any, collections::VecDeque, rc::Rc};
 
 use super::Transport;
-use crate::{
-  agent::AgentIdentity,
-  handler::Message,
-  transport::{AsyncRuntime, Runtime, SyncRuntime},
-};
+use crate::{agent::AgentIdentity, handler::Message, transport::SyncRuntime};
 
 /// In-memory transport that preserves current Runtime behavior
 pub struct InMemoryTransport {
@@ -15,9 +11,9 @@ pub struct InMemoryTransport {
 
 // TODO: This is a hack to get around the fact that we need to store messages in a VecDeque
 // We need to find a better way to do this.
-impl From<Box<dyn Message>> for Rc<dyn Any> {
-  fn from(message: Box<dyn Message>) -> Self { Rc::new(Box::leak(message)) }
-}
+// impl From<Box<dyn Message>> for Rc<dyn Any> {
+//   fn from(message: Box<dyn Message>) -> Self { Rc::new(Box::leak(message)) }
+// }
 
 impl Transport<SyncRuntime> for InMemoryTransport {
   type Address = AgentIdentity;

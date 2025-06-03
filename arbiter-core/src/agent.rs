@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-  handler::{create_handler, Handler, Message, MessageHandlerFn},
+  handler::{create_handler, Handler, Message, MessageHandlerFn, PackageMessage, UnpackageMessage},
   transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
 };
 
@@ -26,7 +26,7 @@ pub struct Agent<S: LifeCycle, T: Transport<R>, R: Runtime> {
   inner:                S,
   state:                AgentState,
   mailbox:              VecDeque<T::Payload>,
-  handlers:             HashMap<TypeId, MessageHandlerFn>,
+  handlers:             HashMap<TypeId, MessageHandlerFn<T, R>>,
   has_pending_messages: bool,
   _runtime:             PhantomData<R>,
 }
@@ -60,7 +60,9 @@ impl<A: LifeCycle> Agent<A, InMemoryTransport, SyncRuntime> {
   }
 }
 
-impl<A: LifeCycle, T: Transport<R>, R: Runtime> Agent<A, T, R> {
+impl<A: LifeCycle, T: Transport<R>, R: Runtime> Agent<A, T, R>
+where T::Payload: std::fmt::Debug
+{
   /// Set the agent's name
   pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
 
@@ -116,8 +118,10 @@ impl<A: LifeCycle, T: Transport<R>, R: Runtime> Agent<A, T, R> {
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
-    A: Handler<M>, {
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<A, M>());
+    A: Handler<M>,
+    T::Payload: UnpackageMessage<M> + PackageMessage<A::Reply>, {
+    println!("Adding handler for message type: {:?}", TypeId::of::<M>());
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<A, M, T, R>());
     self
   }
 }
@@ -173,14 +177,14 @@ pub trait RuntimeAgent<T: Transport<R>, R: Runtime> {
   fn should_process_mailbox(&self) -> bool;
   fn queue_message(&mut self, message: T::Payload);
   fn process_pending_messages(&mut self) -> Vec<T::Payload>;
-  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn>;
+  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn<T, R>>;
 
   #[cfg(test)]
   fn inner_as_any(&self) -> &dyn Any;
 }
 
-impl<A: LifeCycle, T: Transport<R>, R: Runtime> RuntimeAgent<T, R>
-  for crate::agent::Agent<A, T, R>
+impl<A: LifeCycle, T: Transport<R>, R: Runtime> RuntimeAgent<T, R> for crate::agent::Agent<A, T, R>
+where T::Payload: std::fmt::Debug
 {
   fn address(&self) -> T::Address { self.address }
 
@@ -220,15 +224,14 @@ impl<A: LifeCycle, T: Transport<R>, R: Runtime> RuntimeAgent<T, R>
     }
 
     while let Some(message) = self.mailbox.pop_front() {
-      let message = &*message;
-      if let Some(handler) = self.handlers.get(&message.type_id()) {
+      dbg!(&message);
+      dbg!(&message.unpackage().unwrap());
+      let message_type = (*(message.unpackage().unwrap())).type_id();
+      println!("Message type: {:?}", message_type);
+      if let Some(handler) = self.handlers.get(&message_type) {
         let agent: &mut dyn Any = &mut self.inner;
-
-        println!("Message: {:?}", message.type_id());
         let reply = handler(agent, message);
-        if let Some(reply) = reply {
-          replies.push(reply.into());
-        }
+        replies.push(reply);
       }
     }
 
@@ -236,7 +239,7 @@ impl<A: LifeCycle, T: Transport<R>, R: Runtime> RuntimeAgent<T, R>
     replies
   }
 
-  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn> { &self.handlers }
+  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn<T, R>> { &self.handlers }
 
   #[cfg(test)]
   fn inner_as_any(&self) -> &dyn Any { &self.inner }
@@ -325,6 +328,7 @@ mod tests {
 
     let increment = Increment(5);
     arithmetic.queue_message(Rc::new(increment));
+    dbg!(Rc::new(Increment(5)).type_id());
     arithmetic.process_pending_messages();
     assert_eq!(arithmetic.inner.state, 6);
   }

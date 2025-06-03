@@ -2,6 +2,7 @@ use std::{any::Any, collections::HashMap, marker::PhantomData};
 
 use crate::{
   agent::{Agent, AgentIdentity, AgentState, LifeCycle, RuntimeAgent},
+  handler::{PackageMessage, UnpackageMessage},
   transport::{memory::InMemoryTransport, AsyncRuntime, Runtime, SyncRuntime, Transport},
 };
 
@@ -14,7 +15,9 @@ pub struct Fabric<T: Transport<R>, R: Runtime> {
   _runtime:   PhantomData<R>,
 }
 
-impl<T: Transport<R>, R: Runtime> Fabric<T, R> {
+impl<T: Transport<R>, R: Runtime> Fabric<T, R>
+where T::Payload: std::fmt::Debug
+{
   /// Create a new fabric with the given transport
   pub fn new() -> Self {
     Self {
@@ -138,7 +141,6 @@ impl<T: Transport<R>, R: Runtime> Fabric<T, R> {
 
     for agent in self.agents.values_mut() {
       if agent.handlers().contains_key(&reply_type) {
-        // TODO: We clone here, where this may be a lightweight clone like Rc<dyn Message>
         agent.queue_message(reply.clone());
       }
     }
@@ -151,7 +153,9 @@ impl<T: Transport<R>, R: Runtime> Fabric<T, R> {
   }
 }
 
-impl<T: Transport<SyncRuntime>> Fabric<T, SyncRuntime> {
+impl<T: Transport<SyncRuntime>> Fabric<T, SyncRuntime>
+where T::Payload: std::fmt::Debug
+{
   /// Execute a single fabric step: poll transport and process messages
   pub fn step(&mut self) {
     // Process each payload and send
@@ -183,7 +187,9 @@ impl<T: Transport<SyncRuntime>> Fabric<T, SyncRuntime> {
   }
 }
 
-impl<T: Transport<AsyncRuntime>> Fabric<T, AsyncRuntime> {
+impl<T: Transport<AsyncRuntime>> Fabric<T, AsyncRuntime>
+where T::Payload: std::fmt::Debug
+{
   /// Execute a single fabric step: poll transport and process messages
   pub async fn step(&mut self) {
     // Process each payload and send
@@ -214,7 +220,9 @@ impl<T: Transport<AsyncRuntime>> Fabric<T, AsyncRuntime> {
   }
 }
 
-impl<T: Transport<R>, R: Runtime> Default for Fabric<T, R> {
+impl<T: Transport<R>, R: Runtime> Default for Fabric<T, R>
+where T::Payload: std::fmt::Debug
+{
   fn default() -> Self { Self::new() }
 }
 

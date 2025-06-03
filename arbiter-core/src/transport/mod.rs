@@ -1,8 +1,11 @@
 use std::{any::Any, future::Future, ops::Deref, pin::Pin};
 
-use crate::handler::Message;
+use serde::Deserialize;
+
+use crate::handler::{Message, UnpackageMessage};
 
 pub mod memory;
+pub mod tcp;
 
 pub trait Runtime: 'static {
   type Output<T>;
@@ -31,7 +34,7 @@ pub trait Transport<R: Runtime>: Sized + 'static {
   type Address: Copy + Send + Sync + PartialEq + Eq;
 
   /// Transport-specific payload type
-  type Payload: Clone + Deref<Target = dyn Any> + From<Box<dyn Message>>;
+  type Payload: Clone + Message + UnpackageMessage<&'static dyn Any>;
 
   /// Transport-specific error type
   // TODO: Make this a real error type
