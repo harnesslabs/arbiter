@@ -1,6 +1,4 @@
-use std::{any::Any, ops::Deref, rc::Rc};
-
-use serde::{Deserialize, Deserializer, Serializer};
+use std::{any::Any, rc::Rc};
 
 use crate::transport::{Runtime, Transport};
 
@@ -17,25 +15,30 @@ pub trait Handler<M> {
 }
 
 // TODO: I think we want this T::Payload to also have the ability to take a unit type ()
-pub type MessageHandlerFn<T: Transport<R>, R: Runtime> =
-  Box<dyn Fn(&mut dyn Any, T::Payload) -> T::Payload>;
+pub type MessageHandlerFn<T: Transport<R>, R> = Box<dyn Fn(&mut dyn Any, T::Payload) -> T::Payload>;
 
 // TODO: This panic is bad.
-pub fn create_handler<'a, A, M, T, R>() -> MessageHandlerFn<T, R>
+pub fn create_handler<'a, M, L, T, R>() -> MessageHandlerFn<T, R>
 where
-  A: Handler<M> + 'static,
+  L: Handler<M> + 'static,
   M: Message,
   T: Transport<R>,
-  T::Payload: UnpackageMessage<M> + PackageMessage<A::Reply>,
+  T::Payload: UnpackageMessage<M> + PackageMessage<L::Reply>,
   R: Runtime, {
   Box::new(|agent: &mut dyn Any, message: T::Payload| {
-    if let Some(typed_agent) = agent.downcast_mut::<A>() {
-      let message = message.unpackage().unwrap();
-      let reply = typed_agent.handle(message);
-      T::Payload::package(reply)
-    } else {
-      panic!("Agent does not handle message type");
-    }
+    agent.downcast_mut::<L>().map_or_else(
+      || {
+        unreachable!(
+          "This should never happen as we've already checked the `Agent` type from the call site"
+        );
+      },
+      |typed_agent| {
+        // TODO: I think this unwrap is also fine since we check the typeid at the call site.
+        let message = message.unpackage().unwrap();
+        let reply = typed_agent.handle(message);
+        T::Payload::package(reply)
+      },
+    )
   })
 }
 

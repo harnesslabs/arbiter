@@ -20,10 +20,10 @@ pub trait LifeCycle: 'static {
 }
 
 // TODO: I need to rename all of this stuff.  It's confusing.
-pub struct Agent<S: LifeCycle, T: Transport<R>, R: Runtime> {
+pub struct Agent<L: LifeCycle, T: Transport<R>, R: Runtime> {
   address:              T::Address,
   name:                 Option<String>,
-  inner:                S,
+  inner:                L,
   state:                AgentState,
   mailbox:              VecDeque<T::Payload>,
   handlers:             HashMap<TypeId, MessageHandlerFn<T, R>>,
@@ -31,8 +31,8 @@ pub struct Agent<S: LifeCycle, T: Transport<R>, R: Runtime> {
   _runtime:             PhantomData<R>,
 }
 
-impl<A: LifeCycle> Agent<A, InMemoryTransport, SyncRuntime> {
-  pub fn new(agent: A) -> Self {
+impl<L: LifeCycle> Agent<L, InMemoryTransport, SyncRuntime> {
+  pub fn new(agent: L) -> Self {
     Self {
       address:              AgentIdentity::generate(),
       name:                 None,
@@ -46,7 +46,7 @@ impl<A: LifeCycle> Agent<A, InMemoryTransport, SyncRuntime> {
   }
 
   /// Create an agent with a specific name
-  pub fn with_name(agent: A, name: impl Into<String>) -> Self {
+  pub fn with_name(agent: L, name: impl Into<String>) -> Self {
     Self {
       address:              AgentIdentity::generate(),
       name:                 Some(name.into()),
@@ -60,7 +60,7 @@ impl<A: LifeCycle> Agent<A, InMemoryTransport, SyncRuntime> {
   }
 }
 
-impl<A: LifeCycle, T: Transport<R>, R: Runtime> Agent<A, T, R>
+impl<L: LifeCycle, T: Transport<R>, R: Runtime> Agent<L, T, R>
 where T::Payload: std::fmt::Debug
 {
   /// Set the agent's name
@@ -110,18 +110,18 @@ where T::Payload: std::fmt::Debug
   pub fn is_active(&self) -> bool { self.state == AgentState::Running }
 
   // Get mutable access to the underlying agent
-  pub const fn inner_mut(&mut self) -> &mut A { &mut self.inner }
+  pub const fn inner_mut(&mut self) -> &mut L { &mut self.inner }
 
   // Get immutable access to the underlying agent
-  pub const fn inner(&self) -> &A { &self.inner }
+  pub const fn inner(&self) -> &L { &self.inner }
 
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
-    A: Handler<M>,
-    T::Payload: UnpackageMessage<M> + PackageMessage<A::Reply>, {
+    L: Handler<M>,
+    T::Payload: UnpackageMessage<M> + PackageMessage<L::Reply>, {
     println!("Adding handler for message type: {:?}", TypeId::of::<M>());
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<A, M, T, R>());
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T, R>());
     self
   }
 }
@@ -144,9 +144,9 @@ impl AgentIdentity {
     Self(bytes)
   }
 
-  pub fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+  pub const fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
 
-  pub fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+  pub const fn as_bytes(&self) -> &[u8; 32] { &self.0 }
 }
 
 impl std::fmt::Display for AgentIdentity {
@@ -227,14 +227,11 @@ where T::Payload: std::fmt::Debug
       dbg!(&message);
 
       let concrete_message_type_id = message.as_ref().type_id();
-      println!("Message type ID for handler lookup: {:?}", concrete_message_type_id);
 
       if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
         let agent_ref: &mut dyn Any = &mut self.inner;
         let reply = handler(agent_ref, message);
         replies.push(reply);
-      } else {
-        println!("Warning: No handler found for message type ID: {:?}", concrete_message_type_id);
       }
     }
 
