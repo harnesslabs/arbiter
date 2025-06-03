@@ -1,11 +1,12 @@
 use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
+  marker::PhantomData,
 };
 
 use crate::{
   handler::{create_handler, Handler, Message, MessageHandlerFn},
-  transport::{memory::InMemoryTransport, Transport},
+  transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
 };
 
 pub trait LifeCycle: 'static {
@@ -19,7 +20,7 @@ pub trait LifeCycle: 'static {
 }
 
 // TODO: I need to rename all of this stuff.  It's confusing.
-pub struct Agent<S: LifeCycle, T: Transport> {
+pub struct Agent<S: LifeCycle, T: Transport<R>, R: Runtime> {
   address:              T::Address,
   name:                 Option<String>,
   inner:                S,
@@ -27,9 +28,10 @@ pub struct Agent<S: LifeCycle, T: Transport> {
   mailbox:              VecDeque<T::Payload>,
   handlers:             HashMap<TypeId, MessageHandlerFn>,
   has_pending_messages: bool,
+  _runtime:             PhantomData<R>,
 }
 
-impl<A: LifeCycle> Agent<A, InMemoryTransport> {
+impl<A: LifeCycle> Agent<A, InMemoryTransport, SyncRuntime> {
   pub fn new(agent: A) -> Self {
     Self {
       address:              AgentIdentity::generate(),
@@ -39,6 +41,7 @@ impl<A: LifeCycle> Agent<A, InMemoryTransport> {
       mailbox:              VecDeque::new(),
       handlers:             HashMap::new(),
       has_pending_messages: false,
+      _runtime:             PhantomData,
     }
   }
 
@@ -52,11 +55,12 @@ impl<A: LifeCycle> Agent<A, InMemoryTransport> {
       mailbox:              VecDeque::new(),
       handlers:             HashMap::new(),
       has_pending_messages: false,
+      _runtime:             PhantomData,
     }
   }
 }
 
-impl<A: LifeCycle, T: Transport> Agent<A, T> {
+impl<A: LifeCycle, T: Transport<R>, R: Runtime> Agent<A, T, R> {
   /// Set the agent's name
   pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
 
@@ -156,7 +160,8 @@ pub enum AgentState {
 }
 
 // Trait for runtime-manageable agents
-pub trait RuntimeAgent<T: Transport> {
+// TODO: For async, some of these need to return futures
+pub trait RuntimeAgent<T: Transport<R>, R: Runtime> {
   fn address(&self) -> T::Address;
   fn name(&self) -> Option<&str>;
   fn start(&mut self);
@@ -174,7 +179,9 @@ pub trait RuntimeAgent<T: Transport> {
   fn inner_as_any(&self) -> &dyn Any;
 }
 
-impl<A: LifeCycle, T: Transport> RuntimeAgent<T> for crate::agent::Agent<A, T> {
+impl<A: LifeCycle, T: Transport<R>, R: Runtime> RuntimeAgent<T, R>
+  for crate::agent::Agent<A, T, R>
+{
   fn address(&self) -> T::Address { self.address }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
@@ -240,7 +247,10 @@ mod tests {
   use std::rc::Rc;
 
   use super::*;
-  use crate::{handler::Handler, transport::memory::InMemoryTransport};
+  use crate::{
+    handler::Handler,
+    transport::{memory::InMemoryTransport, SyncRuntime},
+  };
 
   // Simple agent struct - just data!
   #[derive(Clone)]
@@ -280,7 +290,7 @@ mod tests {
   #[test]
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
-    let mut shared_agent = Agent::<Arithmetic, InMemoryTransport>::new(arithmetic);
+    let mut shared_agent = Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(arithmetic);
     // Don't test specific ID values as they depend on global counter state
     assert!(shared_agent.address().as_bytes()[0] > 0);
 
@@ -308,8 +318,9 @@ mod tests {
 
   #[test]
   fn test_single_agent_handler() {
-    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 })
-      .with_handler::<Increment>();
+    let mut arithmetic =
+      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 })
+        .with_handler::<Increment>();
     arithmetic.start();
 
     let increment = Increment(5);
@@ -321,7 +332,8 @@ mod tests {
   #[test]
   fn test_multiple_agent_handlers() {
     // Create simple agent
-    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
+    let mut arithmetic =
+      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 });
     arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     // Agent starts in stopped state - messages should be ignored
@@ -352,7 +364,8 @@ mod tests {
 
   #[test]
   fn test_pause_and_resume() {
-    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
+    let mut arithmetic =
+      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 });
     arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     arithmetic.start();
@@ -390,7 +403,8 @@ mod tests {
 
   #[test]
   fn test_stop_and_start() {
-    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
+    let mut arithmetic =
+      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 });
     arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     // Start the agent

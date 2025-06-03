@@ -1,19 +1,22 @@
-use std::{any::Any, collections::HashMap, rc::Rc};
+use std::{any::Any, collections::HashMap, marker::PhantomData, rc::Rc};
 
 use crate::{
   agent::{Agent, AgentIdentity, AgentState, LifeCycle, RuntimeAgent},
-  transport::{memory::InMemoryTransport, SendTarget, Transport},
+  transport::{
+    memory::InMemoryTransport, AsyncRuntime, Runtime, SendTarget, SyncRuntime, Transport,
+  },
 };
 
 /// A generic fabric that manages agents over a specific transport layer
-pub struct Fabric<T: Transport> {
+pub struct Fabric<T: Transport<R>, R: Runtime> {
   id:         FabricId,
   transport:  T,
-  agents:     HashMap<AgentIdentity, Box<dyn RuntimeAgent<T>>>,
+  agents:     HashMap<AgentIdentity, Box<dyn RuntimeAgent<T, R>>>,
   name_to_id: HashMap<String, AgentIdentity>,
+  _runtime:   PhantomData<R>,
 }
 
-impl<T: Transport> Fabric<T> {
+impl<T: Transport<R>, R: Runtime> Fabric<T, R> {
   /// Create a new fabric with the given transport
   pub fn new() -> Self {
     Self {
@@ -21,6 +24,7 @@ impl<T: Transport> Fabric<T> {
       transport:  T::new(),
       agents:     HashMap::new(),
       name_to_id: HashMap::new(),
+      _runtime:   PhantomData,
     }
   }
 
@@ -28,7 +32,7 @@ impl<T: Transport> Fabric<T> {
   pub fn id(&self) -> FabricId { self.id }
 
   /// Register an agent with the fabric
-  pub fn register_agent<A>(&mut self, agent: Agent<A, T>) -> AgentIdentity
+  pub fn register_agent<A>(&mut self, agent: Agent<A, T, R>) -> AgentIdentity
   where A: LifeCycle {
     let id = AgentIdentity::generate();
     self.agents.insert(id, Box::new(agent));
@@ -39,7 +43,7 @@ impl<T: Transport> Fabric<T> {
   pub fn register_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A, T>,
+    agent: Agent<A, T, R>,
   ) -> Result<AgentIdentity, String>
   where
     A: LifeCycle,
@@ -56,7 +60,7 @@ impl<T: Transport> Fabric<T> {
   }
 
   /// Register an agent and start it immediately
-  pub fn spawn_agent<A>(&mut self, agent: Agent<A, T>) -> AgentIdentity
+  pub fn spawn_agent<A>(&mut self, agent: Agent<A, T, R>) -> AgentIdentity
   where A: LifeCycle {
     let id = self.register_agent(agent);
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
@@ -67,7 +71,7 @@ impl<T: Transport> Fabric<T> {
   pub fn spawn_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A, T>,
+    agent: Agent<A, T, R>,
   ) -> Result<AgentIdentity, String>
   where
     A: LifeCycle,
@@ -130,6 +134,26 @@ impl<T: Transport> Fabric<T> {
     self.agents.values().filter(|agent| agent.should_process_mailbox()).count()
   }
 
+  /// Helper function to route reply messages back into the system
+  fn route_reply_to_agents(&mut self, reply: T::Payload) {
+    let reply_type = reply.type_id();
+
+    for agent in self.agents.values_mut() {
+      if agent.handlers().contains_key(&reply_type) {
+        // TODO: We clone here, where this may be a lightweight clone like Rc<dyn Message>
+        agent.queue_message(reply.clone());
+      }
+    }
+  }
+
+  pub fn broadcast_message(&mut self, message: T::Payload) {
+    for agent in self.agents.values_mut() {
+      agent.queue_message(message.clone());
+    }
+  }
+}
+
+impl<T: Transport<SyncRuntime>> Fabric<T, SyncRuntime> {
   /// Execute a single fabric step: poll transport and process messages
   pub fn step(&mut self) {
     // Poll transport for incoming envelopes (these came from the `send` method)
@@ -165,29 +189,47 @@ impl<T: Transport> Fabric<T> {
       self.route_reply_to_agents(reply);
     }
   }
+}
 
-  /// Helper function to route reply messages back into the system
-  fn route_reply_to_agents(&mut self, reply: T::Payload) {
-    let reply_type = reply.type_id();
+impl<T: Transport<AsyncRuntime>> Fabric<T, AsyncRuntime> {
+  /// Execute a single fabric step: poll transport and process messages
+  pub async fn step(&mut self) {
+    // Poll transport for incoming envelopes (these came from the `send` method)
+    let envelopes = self.transport.poll();
 
-    for agent in self.agents.values_mut() {
-      if agent.handlers().contains_key(&reply_type) {
-        // TODO: We clone here, where this may be a lightweight clone like Rc<dyn Message>
-        agent.queue_message(reply.clone());
+    // Process each envelope and send
+    for envelope in envelopes.await {
+      for agent in self.agents.values_mut() {
+        // TODO: WE clone here, but really should do some shared reference or something. This is not
+        // necessarily a light weight clone at all. We need some way of encapsulating what kind of
+        // sharing we are doing here.
+        // TODO: This also greedily gives the agent the message which it may not handle, but that is
+        // caught in the `process_pending_messages` method (this is okay)
+        if envelope.to == SendTarget::Address(agent.address())
+          || envelope.to == SendTarget::Broadcast
+        {
+          agent.queue_message(envelope.payload.clone());
+        }
       }
     }
-  }
 
-  pub fn broadcast_message(&mut self, message: T::Payload) {
+    // Process agent mailboxes and collect replies
+    let mut pending_replies = Vec::new();
     for agent in self.agents.values_mut() {
-      agent.queue_message(message.clone());
+      if agent.should_process_mailbox() {
+        let replies = agent.process_pending_messages();
+        pending_replies.extend(replies);
+      }
+    }
+
+    // Route all replies to appropriate agents
+    for reply in pending_replies {
+      self.route_reply_to_agents(reply);
     }
   }
 }
 
-impl<T> Default for Fabric<T>
-where T: Transport + Default
-{
+impl<T: Transport<R>, R: Runtime> Default for Fabric<T, R> {
   fn default() -> Self { Self::new() }
 }
 
@@ -220,7 +262,7 @@ impl std::fmt::Display for FabricId {
 }
 
 /// Type alias for in-memory fabric
-pub type InMemoryFabric = Fabric<InMemoryTransport>;
+pub type InMemoryFabric = Fabric<InMemoryTransport, SyncRuntime>;
 
 #[cfg(test)]
 mod tests {
