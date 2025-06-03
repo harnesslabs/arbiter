@@ -41,46 +41,11 @@ pub trait Transport<R: Runtime>: Sized + 'static {
   fn new() -> Self;
 
   /// Send an envelope via this transport
-  fn send(&mut self, envelope: Envelope<Self, R>) -> R::Output<Result<(), Self::Error>>;
+  fn send(&mut self, payload: Self::Payload) -> R::Output<Result<(), Self::Error>>;
 
   /// Poll for incoming envelopes
-  fn poll(&mut self) -> R::Output<Vec<Envelope<Self, R>>>;
+  fn poll(&mut self) -> R::Output<Vec<Self::Payload>>;
 
   /// Get the local address for this transport
   fn local_address(&self) -> Self::Address;
-}
-
-// // TODO: Should organize this better so we can have shared parts of the trait between both (e.g.,
-// // the address, payload, error, etc.) but then make the methods async.
-// pub trait AsyncTransport: Transport {
-//   async fn send_async(&mut self, envelope: Envelope<Self>) -> Result<(), Self::Error>;
-// }
-
-#[derive(Clone)]
-pub enum SendTarget<T: Transport<R>, R: Runtime> {
-  Address(T::Address),
-  Broadcast,
-}
-
-impl<T: Transport<R>, R: Runtime> PartialEq for SendTarget<T, R> {
-  fn eq(&self, other: &Self) -> bool {
-    match (self, other) {
-      (Self::Address(a), Self::Address(b)) => a == b,
-      (Self::Broadcast, Self::Broadcast) => true,
-      _ => false,
-    }
-  }
-}
-
-#[derive(Clone)]
-pub struct Envelope<T: Transport<R>, R: Runtime> {
-  pub from:    T::Address,
-  pub to:      SendTarget<T, R>,
-  pub payload: T::Payload,
-}
-
-impl<T: Transport<R>, R: Runtime> Envelope<T, R> {
-  pub fn new(from: T::Address, to: SendTarget<T, R>, payload: T::Payload) -> Self {
-    Self { from, to, payload }
-  }
 }

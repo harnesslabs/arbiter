@@ -1,6 +1,6 @@
 use std::{any::Any, collections::VecDeque, future::Future, pin::Pin, rc::Rc};
 
-use super::{Envelope, Transport};
+use super::Transport;
 use crate::{
   agent::AgentIdentity,
   handler::Message,
@@ -10,7 +10,7 @@ use crate::{
 /// In-memory transport that preserves current Runtime behavior
 pub struct InMemoryTransport {
   local_identity: AgentIdentity,
-  message_queue:  VecDeque<Envelope<Self, SyncRuntime>>,
+  message_queue:  VecDeque<Rc<dyn Any>>,
 }
 
 // TODO: This is a hack to get around the fact that we need to store messages in a VecDeque
@@ -29,15 +29,15 @@ impl Transport<SyncRuntime> for InMemoryTransport {
   }
 
   // For in-memory transport, "sending" just enqueues locally
-  fn send(&mut self, envelope: Envelope<Self, SyncRuntime>) -> Result<(), Self::Error> {
-    self.message_queue.push_back(envelope);
+  fn send(&mut self, payload: Self::Payload) -> Result<(), Self::Error> {
+    self.message_queue.push_back(payload);
     Ok(())
   }
 
-  fn poll(&mut self) -> Vec<Envelope<Self, SyncRuntime>> {
+  fn poll(&mut self) -> Vec<Self::Payload> {
     let mut messages = Vec::new();
-    while let Some(envelope) = self.message_queue.pop_front() {
-      messages.push(envelope);
+    while let Some(payload) = self.message_queue.pop_front() {
+      messages.push(payload);
     }
     messages
   }

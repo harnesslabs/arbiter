@@ -1,10 +1,8 @@
-use std::{any::Any, collections::HashMap, marker::PhantomData, rc::Rc};
+use std::{any::Any, collections::HashMap, marker::PhantomData};
 
 use crate::{
   agent::{Agent, AgentIdentity, AgentState, LifeCycle, RuntimeAgent},
-  transport::{
-    memory::InMemoryTransport, AsyncRuntime, Runtime, SendTarget, SyncRuntime, Transport,
-  },
+  transport::{memory::InMemoryTransport, AsyncRuntime, Runtime, SyncRuntime, Transport},
 };
 
 /// A generic fabric that manages agents over a specific transport layer
@@ -156,22 +154,16 @@ impl<T: Transport<R>, R: Runtime> Fabric<T, R> {
 impl<T: Transport<SyncRuntime>> Fabric<T, SyncRuntime> {
   /// Execute a single fabric step: poll transport and process messages
   pub fn step(&mut self) {
-    // Poll transport for incoming envelopes (these came from the `send` method)
-    let envelopes = self.transport.poll();
-
-    // Process each envelope and send
-    for envelope in envelopes {
+    // Process each payload and send
+    for payload in self.transport.poll() {
       for agent in self.agents.values_mut() {
         // TODO: WE clone here, but really should do some shared reference or something. This is not
         // necessarily a light weight clone at all. We need some way of encapsulating what kind of
         // sharing we are doing here.
         // TODO: This also greedily gives the agent the message which it may not handle, but that is
         // caught in the `process_pending_messages` method (this is okay)
-        if envelope.to == SendTarget::Address(agent.address())
-          || envelope.to == SendTarget::Broadcast
-        {
-          agent.queue_message(envelope.payload.clone());
-        }
+
+        agent.queue_message(payload.clone());
       }
     }
 
@@ -194,22 +186,15 @@ impl<T: Transport<SyncRuntime>> Fabric<T, SyncRuntime> {
 impl<T: Transport<AsyncRuntime>> Fabric<T, AsyncRuntime> {
   /// Execute a single fabric step: poll transport and process messages
   pub async fn step(&mut self) {
-    // Poll transport for incoming envelopes (these came from the `send` method)
-    let envelopes = self.transport.poll();
-
-    // Process each envelope and send
-    for envelope in envelopes.await {
+    // Process each payload and send
+    for payload in self.transport.poll().await {
       for agent in self.agents.values_mut() {
         // TODO: WE clone here, but really should do some shared reference or something. This is not
         // necessarily a light weight clone at all. We need some way of encapsulating what kind of
         // sharing we are doing here.
         // TODO: This also greedily gives the agent the message which it may not handle, but that is
         // caught in the `process_pending_messages` method (this is okay)
-        if envelope.to == SendTarget::Address(agent.address())
-          || envelope.to == SendTarget::Broadcast
-        {
-          agent.queue_message(envelope.payload.clone());
-        }
+        agent.queue_message(payload.clone());
       }
     }
 
@@ -266,6 +251,8 @@ pub type InMemoryFabric = Fabric<InMemoryTransport, SyncRuntime>;
 
 #[cfg(test)]
 mod tests {
+  use std::rc::Rc;
+
   use super::*;
   use crate::handler::Handler;
 
