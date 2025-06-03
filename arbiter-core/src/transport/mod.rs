@@ -34,7 +34,7 @@ pub trait Transport<R: Runtime>: Sized + 'static {
   type Address: Copy + Send + Sync + PartialEq + Eq;
 
   /// Transport-specific payload type
-  type Payload: Clone + Message + UnpackageMessage<&'static dyn Any>;
+  type Payload: Clone + Message + AsRef<dyn Any>;
 
   /// Transport-specific error type
   // TODO: Make this a real error type

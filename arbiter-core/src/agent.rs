@@ -225,13 +225,16 @@ where T::Payload: std::fmt::Debug
 
     while let Some(message) = self.mailbox.pop_front() {
       dbg!(&message);
-      dbg!(&message.unpackage().unwrap());
-      let message_type = (*(message.unpackage().unwrap())).type_id();
-      println!("Message type: {:?}", message_type);
-      if let Some(handler) = self.handlers.get(&message_type) {
-        let agent: &mut dyn Any = &mut self.inner;
-        let reply = handler(agent, message);
+
+      let concrete_message_type_id = message.as_ref().type_id();
+      println!("Message type ID for handler lookup: {:?}", concrete_message_type_id);
+
+      if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
+        let agent_ref: &mut dyn Any = &mut self.inner;
+        let reply = handler(agent_ref, message);
         replies.push(reply);
+      } else {
+        println!("Warning: No handler found for message type ID: {:?}", concrete_message_type_id);
       }
     }
 
