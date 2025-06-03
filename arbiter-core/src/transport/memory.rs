@@ -1,7 +1,7 @@
 use std::{any::Any, collections::VecDeque, rc::Rc};
 
-use super::{AgentIdentity, Envelope, Transport};
-use crate::handler::Message;
+use super::{Envelope, Transport};
+use crate::{agent::AgentIdentity, handler::Message};
 
 /// In-memory transport that preserves current Runtime behavior
 pub struct InMemoryTransport {

@@ -1,10 +1,8 @@
 use std::{any::Any, collections::HashMap, rc::Rc};
 
 use crate::{
-  agent::{Agent, AgentState, LifeCycle, RuntimeAgent},
-  transport::{
-    memory::InMemoryTransport, AgentIdentity, Envelope, FabricId, SendTarget, Transport,
-  },
+  agent::{Agent, AgentIdentity, AgentState, LifeCycle, RuntimeAgent},
+  transport::{memory::InMemoryTransport, SendTarget, Transport},
 };
 
 /// A generic fabric that manages agents over a specific transport layer
@@ -191,6 +189,34 @@ impl<T> Default for Fabric<T>
 where T: Transport + Default
 {
   fn default() -> Self { Self::new() }
+}
+
+/// Fabric identifier for connecting multiple fabrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FabricId([u8; 16]);
+
+impl FabricId {
+  pub fn generate() -> Self {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    let mut bytes = [0u8; 16];
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    bytes[..8].copy_from_slice(&id.to_le_bytes());
+
+    Self(bytes)
+  }
+
+  pub fn from_bytes(bytes: [u8; 16]) -> Self { Self(bytes) }
+
+  pub fn as_bytes(&self) -> &[u8; 16] { &self.0 }
+}
+
+impl std::fmt::Display for FabricId {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let short = &self.0[..4];
+    write!(f, "fabric-{:02x}{:02x}{:02x}{:02x}", short[0], short[1], short[2], short[3])
+  }
 }
 
 /// Type alias for in-memory fabric

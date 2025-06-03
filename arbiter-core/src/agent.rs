@@ -1,13 +1,11 @@
 use std::{
   any::{Any, TypeId},
   collections::{HashMap, VecDeque},
-  rc::Rc,
-  sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::{
   handler::{create_handler, Handler, Message, MessageHandlerFn},
-  transport::{memory::InMemoryTransport, AgentIdentity, Envelope, Transport},
+  transport::{memory::InMemoryTransport, Transport},
 };
 
 pub trait LifeCycle: 'static {
@@ -120,6 +118,36 @@ impl<A: LifeCycle, T: Transport> Agent<A, T> {
   }
 }
 
+/// Unique identifier for agents across fabrics
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AgentIdentity([u8; 32]);
+
+impl AgentIdentity {
+  /// Generate a cryptographically secure agent identity
+  pub fn generate() -> Self {
+    // For now, use a simple counter - can be upgraded to crypto later
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    let mut bytes = [0u8; 32];
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    bytes[..8].copy_from_slice(&id.to_le_bytes());
+
+    Self(bytes)
+  }
+
+  pub fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+
+  pub fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+}
+
+impl std::fmt::Display for AgentIdentity {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let short = &self.0[..4];
+    write!(f, "agent-{:02x}{:02x}{:02x}{:02x}", short[0], short[1], short[2], short[3])
+  }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentState {
   Stopped,
@@ -209,6 +237,8 @@ impl<A: LifeCycle, T: Transport> RuntimeAgent<T> for crate::agent::Agent<A, T> {
 
 #[cfg(test)]
 mod tests {
+  use std::rc::Rc;
+
   use super::*;
   use crate::{handler::Handler, transport::memory::InMemoryTransport};
 
