@@ -1,4 +1,4 @@
-use std::{any::Any, ops::Deref, rc::Rc, sync::Arc};
+use std::{any::Any, ops::Deref, sync::Arc};
 
 use serde::Deserialize;
 
@@ -52,8 +52,10 @@ pub trait UnpackageMessage<M: Message> {
   fn unpackage(&self) -> Option<impl Deref<Target = M>>;
 }
 
-impl<M: Message> UnpackageMessage<M> for Arc<dyn Any> {
-  fn unpackage(&self) -> Option<impl Deref<Target = M>> { self.downcast_ref::<M>() }
+impl<M: Message> UnpackageMessage<M> for Arc<dyn Message> {
+  fn unpackage(&self) -> Option<impl Deref<Target = M>> {
+    (self.as_ref() as &dyn Any).downcast_ref::<M>()
+  }
 }
 
 impl<M> UnpackageMessage<M> for Vec<u8>

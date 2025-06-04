@@ -1,21 +1,22 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
 use crate::{
-  agent::{Agent, AgentState, CommunicationChannel, LifeCycle, RuntimeAgent},
+  agent::{Agent, AgentState, CommunicationChannel, LifeCycle, RuntimeAgent, State},
   transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
 };
 
 /// A generic fabric that manages agents over a specific transport layer
-// TODO: Instead of storing agents, we could just store the transport components (e.g., a sender and
-// an atomic for their state)
+// TODO: Instead of storing agents, we could just store the transport components (e.g., a sender
+// and an atomic for their state)
 pub struct Fabric<T: Transport<Runtime = R>, R: Runtime> {
-  id:         FabricId,
-  transport:  T,
+  id:        FabricId,
+  transport: T,
+
   // TODO: This should store a task handle for each RUNNING or PAUSEED agent, we should dump
   // stopped agents into a different list.
-  agents:     HashMap<T::Address, Arc<dyn RuntimeAgent<T>>>,
+  agents:     HashMap<T::Address, Box<dyn RuntimeAgent<T>>>,
   name_to_id: HashMap<String, T::Address>,
-  senders:    HashMap<T::Address, CommunicationChannel<T>>,
+  channels:   HashMap<T::Address, CommunicationChannel<T>>,
 }
 
 impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R>
@@ -28,7 +29,7 @@ where T::Payload: std::fmt::Debug
       transport:  T::new(),
       agents:     HashMap::new(),
       name_to_id: HashMap::new(),
-      senders:    HashMap::new(),
+      channels:   HashMap::new(),
     }
   }
 
@@ -40,8 +41,7 @@ where T::Payload: std::fmt::Debug
   where A: LifeCycle {
     let tx = agent.communication_channel();
     let id = agent.address();
-    self.senders.insert(id, tx);
-    self.agents.insert(id, Arc::new(agent));
+    self.channels.insert(id, tx);
 
     id
   }
@@ -61,7 +61,6 @@ where T::Payload: std::fmt::Debug
     }
     let id = agent.address();
     self.name_to_id.insert(name, id);
-    self.agents.insert(id, Arc::new(agent));
 
     Ok(id)
   }
@@ -95,7 +94,7 @@ where T::Payload: std::fmt::Debug
 
   /// Start an agent by ID
   pub fn start_agent_by_id(&mut self, agent_id: T::Address) -> Result<(), String> {
-    self.senders.get_mut(&agent_id).map_or_else(
+    self.channels.get_mut(&agent_id).map_or_else(
       || Err(format!("Agent with ID {agent_id} not found")),
       |sender| {
         sender.start();
@@ -106,25 +105,22 @@ where T::Payload: std::fmt::Debug
 
   /// Start an agent by name
   pub fn start_agent_by_name(&mut self, agent_name: &str) -> Result<(), String> {
-    let agent_id =
-      self.agent_id_by_name(agent_name).ok_or_else(|| format!("Agent '{agent_name}' not found"))?;
+    let agent_id = self.agent_id_by_name(agent_name).ok_or_else(|| {
+      format!(
+        "Agent '{agent_name}' not
+found"
+      )
+    })?;
     self.start_agent_by_id(agent_id)
   }
 
-  /// Pause an agent by ID
-  pub fn pause_agent_by_id(&mut self, agent_id: T::Address) -> Result<(), String> {
-    self.senders.get_mut(&agent_id).map_or_else(
-      || Err(format!("Agent with ID {agent_id} not found")),
-      |sender| {
-        sender.pause();
-        Ok(())
-      },
-    )
-  }
-
+  // TODO: This is a bit clunky. Perhaps we can combine these states.
   /// Get the state of an agent by ID
   pub fn agent_state_by_id(&self, agent_id: T::Address) -> Option<AgentState> {
-    self.agents.get(&agent_id).map(|agent| agent.state())
+    self.agents.get(&agent_id).map(|agent| match agent {
+      State::Running(_) => AgentState::Running,
+      State::Stopped(_) => AgentState::Stopped,
+    })
   }
 
   /// Get agent count
@@ -133,17 +129,9 @@ where T::Payload: std::fmt::Debug
   /// Get list of all agent IDs
   pub fn agent_ids(&self) -> Vec<T::Address> { self.agents.keys().copied().collect() }
 
-  /// Check if the fabric has any pending work
-  pub fn has_pending_work(&self) -> bool { self.agents_needing_processing() > 0 }
-
-  /// Get count of agents that need processing
-  pub fn agents_needing_processing(&self) -> usize {
-    self.agents.values().filter(|agent| agent.should_process_mailbox()).count()
-  }
-
   /// Helper function to broadcast messages to all agents
   fn broadcast(&mut self, payload: T::Payload) {
-    for sender in self.senders.values_mut() {
+    for sender in self.channels.values_mut() {
       sender.send(payload.clone());
     }
   }
@@ -154,7 +142,7 @@ where T::Payload: std::fmt::Debug
 {
   /// Execute a single fabric step: poll transport and process messages
   pub fn start(&mut self) {
-    for sender in self.senders.values_mut() {
+    for sender in self.channels.values_mut() {
       sender.start();
     }
   }
