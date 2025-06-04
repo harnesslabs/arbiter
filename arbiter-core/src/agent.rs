@@ -1,15 +1,16 @@
 use std::{
   any::{Any, TypeId},
-  collections::{HashMap, VecDeque},
-  marker::PhantomData,
+  collections::{HashMap, HashSet},
+  sync::Arc,
+  thread::JoinHandle,
 };
 
 use crate::{
   handler::{create_handler, Handler, Message, MessageHandlerFn, PackageMessage, UnpackageMessage},
-  transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
+  transport::{memory::InMemoryTransport, Transport},
 };
 
-pub trait LifeCycle: 'static {
+pub trait LifeCycle: Send + Sync + 'static {
   fn on_start(&mut self) {}
 
   fn on_pause(&mut self) {}
@@ -20,94 +21,131 @@ pub trait LifeCycle: 'static {
 }
 
 // TODO: I need to rename all of this stuff.  It's confusing.
-pub struct Agent<L: LifeCycle, T: Transport<R>, R: Runtime> {
-  address:              T::Address,
-  name:                 Option<String>,
-  inner:                L,
-  state:                AgentState,
-  mailbox:              VecDeque<T::Payload>,
-  handlers:             HashMap<TypeId, MessageHandlerFn<T, R>>,
-  has_pending_messages: bool,
-  _runtime:             PhantomData<R>,
+// TODO: Need to make the tx and rx relative to the transport
+pub struct Agent<L: LifeCycle, T: Transport> {
+  address:       T::Address,
+  name:          Option<String>,
+  inner:         L,
+  state:         Arc<AtomicAgentState>,
+  rx:            flume::Receiver<T::Payload>,
+  tx:            flume::Sender<T::Payload>,
+  handlers:      HashMap<TypeId, MessageHandlerFn<T>>,
+  // TODO: We need to register deserializers in the case where the transport uses serialization
+  deserializers: HashMap<TypeId, fn(T::Payload) -> T::Payload>,
 }
 
-impl<L: LifeCycle> Agent<L, InMemoryTransport, SyncRuntime> {
+pub struct CommunicationChannel<T: Transport> {
+  tx:      flume::Sender<T::Payload>,
+  address: T::Address,
+  state:   Arc<AtomicAgentState>,
+  // TODO: Hashset faster than Vec for lookups?
+  types:   HashSet<TypeId>,
+}
+
+impl<T: Transport> CommunicationChannel<T> {
+  pub fn send(&self, message: T::Payload) {
+    let state = self.state.load(std::sync::atomic::Ordering::SeqCst);
+    if (state == AgentState::Running || state == AgentState::Paused)
+      && self.types.contains(&(*message).type_id())
+    {
+      self.tx.send(message).unwrap();
+    }
+  }
+
+  pub fn start(&self) {
+    self.state.store(AgentState::Running, std::sync::atomic::Ordering::SeqCst);
+  }
+
+  pub fn pause(&self) { self.state.store(AgentState::Paused, std::sync::atomic::Ordering::SeqCst); }
+
+  pub fn stop(&self) { self.state.store(AgentState::Stopped, std::sync::atomic::Ordering::SeqCst); }
+}
+
+impl<L: LifeCycle> Agent<L, InMemoryTransport> {
   pub fn new(agent: L) -> Self {
+    let (tx, rx) = flume::unbounded();
     Self {
-      address:              AgentIdentity::generate(),
-      name:                 None,
-      inner:                agent,
-      state:                AgentState::Stopped,
-      mailbox:              VecDeque::new(),
-      handlers:             HashMap::new(),
-      has_pending_messages: false,
-      _runtime:             PhantomData,
+      address: AgentIdentity::generate(),
+      name: None,
+      inner: agent,
+      state: Arc::new(AtomicAgentState::new(AgentState::Stopped)),
+      rx,
+      tx,
+      handlers: HashMap::new(),
+      deserializers: HashMap::new(),
     }
   }
 
   /// Create an agent with a specific name
   pub fn with_name(agent: L, name: impl Into<String>) -> Self {
+    let (tx, rx) = flume::unbounded();
     Self {
-      address:              AgentIdentity::generate(),
-      name:                 Some(name.into()),
-      inner:                agent,
-      state:                AgentState::Stopped,
-      mailbox:              VecDeque::new(),
-      handlers:             HashMap::new(),
-      has_pending_messages: false,
-      _runtime:             PhantomData,
+      address: AgentIdentity::generate(),
+      name: Some(name.into()),
+      inner: agent,
+      state: Arc::new(AtomicAgentState::new(AgentState::Stopped)),
+      rx,
+      tx,
+      handlers: HashMap::new(),
+      deserializers: HashMap::new(),
     }
   }
 }
 
-impl<L: LifeCycle, T: Transport<R>, R: Runtime> Agent<L, T, R>
-where T::Payload: std::fmt::Debug
-{
+impl<L: LifeCycle, T: Transport> Agent<L, T> {
   /// Set the agent's name
   pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
 
   /// Clear the agent's name
   pub fn clear_name(&mut self) { self.name = None; }
 
+  pub fn communication_channel(&self) -> CommunicationChannel<T> {
+    CommunicationChannel {
+      tx:      self.tx.clone(),
+      address: self.address,
+      state:   self.state.clone(),
+      types:   self.handlers.keys().copied().collect(),
+    }
+  }
+
   // Lifecycle management methods
   pub fn start(&mut self) {
-    if self.state != AgentState::Running {
+    if self.state.load(std::sync::atomic::Ordering::SeqCst) != AgentState::Running {
+      self.state.store(AgentState::Running, std::sync::atomic::Ordering::SeqCst);
       self.inner.on_start();
-      self.state = AgentState::Running;
     }
   }
 
   pub fn pause(&mut self) {
-    if self.state == AgentState::Running {
+    if self.state.load(std::sync::atomic::Ordering::SeqCst) == AgentState::Running {
+      self.state.store(AgentState::Paused, std::sync::atomic::Ordering::SeqCst);
       self.inner.on_pause();
-      self.state = AgentState::Paused;
     }
   }
 
   pub fn stop(&mut self) {
-    if self.state != AgentState::Stopped {
+    if self.state.load(std::sync::atomic::Ordering::SeqCst) != AgentState::Stopped {
+      self.state.store(AgentState::Stopped, std::sync::atomic::Ordering::SeqCst);
       self.inner.on_stop();
-      self.state = AgentState::Stopped;
-      // Clear the mailbox to prevent any messages from being processed
-      self.mailbox.clear();
-      self.has_pending_messages = false;
+      self.rx.drain();
     }
   }
 
   pub fn resume(&mut self) {
-    if self.state == AgentState::Paused {
+    if self.state.load(std::sync::atomic::Ordering::SeqCst) == AgentState::Paused {
       self.inner.on_resume();
-      self.state = AgentState::Running;
-      // Process any messages that were queued while paused
-      self.process_pending_messages();
+      self.state.store(AgentState::Running, std::sync::atomic::Ordering::SeqCst);
+      self.process();
     }
   }
 
   // Get current state
-  pub const fn state(&self) -> AgentState { self.state }
+  pub fn state(&self) -> AgentState { self.state.load(std::sync::atomic::Ordering::SeqCst) }
 
   // Check if agent can process messages
-  pub fn is_active(&self) -> bool { self.state == AgentState::Running }
+  pub fn is_active(&self) -> bool {
+    self.state.load(std::sync::atomic::Ordering::SeqCst) == AgentState::Running
+  }
 
   // Get mutable access to the underlying agent
   pub const fn inner_mut(&mut self) -> &mut L { &mut self.inner }
@@ -121,7 +159,7 @@ where T::Payload: std::fmt::Debug
     L: Handler<M>,
     T::Payload: UnpackageMessage<M> + PackageMessage<L::Reply>, {
     println!("Adding handler for message type: {:?}", TypeId::of::<M>());
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T, R>());
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T>());
     self
   }
 }
@@ -156,7 +194,8 @@ impl std::fmt::Display for AgentIdentity {
   }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[atomic_enum::atomic_enum]
+#[derive(PartialEq, Eq)]
 pub enum AgentState {
   Stopped,
   Running,
@@ -165,81 +204,50 @@ pub enum AgentState {
 
 // Trait for runtime-manageable agents
 // TODO: For async, some of these need to return futures
-pub trait RuntimeAgent<T: Transport<R>, R: Runtime> {
+pub trait RuntimeAgent<T: Transport>: Send + Sync {
   fn address(&self) -> T::Address;
   fn name(&self) -> Option<&str>;
-  fn start(&mut self);
-  fn pause(&mut self);
-  fn stop(&mut self);
-  fn resume(&mut self);
   fn state(&self) -> AgentState;
   fn is_active(&self) -> bool;
   fn should_process_mailbox(&self) -> bool;
-  fn queue_message(&mut self, message: T::Payload);
-  fn process_pending_messages(&mut self) -> Vec<T::Payload>;
-  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn<T, R>>;
+  fn process(self) -> JoinHandle<Arc<dyn RuntimeAgent<T>>>;
+  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn<T>>;
 
   #[cfg(test)]
   fn inner_as_any(&self) -> &dyn Any;
 }
 
-impl<A: LifeCycle, T: Transport<R>, R: Runtime> RuntimeAgent<T, R> for crate::agent::Agent<A, T, R>
-where T::Payload: std::fmt::Debug
-{
+impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
   fn address(&self) -> T::Address { self.address }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
 
-  fn start(&mut self) { Self::start(self); }
-
-  fn pause(&mut self) { Self::pause(self); }
-
-  fn stop(&mut self) { Self::stop(self); }
-
-  fn resume(&mut self) { Self::resume(self); }
-
-  fn state(&self) -> AgentState { self.state }
+  fn state(&self) -> AgentState { self.state.load(std::sync::atomic::Ordering::SeqCst) }
 
   fn is_active(&self) -> bool { Self::is_active(self) }
 
-  fn should_process_mailbox(&self) -> bool { self.has_pending_messages && self.is_active() }
+  fn should_process_mailbox(&self) -> bool { dbg!(!self.rx.is_empty()) && dbg!(self.is_active()) }
 
-  fn queue_message(&mut self, message: T::Payload) {
-    match self.state {
-      AgentState::Running | AgentState::Paused => {
-        self.mailbox.push_back(message);
-        self.has_pending_messages = true;
-      },
-      AgentState::Stopped => {
-        // Stopped agents don't accept messages
-      },
-    }
-  }
+  fn process(mut self) -> JoinHandle<Arc<dyn RuntimeAgent<T>>> {
+    std::thread::spawn(move || {
+      println!("Processing pending messages for agent: {}", self.address);
 
-  fn process_pending_messages(&mut self) -> Vec<T::Payload> {
-    let mut replies = Vec::new();
+      let drain = self.rx.drain();
+      for message in drain {
+        let concrete_message_type_id = (*message).type_id();
 
-    if !self.is_active() {
-      return replies; // Only process if agent is running
-    }
-
-    while let Some(message) = self.mailbox.pop_front() {
-      dbg!(&message);
-
-      let concrete_message_type_id = message.as_ref().type_id();
-
-      if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
-        let agent_ref: &mut dyn Any = &mut self.inner;
-        let reply = handler(agent_ref, message);
-        replies.push(reply);
+        if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
+          let agent_ref: &mut dyn Any = &mut self.inner;
+          let reply = handler(agent_ref, message);
+          todo!("Send reply to fabric");
+        }
       }
-    }
 
-    self.has_pending_messages = false; // Clear flag after processing
-    replies
+      Arc::new(self) as Arc<dyn RuntimeAgent<T>>
+    })
   }
 
-  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn<T, R>> { &self.handlers }
+  fn handlers(&self) -> &HashMap<TypeId, MessageHandlerFn<T>> { &self.handlers }
 
   #[cfg(test)]
   fn inner_as_any(&self) -> &dyn Any { &self.inner }
@@ -250,10 +258,7 @@ mod tests {
   use std::rc::Rc;
 
   use super::*;
-  use crate::{
-    handler::Handler,
-    transport::{memory::InMemoryTransport, SyncRuntime},
-  };
+  use crate::{handler::Handler, transport::memory::InMemoryTransport};
 
   // Simple agent struct - just data!
   #[derive(Clone)]
@@ -293,7 +298,7 @@ mod tests {
   #[test]
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
-    let mut shared_agent = Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(arithmetic);
+    let mut shared_agent = Agent::<Arithmetic, InMemoryTransport>::new(arithmetic);
     // Don't test specific ID values as they depend on global counter state
     assert!(shared_agent.address().as_bytes()[0] > 0);
 
@@ -321,23 +326,22 @@ mod tests {
 
   #[test]
   fn test_single_agent_handler() {
-    let mut arithmetic =
-      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 })
-        .with_handler::<Increment>();
+    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 })
+      .with_handler::<Increment>();
     arithmetic.start();
 
     let increment = Increment(5);
-    arithmetic.queue_message(Rc::new(increment));
-    dbg!(Rc::new(Increment(5)).type_id());
-    arithmetic.process_pending_messages();
+    println!("Sending message to agent: {}", arithmetic.address);
+    let channel = arithmetic.communication_channel();
+    channel.send(Rc::new(increment));
+    arithmetic.process();
     assert_eq!(arithmetic.inner.state, 6);
   }
 
   #[test]
   fn test_multiple_agent_handlers() {
     // Create simple agent
-    let mut arithmetic =
-      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 });
+    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
     arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     // Agent starts in stopped state - messages should be ignored
@@ -345,8 +349,9 @@ mod tests {
     assert!(!arithmetic.is_active());
 
     let increment = Increment(5);
-    arithmetic.queue_message(Rc::new(increment));
-    arithmetic.process_pending_messages();
+    let channel = arithmetic.communication_channel();
+    channel.send(Rc::new(increment));
+    arithmetic.process();
     assert_eq!(arithmetic.state(), AgentState::Stopped);
     assert_eq!(arithmetic.inner.state, 1);
 
@@ -356,29 +361,29 @@ mod tests {
 
     // Now messages should be processed
     let increment = Increment(5);
-    arithmetic.queue_message(Rc::new(increment));
-    arithmetic.process_pending_messages();
+    channel.send(Rc::new(increment));
+    arithmetic.process();
 
     let multiply = Multiply(3);
-    arithmetic.queue_message(Rc::new(multiply));
-    arithmetic.process_pending_messages();
+    channel.send(Rc::new(multiply));
+    arithmetic.process();
 
     assert_eq!(arithmetic.inner.state, 18); // (1 + 5) * 3 = 18
   }
 
   #[test]
   fn test_pause_and_resume() {
-    let mut arithmetic =
-      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 });
+    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
     arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     arithmetic.start();
     assert_eq!(arithmetic.state(), AgentState::Running);
 
     // Send a message while running - should be processed immediately via mailbox
-    arithmetic.queue_message(Rc::new(Increment(5)));
+    let channel = arithmetic.communication_channel();
+    channel.send(Rc::new(Increment(5)));
     assert!(arithmetic.should_process_mailbox());
-    let _ = arithmetic.process_pending_messages();
+    let _ = arithmetic.process();
     assert_eq!(arithmetic.inner.state, 6); // 1 + 5 = 6
     assert!(!arithmetic.should_process_mailbox());
 
@@ -388,8 +393,8 @@ mod tests {
     assert!(!arithmetic.is_active());
 
     // Send messages while paused - should be queued but not processed
-    arithmetic.queue_message(Rc::new(Increment(10)));
-    arithmetic.queue_message(Rc::new(Multiply(2)));
+    channel.send(Rc::new(Increment(10)));
+    channel.send(Rc::new(Multiply(2)));
 
     // Agent is paused, so should_process_mailbox should be false
     assert!(!arithmetic.should_process_mailbox());
@@ -407,8 +412,7 @@ mod tests {
 
   #[test]
   fn test_stop_and_start() {
-    let mut arithmetic =
-      Agent::<Arithmetic, InMemoryTransport, SyncRuntime>::new(Arithmetic { state: 1 });
+    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
     arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
 
     // Start the agent
@@ -416,8 +420,9 @@ mod tests {
     assert_eq!(arithmetic.state(), AgentState::Running);
 
     // Send a message while running
-    arithmetic.queue_message(Rc::new(Increment(5)));
-    arithmetic.process_pending_messages();
+    let channel = arithmetic.communication_channel();
+    channel.send(Rc::new(Increment(5)));
+    arithmetic.process();
     assert_eq!(arithmetic.inner.state, 6); // 1 + 5 = 6
 
     // Stop the agent
@@ -426,8 +431,8 @@ mod tests {
     assert!(!arithmetic.is_active());
 
     // Send messages while stopped - should be ignored completely
-    arithmetic.queue_message(Rc::new(Increment(100)));
-    arithmetic.queue_message(Rc::new(Multiply(10)));
+    channel.send(Rc::new(Increment(100)));
+    channel.send(Rc::new(Multiply(10)));
 
     // No messages should be queued since agent is stopped
     assert!(!arithmetic.should_process_mailbox());
@@ -443,8 +448,8 @@ mod tests {
     assert_eq!(arithmetic.inner.state, 6); // State still unchanged
 
     // Verify agent can still receive new messages after restart
-    arithmetic.queue_message(Rc::new(Increment(4)));
-    arithmetic.process_pending_messages();
+    channel.send(Rc::new(Increment(4)));
+    arithmetic.process();
     assert_eq!(arithmetic.inner.state, 10); // 6 + 4 = 10
   }
 }

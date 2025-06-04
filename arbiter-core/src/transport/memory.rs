@@ -1,4 +1,4 @@
-use std::{any::Any, collections::VecDeque, rc::Rc};
+use std::{any::Any, collections::VecDeque, rc::Rc, sync::Arc};
 
 use super::Transport;
 use crate::{agent::AgentIdentity, handler::Message, transport::SyncRuntime};
@@ -6,7 +6,7 @@ use crate::{agent::AgentIdentity, handler::Message, transport::SyncRuntime};
 /// In-memory transport that preserves current Runtime behavior
 pub struct InMemoryTransport {
   local_identity: AgentIdentity,
-  message_queue:  VecDeque<Rc<dyn Any>>,
+  message_queue:  VecDeque<Arc<dyn Any>>,
 }
 
 // TODO: This is a hack to get around the fact that we need to store messages in a VecDeque
@@ -15,10 +15,11 @@ pub struct InMemoryTransport {
 //   fn from(message: Box<dyn Message>) -> Self { Rc::new(Box::leak(message)) }
 // }
 
-impl Transport<SyncRuntime> for InMemoryTransport {
+impl Transport for InMemoryTransport {
   type Address = AgentIdentity;
   type Error = String;
-  type Payload = Rc<dyn Any>;
+  type Payload = Arc<dyn Message>;
+  type Runtime = SyncRuntime;
 
   fn new() -> Self {
     Self { local_identity: AgentIdentity::generate(), message_queue: VecDeque::new() }
@@ -28,14 +29,6 @@ impl Transport<SyncRuntime> for InMemoryTransport {
   fn send(&mut self, payload: Self::Payload) -> Result<(), Self::Error> {
     self.message_queue.push_back(payload);
     Ok(())
-  }
-
-  fn poll(&mut self) -> Vec<Self::Payload> {
-    let mut messages = Vec::new();
-    while let Some(payload) = self.message_queue.pop_front() {
-      messages.push(payload);
-    }
-    messages
   }
 
   fn local_address(&self) -> Self::Address { self.local_identity }
