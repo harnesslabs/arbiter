@@ -51,14 +51,24 @@ pub struct CommunicationChannel<T: Transport> {
 impl<T: Transport> CommunicationChannel<T> {
   pub fn send(&self, message: T::Payload) {
     let message_type_id = (*message).type_id();
-    dbg!(&message_type_id);
-    // TODO: We're not checking if the agent is running here.
+
     if self.types.contains(&message_type_id) {
-      self.tx.send(message).unwrap();
+      if self.tx.send(message).is_ok() {
+        self.shared_sync.condvar.notify_one();
+      } else {
+        println!(
+          "Agent {}: Failed to send message to channel (channel closed/full?).",
+          self.address
+        );
+      }
+    } else {
+      println!(
+        "Agent {}: Message not sent. No handler registered for message type {:?}",
+        self.address, message_type_id
+      );
     }
   }
 
-  // These methods will typically be called by the Fabric via the RuntimeAgent trait
   pub fn signal_start(&self) {
     let mut sync_guard = self.shared_sync.state.lock().unwrap();
     if *sync_guard != State::Running {
@@ -119,7 +129,7 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     CommunicationChannel {
       tx:          self.tx.clone(),
       address:     self.address,
-      shared_sync: self.shared_sync.clone(), // Pass the Arc
+      shared_sync: self.shared_sync.clone(),
       types:       self.handlers.keys().copied().collect(),
     }
   }
@@ -184,12 +194,15 @@ pub trait RuntimeAgent<T: Transport>: Send + Sync + Any {
   fn process(self) -> JoinHandle<Self>
   where Self: Sized;
 
-  // #[cfg(test)]
-  // fn inner_as_any(&self) -> &dyn Any; // Commented out for now due to lifetime complexities with
-  // MutexGuard
+  #[cfg(test)]
+  fn inner_as_any(&self) -> &dyn Any;
 }
 
-impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
+impl<L: LifeCycle + Send, T: Transport> RuntimeAgent<T> for Agent<L, T>
+where
+  L: 'static,
+  T::Payload: 'static,
+{
   fn address(&self) -> T::Address { self.address }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
@@ -197,7 +210,6 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
   fn signal_start(&self) {
     let mut sync_guard = self.shared_sync.state.lock().unwrap();
     if *sync_guard != State::Running {
-      println!("Agent {}: Signalling start.", self.address);
       *sync_guard = State::Running;
       self.shared_sync.condvar.notify_one();
     }
@@ -206,7 +218,6 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
   fn signal_stop(&self) {
     let mut sync_guard = self.shared_sync.state.lock().unwrap();
     if *sync_guard != State::Stopped {
-      println!("Agent {}: Signalling stop.", self.address);
       *sync_guard = State::Stopped;
       self.shared_sync.condvar.notify_one();
     }
@@ -215,32 +226,54 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
   fn current_loop_state(&self) -> State { *self.shared_sync.state.lock().unwrap() }
 
   fn process(mut self) -> JoinHandle<Self> {
-    println!("Agent {}: Starting process.", self.address);
+    // Ensure L is Send if Agent is moved into a thread directly.
+    // Added L: Send bound to impl RuntimeAgent block.
+    println!("Agent {}: Process method called, preparing to spawn thread.", self.address);
     std::thread::spawn(move || {
       self.inner.on_start();
-      println!("Agent {}: Executing on_start. Now entering main processing loop.", self.address);
+      println!(
+        "Agent {}: Thread started, on_start called. Entering main processing loop.",
+        self.address
+      );
 
       loop {
-        let mut state = self.shared_sync.state.lock().unwrap();
+        let mut state_guard = self.shared_sync.state.lock().unwrap();
+        // println!("Agent {}: Loop top, current state: {:?}, rx empty: {}", self.address,
+        // *state_guard, self.rx.is_empty()); // Debug log
 
-        if *state == State::Running {
-          state = Condvar::wait(&self.shared_sync.condvar, state).unwrap();
-        }
-
-        match *state {
+        match *state_guard {
           State::Stopped => {
-            println!("Agent {}: Detected Stopped state in loop. Exiting.", self.address);
+            println!("Agent {}: Loop detected Stopped state. Exiting.", self.address);
             break;
           },
           State::Running => {
-            drop(state);
+            if self.rx.is_empty() {
+              // If Running and no messages, wait for a signal.
+              // println!("Agent {}: Running, mailbox empty. Waiting for signal.", self.address); //
+              // Debug log
+              state_guard = Condvar::wait(&self.shared_sync.condvar, state_guard).unwrap();
+              // println!("Agent {}: Woke up from wait. New state: {:?}", self.address,
+              // *state_guard); // Debug log After waking, re-evaluate state in the
+              // next loop iteration immediately. This handles cases where state
+              // changed from Running to Stopped while waiting.
+              continue;
+            }
+            // If rx is not empty, drop guard and process messages.
+            drop(state_guard);
+            // println!("Agent {}: Mailbox not empty or woke up to run. Processing messages.",
+            // self.address); // Debug log
 
+            let mut processed_message_this_burst = false;
             while let Ok(message) = self.rx.try_recv() {
-              println!("Agent {}: Received message", self.address);
+              processed_message_this_burst = true;
+              println!(
+                "Agent {}: Received message (TypeId: {:?})",
+                self.address,
+                (*message).type_id()
+              );
               let concrete_message_type_id = (*message).type_id();
               if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
-                let _reply = handler(&mut self.inner, message);
-                // TODO: Send reply to fabric
+                let _reply = handler(&mut self.inner, message); // self.inner is L
               } else {
                 println!(
                   "Agent {}: Unhandled message type {:?}",
@@ -248,15 +281,17 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
                 );
               }
 
-              let current_state = self.shared_sync.state.lock().unwrap();
-              if *current_state == State::Stopped {
-                println!(
-                  "Agent {}: Detected Stop signal during message burst. Exiting processing burst.",
-                  self.address
-                );
+              let current_state_check_guard = self.shared_sync.state.lock().unwrap();
+              if *current_state_check_guard == State::Stopped {
+                println!("Agent {}: Stop signal detected during message burst.", self.address);
+                drop(current_state_check_guard);
                 break;
               }
+              drop(current_state_check_guard);
             }
+            // if !processed_message_this_burst {
+            //    println!("Agent {}: Woke up for Running but found rx empty after all. Looping.",
+            // self.address); // Debug log }
           },
         }
       }
@@ -267,8 +302,8 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
     })
   }
 
-  // #[cfg(test)]
-  // fn inner_as_any(&self) -> &dyn Any { /* ... */ }
+  #[cfg(test)]
+  fn inner_as_any(&self) -> &dyn Any { &self.inner }
 }
 
 #[cfg(test)]
@@ -293,9 +328,18 @@ mod tests {
     type Reply = ();
 
     fn handle(&mut self, message: &Increment) -> Self::Reply {
-      println!("Handler 1 - Received message: {message:?}");
+      println!(
+        "Handler 1 (Agent {}): Received Increment({}), current state: {}",
+        AgentIdentity::generate(), // FIXME
+        message.0,
+        self.state
+      );
       self.state += message.0;
-      println!("Handler 1 - Updated state: {}", self.state);
+      println!(
+        "Handler 1 (Agent {}): New state: {}",
+        AgentIdentity::generate(), // FIXME
+        self.state
+      );
     }
   }
 
@@ -314,49 +358,67 @@ mod tests {
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
     let agent = Agent::<Arithmetic, InMemoryTransport>::new(arithmetic);
-    assert!(agent.address().as_bytes()[0] > 0);
+    let agent_address = agent.address(); // Get address for logging
     assert_eq!(agent.current_loop_state(), State::Stopped);
 
     // Start agent
     let channel = agent.communication_channel();
     let handle = agent.process();
 
-    // Stop agent
+    channel.signal_start();
+    std::thread::sleep(std::time::Duration::from_millis(50)); // Give time for agent to start
+    assert_eq!(channel.shared_sync.state.lock().unwrap().clone(), State::Running);
+
     channel.signal_stop();
-    let agent = handle.join().unwrap();
-    assert_eq!(agent.inner().state, 10);
+    let joined_agent = handle.join().unwrap();
+    assert_eq!(joined_agent.inner().state, 10);
+    assert_eq!(joined_agent.current_loop_state(), State::Stopped);
   }
 
   #[test]
   fn test_single_agent_handler() {
-    let arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 })
-      .with_handler::<Increment>();
-    let channel = arithmetic.communication_channel();
-    let handle = arithmetic.process();
+    let arithmetic = Arithmetic { state: 1 }; // Initial state
+    let agent_struct =
+      Agent::<Arithmetic, InMemoryTransport>::new(arithmetic).with_handler::<Increment>();
+    let agent_address = agent_struct.address(); // For logging
+
+    let channel = agent_struct.communication_channel();
+    let handle = agent_struct.process();
+
+    channel.signal_start();
+    std::thread::sleep(std::time::Duration::from_millis(50)); // Allow agent to start and enter wait
+
     channel.send(Arc::new(Increment(5)));
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(100)); // Allow time for message processing
+
     channel.signal_stop();
-    let arithmetic = handle.join().unwrap();
-    assert_eq!(arithmetic.inner().state, 6);
+    let result_agent = handle.join().unwrap();
+
+    assert_eq!(result_agent.inner().state, 6); // Expected state: 1 (initial) + 5 (increment) = 6
   }
 
   #[test]
   fn test_multiple_agent_handlers() {
-    // Create simple agent
-    let mut arithmetic = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
-    arithmetic = arithmetic.with_handler::<Increment>().with_handler::<Multiply>();
+    let mut agent_struct = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
+    agent_struct = agent_struct.with_handler::<Increment>().with_handler::<Multiply>();
+    let agent_address = agent_struct.address();
 
-    // Agent starts in stopped state - messages should be ignored
-    assert_eq!(arithmetic.current_loop_state(), State::Stopped);
+    assert_eq!(agent_struct.current_loop_state(), State::Stopped);
 
-    let channel = arithmetic.communication_channel();
-    let handle = arithmetic.process();
+    let channel = agent_struct.communication_channel();
+    let handle = agent_struct.process();
+
+    channel.signal_start();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
     channel.send(Arc::new(Increment(5)));
+    std::thread::sleep(std::time::Duration::from_millis(50)); // process (1+5=6)
+
     channel.send(Arc::new(Multiply(3)));
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(std::time::Duration::from_millis(50)); // process (6*3=18)
+
     channel.signal_stop();
-    todo!()
-    // let arithmetic = handle.join().unwrap();
-    // assert_eq!(arithmetic.inner().state, 18); // (1 + 5) * 3 = 18
+    let result_agent = handle.join().unwrap();
+    assert_eq!(result_agent.inner().state, 18); // (1 + 5) * 3 = 18
   }
 }
