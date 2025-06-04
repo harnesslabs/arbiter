@@ -230,7 +230,7 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
       loop {
         let mut state = self.shared_sync.state.lock().unwrap();
 
-        if *state == State::Stopped {
+        if *state == State::Running {
           state = Condvar::wait(&self.shared_sync.condvar, state).unwrap();
         }
 
@@ -243,6 +243,7 @@ impl<L: LifeCycle, T: Transport> RuntimeAgent<T> for Agent<L, T> {
             drop(state);
 
             while let Ok(message) = self.rx.try_recv() {
+              println!("Agent {}: Received message", self.address);
               let concrete_message_type_id = (*message).type_id();
               if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
                 let _reply = handler(&mut self.inner, message);
@@ -320,9 +321,7 @@ mod tests {
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
     let agent = Agent::<Arithmetic, InMemoryTransport>::new(arithmetic);
-    // Don't test specific ID values as they depend on global counter state
     assert!(agent.address().as_bytes()[0] > 0);
-
     assert_eq!(agent.current_loop_state(), State::Stopped);
 
     // Start agent
@@ -332,7 +331,7 @@ mod tests {
     // Stop agent
     channel.signal_stop();
     let agent = handle.join().unwrap();
-    // assert_eq!(agent.inner().state, 10);
+    assert_eq!(agent.inner().state, 10);
   }
 
   #[test]
@@ -344,9 +343,8 @@ mod tests {
     channel.send(Arc::new(Increment(5)));
     std::thread::sleep(std::time::Duration::from_millis(100));
     channel.signal_stop();
-    todo!()
-    // let arithmetic = handle.join().unwrap();
-    // assert_eq!(arithmetic.inner().state, 6);
+    let arithmetic = handle.join().unwrap();
+    assert_eq!(arithmetic.inner().state, 6);
   }
 
   #[test]
