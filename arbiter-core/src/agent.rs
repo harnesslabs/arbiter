@@ -50,14 +50,11 @@ pub struct CommunicationChannel<T: Transport> {
 
 impl<T: Transport> CommunicationChannel<T> {
   pub fn send(&self, message: T::Payload) {
-    let sync_guard = self.shared_sync.state.lock().unwrap();
-    if *sync_guard == State::Running && self.types.contains(&(*message).type_id()) {
-      if self.tx.send(message).is_ok() {
-        self.shared_sync.condvar.notify_one(); // Notify the agent loop that there's a new message
-      }
-    } else {
-      // Optional: Log or handle message sending failure (e.g., agent not running)
-      println!("Message not sent: agent state {:?} or type not handled", *sync_guard);
+    let message_type_id = (*message).type_id();
+    dbg!(&message_type_id);
+    // TODO: We're not checking if the agent is running here.
+    if self.types.contains(&message_type_id) {
+      self.tx.send(message).unwrap();
     }
   }
 
@@ -137,6 +134,7 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     M: Message,
     L: Handler<M>,
     T::Payload: UnpackageMessage<M> + PackageMessage<L::Reply>, {
+    dbg!(TypeId::of::<M>());
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T>());
     self
   }
@@ -174,11 +172,6 @@ impl std::fmt::Display for AgentIdentity {
   }
 }
 
-// NEW: Error type for issues during agent runtime, e.g., in run_main_loop.
-#[derive(Debug)]
-pub struct AgentRuntimeError(String);
-
-// NEW: Trait for runtime-manageable agents, abstracting over L.
 pub trait RuntimeAgent<T: Transport>: Send + Sync + Any {
   fn address(&self) -> T::Address;
   fn name(&self) -> Option<&str>;
