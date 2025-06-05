@@ -188,19 +188,16 @@ impl<L: LifeCycle + Send + Sync, T: Transport> RuntimeAgent<T> for Agent<L, T> {
             break;
           },
           State::Running => {
-            if self.transport.receive().is_none() {
-              state_guard = Condvar::wait(&self.shared_sync.condvar, state_guard).unwrap();
-              continue;
-            }
+            // Try to receive a message. This call consumes the message from the transport if one
+            // exists.
+            if let Some(message) = self.transport.receive() {
+              // A message was received. Release the lock and process it, then potentially more.
+              drop(state_guard);
 
-            drop(state_guard);
-            let mut processed_message_this_burst = false;
-            while let Some(message) = self.transport.receive() {
-              processed_message_this_burst = true;
               println!(
                 "Agent {}: Received message (TypeId: {:?})",
                 self.address,
-                message.type_id()
+                message.type_id // Corrected: Direct field access
               );
               let concrete_message_type_id = message.type_id;
               if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
@@ -212,13 +209,49 @@ impl<L: LifeCycle + Send + Sync, T: Transport> RuntimeAgent<T> for Agent<L, T> {
                 );
               }
 
-              let current_state_check_guard = self.shared_sync.state.lock().unwrap();
+              // Check for stop signal immediately after processing one message.
+              // Re-acquire lock to check state.
+              let mut current_state_check_guard = self.shared_sync.state.lock().unwrap();
               if *current_state_check_guard == State::Stopped {
-                println!("Agent {}: Stop signal detected during message burst.", self.address);
+                println!(
+                  "Agent {}: Stop signal detected after processing a message.",
+                  self.address
+                );
+                // The lock will be released, and the outer loop will detect the Stopped state.
+              } else {
+                // If not stopped, release the lock and try to process more messages in a burst.
                 drop(current_state_check_guard);
-                break;
+                while let Some(burst_message) = self.transport.receive() {
+                  println!(
+                    "Agent {}: Received burst message (TypeId: {:?})",
+                    self.address,
+                    burst_message.type_id // Corrected: Direct field access
+                  );
+                  let burst_concrete_message_type_id = burst_message.type_id;
+                  if let Some(handler) = self.handlers.get(&burst_concrete_message_type_id) {
+                    let _reply = handler(&mut self.inner, burst_message.payload);
+                  } else {
+                    println!(
+                      "Agent {}: Unhandled burst message type {:?}",
+                      self.address, burst_concrete_message_type_id
+                    );
+                  }
+
+                  // Check for stop signal during the burst.
+                  let inner_burst_state_lock = self.shared_sync.state.lock().unwrap();
+                  if *inner_burst_state_lock == State::Stopped {
+                    println!("Agent {}: Stop signal detected during message burst.", self.address);
+                    drop(inner_burst_state_lock);
+                    break; // Break from the inner burst 'while' loop
+                  }
+                  drop(inner_burst_state_lock);
+                }
               }
-              drop(current_state_check_guard);
+              // After processing the first message and any burst,
+              // the outer 'loop' will continue, re-acquire its lock, and re-check state.
+            } else {
+              // No message was available. Release the lock and wait for a signal.
+              state_guard = Condvar::wait(&self.shared_sync.condvar, state_guard).unwrap();
             }
           },
         }
@@ -319,6 +352,7 @@ mod tests {
     std::thread::sleep(std::time::Duration::from_millis(50)); // Allow agent to start and enter wait
 
     sender.send(Envelope::package(Increment(5))).unwrap();
+    controller.condvar.notify_one(); // Wake up the agent to process the message
     std::thread::sleep(std::time::Duration::from_millis(100)); // Allow time for message
     assert_eq!(controller.state.lock().unwrap().clone(), State::Running);
 
@@ -328,27 +362,30 @@ mod tests {
     assert_eq!(result_agent.inner().state, 6); // Expected state: 1 (initial) + 5 (increment) = 6
   }
 
-  // #[test]
-  // fn test_multiple_agent_handlers() {
-  //   let mut agent_struct = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
-  //   agent_struct = agent_struct.with_handler::<Increment>().with_handler::<Multiply>();
+  #[test]
+  fn test_multiple_agent_handlers() {
+    let mut agent_struct = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
+    agent_struct = agent_struct.with_handler::<Increment>().with_handler::<Multiply>();
+    let sender = agent_struct.transport.sender.clone();
 
-  //   assert_eq!(agent_struct.current_loop_state(), State::Stopped);
+    assert_eq!(agent_struct.current_loop_state(), State::Stopped);
 
-  //   let channel = agent_struct.controller();
-  //   let handle = agent_struct.process();
+    let controller = agent_struct.controller();
+    let handle = agent_struct.process();
 
-  //   channel.signal_start();
-  //   std::thread::sleep(std::time::Duration::from_millis(50));
+    controller.signal_start();
+    std::thread::sleep(std::time::Duration::from_millis(50));
 
-  //   channel.send(Envelope::package(Increment(5)));
-  //   std::thread::sleep(std::time::Duration::from_millis(50)); // process (1+5=6)
+    sender.send(Envelope::package(Increment(5))).unwrap();
+    controller.condvar.notify_one(); // Wake up the agent to process the message
+    std::thread::sleep(std::time::Duration::from_millis(50)); // process (1+5=6)
 
-  //   channel.send(Envelope::package(Multiply(3)));
-  //   std::thread::sleep(std::time::Duration::from_millis(50)); // process (6*3=18)
+    sender.send(Envelope::package(Multiply(3))).unwrap();
+    controller.condvar.notify_one(); // Wake up the agent to process the message
+    std::thread::sleep(std::time::Duration::from_millis(50)); // process (6*3=18)
 
-  //   channel.signal_stop();
-  //   let result_agent = handle.join().unwrap();
-  //   assert_eq!(result_agent.inner().state, 18); // (1 + 5) * 3 = 18
-  // }
+    controller.signal_stop();
+    let result_agent = handle.join().unwrap();
+    assert_eq!(result_agent.inner().state, 18); // (1 + 5) * 3 = 18
+  }
 }
