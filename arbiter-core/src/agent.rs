@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-  handler::{create_handler, Handler, Message, MessageHandlerFn, PackageMessage, UnpackageMessage},
+  handler::{create_handler, Envelope, Handler, Message, MessageHandlerFn, Package, Unpacackage},
   transport::{memory::InMemoryTransport, Transport},
 };
 
@@ -31,41 +31,28 @@ pub trait LifeCycle: Send + Sync + 'static {
 }
 
 pub struct Agent<L: LifeCycle, T: Transport> {
-  address:       T::Address,
-  name:          Option<String>,
-  inner:         L,
-  shared_sync:   Arc<AgentSharedSync>,
-  rx:            flume::Receiver<T::Payload>,
-  tx:            flume::Sender<T::Payload>,
-  handlers:      HashMap<TypeId, MessageHandlerFn<T>>,
-  deserializers: HashMap<TypeId, fn(T::Payload) -> T::Payload>,
+  address:     T::Address,
+  name:        Option<String>,
+  inner:       L,
+  shared_sync: Arc<AgentSharedSync>,
+  rx:          flume::Receiver<Envelope<T>>,
+  tx:          flume::Sender<Envelope<T>>,
+  handlers:    HashMap<TypeId, MessageHandlerFn<T>>,
 }
 
 pub struct CommunicationChannel<T: Transport> {
-  tx:          flume::Sender<T::Payload>,
+  tx:          flume::Sender<Envelope<T>>,
   address:     T::Address,
   shared_sync: Arc<AgentSharedSync>,
-  types:       HashSet<TypeId>,
 }
 
 impl<T: Transport> CommunicationChannel<T> {
-  pub fn send(&self, message: T::Payload) {
-    let message_type_id = (*message).type_id();
-
-    if self.types.contains(&message_type_id) {
-      if self.tx.send(message).is_ok() {
-        self.shared_sync.condvar.notify_one();
-      } else {
-        println!(
-          "Agent {}: Failed to send message to channel (channel closed/full?).",
-          self.address
-        );
-      }
+  // Greedily send the message to the channel, agents will handle the message in their own time.
+  pub fn send(&self, message: Envelope<T>) {
+    if self.tx.send(message).is_ok() {
+      self.shared_sync.condvar.notify_one();
     } else {
-      println!(
-        "Agent {}: Message not sent. No handler registered for message type {:?}",
-        self.address, message_type_id
-      );
+      println!("Agent {}: Failed to send message to channel (channel closed/full?).", self.address);
     }
   }
 
@@ -97,7 +84,6 @@ impl<L: LifeCycle> Agent<L, InMemoryTransport> {
       rx,
       tx,
       handlers: HashMap::new(),
-      deserializers: HashMap::new(),
     }
   }
 
@@ -111,7 +97,6 @@ impl<L: LifeCycle> Agent<L, InMemoryTransport> {
       rx,
       tx,
       handlers: HashMap::new(),
-      deserializers: HashMap::new(),
     }
   }
 
@@ -130,7 +115,6 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
       tx:          self.tx.clone(),
       address:     self.address,
       shared_sync: self.shared_sync.clone(),
-      types:       self.handlers.keys().copied().collect(),
     }
   }
 
@@ -143,18 +127,12 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   where
     M: Message,
     L: Handler<M>,
-    T::Payload: UnpackageMessage<M> + PackageMessage<L::Reply>, {
+    T::Payload: Unpacackage<M> + Package<L::Reply>, {
     dbg!(TypeId::of::<M>());
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T>());
     self
   }
-
-  // OLD process method - will be replaced by RuntimeAgent::run_main_loop
-  // pub fn process(mut self) -> JoinHandle<Self> { /* ... */ }
 }
-
-// OLD State enum - Fabric will manage its own state representation
-// pub enum State<L: LifeCycle, T: Transport> { /* ... */ }
 
 /// Unique identifier for agents across fabrics
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -198,11 +176,7 @@ pub trait RuntimeAgent<T: Transport>: Send + Sync + Any {
   fn inner_as_any(&self) -> &dyn Any;
 }
 
-impl<L: LifeCycle + Send, T: Transport> RuntimeAgent<T> for Agent<L, T>
-where
-  L: 'static,
-  T::Payload: 'static,
-{
+impl<L: LifeCycle + Send, T: Transport> RuntimeAgent<T> for Agent<L, T> {
   fn address(&self) -> T::Address { self.address }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
@@ -226,20 +200,11 @@ where
   fn current_loop_state(&self) -> State { *self.shared_sync.state.lock().unwrap() }
 
   fn process(mut self) -> JoinHandle<Self> {
-    // Ensure L is Send if Agent is moved into a thread directly.
-    // Added L: Send bound to impl RuntimeAgent block.
-    println!("Agent {}: Process method called, preparing to spawn thread.", self.address);
     std::thread::spawn(move || {
       self.inner.on_start();
-      println!(
-        "Agent {}: Thread started, on_start called. Entering main processing loop.",
-        self.address
-      );
 
       loop {
         let mut state_guard = self.shared_sync.state.lock().unwrap();
-        // println!("Agent {}: Loop top, current state: {:?}, rx empty: {}", self.address,
-        // *state_guard, self.rx.is_empty()); // Debug log
 
         match *state_guard {
           State::Stopped => {
@@ -248,32 +213,22 @@ where
           },
           State::Running => {
             if self.rx.is_empty() {
-              // If Running and no messages, wait for a signal.
-              // println!("Agent {}: Running, mailbox empty. Waiting for signal.", self.address); //
-              // Debug log
               state_guard = Condvar::wait(&self.shared_sync.condvar, state_guard).unwrap();
-              // println!("Agent {}: Woke up from wait. New state: {:?}", self.address,
-              // *state_guard); // Debug log After waking, re-evaluate state in the
-              // next loop iteration immediately. This handles cases where state
-              // changed from Running to Stopped while waiting.
               continue;
             }
-            // If rx is not empty, drop guard and process messages.
-            drop(state_guard);
-            // println!("Agent {}: Mailbox not empty or woke up to run. Processing messages.",
-            // self.address); // Debug log
 
+            drop(state_guard);
             let mut processed_message_this_burst = false;
             while let Ok(message) = self.rx.try_recv() {
               processed_message_this_burst = true;
               println!(
                 "Agent {}: Received message (TypeId: {:?})",
                 self.address,
-                (*message).type_id()
+                message.type_id()
               );
-              let concrete_message_type_id = (*message).type_id();
+              let concrete_message_type_id = message.type_id;
               if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
-                let _reply = handler(&mut self.inner, message); // self.inner is L
+                let _reply = handler(&mut self.inner, message.payload); // self.inner is L
               } else {
                 println!(
                   "Agent {}: Unhandled message type {:?}",
@@ -289,9 +244,6 @@ where
               }
               drop(current_state_check_guard);
             }
-            // if !processed_message_this_burst {
-            //    println!("Agent {}: Woke up for Running but found rx empty after all. Looping.",
-            // self.address); // Debug log }
           },
         }
       }
@@ -358,7 +310,6 @@ mod tests {
   fn test_agent_lifecycle() {
     let arithmetic = Arithmetic { state: 10 };
     let agent = Agent::<Arithmetic, InMemoryTransport>::new(arithmetic);
-    let agent_address = agent.address(); // Get address for logging
     assert_eq!(agent.current_loop_state(), State::Stopped);
 
     // Start agent
@@ -380,7 +331,6 @@ mod tests {
     let arithmetic = Arithmetic { state: 1 }; // Initial state
     let agent_struct =
       Agent::<Arithmetic, InMemoryTransport>::new(arithmetic).with_handler::<Increment>();
-    let agent_address = agent_struct.address(); // For logging
 
     let channel = agent_struct.communication_channel();
     let handle = agent_struct.process();
@@ -388,7 +338,7 @@ mod tests {
     channel.signal_start();
     std::thread::sleep(std::time::Duration::from_millis(50)); // Allow agent to start and enter wait
 
-    channel.send(Arc::new(Increment(5)));
+    channel.send(Envelope::package(Increment(5)));
     std::thread::sleep(std::time::Duration::from_millis(100)); // Allow time for message processing
 
     channel.signal_stop();
@@ -401,7 +351,6 @@ mod tests {
   fn test_multiple_agent_handlers() {
     let mut agent_struct = Agent::<Arithmetic, InMemoryTransport>::new(Arithmetic { state: 1 });
     agent_struct = agent_struct.with_handler::<Increment>().with_handler::<Multiply>();
-    let agent_address = agent_struct.address();
 
     assert_eq!(agent_struct.current_loop_state(), State::Stopped);
 
@@ -411,10 +360,10 @@ mod tests {
     channel.signal_start();
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    channel.send(Arc::new(Increment(5)));
+    channel.send(Envelope::package(Increment(5)));
     std::thread::sleep(std::time::Duration::from_millis(50)); // process (1+5=6)
 
-    channel.send(Arc::new(Multiply(3)));
+    channel.send(Envelope::package(Multiply(3)));
     std::thread::sleep(std::time::Duration::from_millis(50)); // process (6*3=18)
 
     channel.signal_stop();

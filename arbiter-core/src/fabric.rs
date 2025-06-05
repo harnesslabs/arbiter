@@ -2,6 +2,7 @@ use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
 use crate::{
   agent::{Agent, CommunicationChannel, LifeCycle, RuntimeAgent, State},
+  handler::Envelope,
   transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
 };
 
@@ -127,9 +128,10 @@ found"
   pub fn agent_ids(&self) -> Vec<T::Address> { self.agents.keys().copied().collect() }
 
   /// Helper function to broadcast messages to all agents
-  fn broadcast(&mut self, payload: T::Payload) {
+  // TODO: This should be a method on the transport so the agents access it directly.
+  fn broadcast(&mut self, envelope: Envelope<T>) {
     for sender in self.channels.values_mut() {
-      sender.send(payload.clone());
+      sender.send(envelope.clone());
     }
   }
 }

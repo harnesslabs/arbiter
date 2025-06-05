@@ -1,6 +1,15 @@
-use std::{future::Future, hash::Hash, ops::Deref, pin::Pin, sync::Arc};
+use std::{
+  any::{Any, TypeId},
+  future::Future,
+  hash::Hash,
+  ops::Deref,
+  pin::Pin,
+  sync::Arc,
+};
 
-use crate::handler::Message;
+use serde::Deserialize;
+
+use crate::handler::{Message, Payload};
 
 pub mod memory;
 pub mod tcp;
@@ -28,9 +37,6 @@ impl Runtime for AsyncRuntime {
 
 // TODO: This should be possible to implement properly and we might be able to fix the "unpack/pack"
 // stuff more nicely this way.
-pub trait Payload: Clone + Message + Deref<Target = dyn Message> {}
-
-impl Payload for Arc<dyn Message> {}
 
 /// Low-level transport mechanism (TCP, Bluetooth, in-memory, etc.)
 // TODO: The transport needs to be able to handle `Serializable` data, and `Any` data.
@@ -49,12 +55,6 @@ pub trait Transport: Sized + 'static {
 
   /// Create a new transport
   fn new() -> Self;
-
-  /// Send an envelope via this transport
-  fn send(
-    &mut self,
-    payload: Self::Payload,
-  ) -> <Self::Runtime as Runtime>::Output<Result<(), Self::Error>>;
 
   /// Get the local address for this transport
   fn local_address(&self) -> Self::Address;
