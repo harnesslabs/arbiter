@@ -1,31 +1,26 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
-  agent::{Agent, Controller, LifeCycle, RuntimeAgent, State},
-  transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
+  agent::{Agent, LifeCycle, RuntimeAgent, State},
+  connection::{memory::InMemoryConnection, Connection},
 };
 
 /// A generic fabric that manages agents over a specific transport layer
 // TODO: Instead of storing agents, we could just store the transport components (e.g., a sender
 // and an atomic for their state)
-pub struct Fabric<T: Transport<Runtime = R>, R: Runtime> {
-  id: FabricId,
-
-  // TODO: This should store a task handle for each RUNNING or PAUSEED agent, we should dump
-  // stopped agents into a different list.
-  agents:      HashMap<T::Address, Box<dyn RuntimeAgent<T>>>,
-  name_to_id:  HashMap<String, T::Address>,
-  controllers: HashMap<T::Address, Arc<Controller>>,
+pub struct Fabric<C: Connection> {
+  id:         FabricId,
+  agents:     HashMap<C::Address, Box<dyn RuntimeAgent<C>>>,
+  name_to_id: HashMap<String, C::Address>,
 }
 
-impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R> {
+impl<C: Connection> Fabric<C> {
   /// Create a new fabric with the given transport
   pub fn new() -> Self {
     Self {
-      id:          FabricId::generate(),
-      agents:      HashMap::new(),
-      name_to_id:  HashMap::new(),
-      controllers: HashMap::new(),
+      id:         FabricId::generate(),
+      agents:     HashMap::new(),
+      name_to_id: HashMap::new(),
     }
   }
 
@@ -33,12 +28,11 @@ impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R> {
   pub fn id(&self) -> FabricId { self.id }
 
   /// Register an agent with the fabric
-  pub fn register_agent<A>(&mut self, agent: Agent<A, T>) -> T::Address
+  // TODO: Give all the other agents access to the new agent's connection and vice versa.
+  pub fn register_agent<A>(&mut self, agent: Agent<A, C>) -> C::Address
   where A: LifeCycle {
-    let controller = agent.controller();
     let id = agent.address();
-    self.controllers.insert(id, controller);
-
+    self.agents.insert(id, Box::new(agent));
     id
   }
 
@@ -46,8 +40,8 @@ impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R> {
   pub fn register_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A, T>,
-  ) -> Result<T::Address, String>
+    agent: Agent<A, C>,
+  ) -> Result<C::Address, String>
   where
     A: LifeCycle,
   {
@@ -56,13 +50,14 @@ impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R> {
       return Err(format!("Agent name '{name}' already exists"));
     }
     let id = agent.address();
+    self.agents.insert(id, Box::new(agent));
     self.name_to_id.insert(name, id);
 
     Ok(id)
   }
 
   /// Register an agent and start it immediately
-  pub fn spawn_agent<A>(&mut self, agent: Agent<A, T>) -> T::Address
+  pub fn spawn_agent<A>(&mut self, agent: Agent<A, C>) -> C::Address
   where A: LifeCycle {
     let id = self.register_agent(agent);
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
@@ -73,8 +68,8 @@ impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R> {
   pub fn spawn_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A, T>,
-  ) -> Result<T::Address, String>
+    agent: Agent<A, C>,
+  ) -> Result<C::Address, String>
   where
     A: LifeCycle,
   {
@@ -84,16 +79,16 @@ impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R> {
   }
 
   /// Look up agent ID by name
-  pub fn agent_id_by_name(&self, name: &str) -> Option<T::Address> {
+  pub fn agent_id_by_name(&self, name: &str) -> Option<C::Address> {
     self.name_to_id.get(name).copied()
   }
 
   /// Start an agent by ID
-  pub fn start_agent_by_id(&mut self, agent_id: T::Address) -> Result<(), String> {
-    self.controllers.get_mut(&agent_id).map_or_else(
+  pub fn start_agent_by_id(&mut self, agent_id: C::Address) -> Result<(), String> {
+    self.agents.get_mut(&agent_id).map_or_else(
       || Err(format!("Agent with ID {agent_id} not found")),
-      |sender| {
-        sender.signal_start();
+      |agent| {
+        agent.signal_start();
         Ok(())
       },
     )
@@ -112,7 +107,7 @@ found"
 
   // TODO: This is a bit clunky. Perhaps we can combine these states.
   /// Get the state of an agent by ID
-  pub fn agent_state_by_id(&self, agent_id: T::Address) -> Option<State> {
+  pub fn agent_state_by_id(&self, agent_id: C::Address) -> Option<State> {
     self.agents.get(&agent_id).map(|agent| agent.current_loop_state())
   }
 
@@ -120,23 +115,19 @@ found"
   pub fn agent_count(&self) -> usize { self.agents.len() }
 
   /// Get list of all agent IDs
-  pub fn agent_ids(&self) -> Vec<T::Address> { self.agents.keys().copied().collect() }
+  pub fn agent_ids(&self) -> Vec<C::Address> { self.agents.keys().copied().collect() }
 }
 
-impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R>
-where T::Payload: std::fmt::Debug
-{
+impl<C: Connection> Fabric<C> {
   /// Execute a single fabric step: poll transport and process messages
   pub fn start(&mut self) {
-    for sender in self.controllers.values_mut() {
-      sender.signal_start();
+    for agent in self.agents.values_mut() {
+      agent.signal_start();
     }
   }
 }
 
-impl<T: Transport<Runtime = R>, R: Runtime> Default for Fabric<T, R>
-where T::Payload: std::fmt::Debug
-{
+impl<C: Connection> Default for Fabric<C> {
   fn default() -> Self { Self::new() }
 }
 
@@ -169,62 +160,12 @@ impl std::fmt::Display for FabricId {
 }
 
 /// Type alias for in-memory fabric
-pub type InMemoryFabric = Fabric<InMemoryTransport, SyncRuntime>;
+pub type InMemoryFabric = Fabric<InMemoryConnection>;
 
 #[cfg(test)]
 mod tests {
-  use std::rc::Rc;
-
   use super::*;
-  use crate::handler::Handler;
-
-  // Example message types - just regular structs!
-  #[derive(Debug, Clone)]
-  struct NumberMessage {
-    value: i32,
-  }
-
-  #[derive(Debug, Clone)]
-  struct TextMessage {
-    content: String,
-  }
-
-  // Example agent types - simple structs with clear state
-  #[derive(Clone)]
-  struct Counter {
-    total: i32,
-  }
-
-  impl LifeCycle for Counter {}
-
-  #[derive(Clone)]
-  struct Logger {
-    name:          String,
-    message_count: i32,
-  }
-
-  impl LifeCycle for Logger {}
-
-  impl Handler<NumberMessage> for Counter {
-    type Reply = ();
-
-    fn handle(&mut self, message: &NumberMessage) -> Self::Reply {
-      self.total += message.value;
-      println!("CounterAgent total is now: {}", self.total);
-    }
-  }
-
-  impl Handler<TextMessage> for Logger {
-    type Reply = ();
-
-    fn handle(&mut self, message: &TextMessage) -> Self::Reply {
-      self.message_count += 1;
-      println!(
-        "LogAgent '{}' received: '{}' (count: {})",
-        self.name, message.content, self.message_count
-      );
-    }
-  }
+  use crate::fixtures::*;
 
   #[test]
   fn test_fabric_basics() {
@@ -246,32 +187,5 @@ mod tests {
   }
 
   #[test]
-  fn test_fabric_message_routing() {
-    let mut fabric = InMemoryFabric::new();
-
-    // Register agents with specific handlers
-    let counter = Agent::new(Counter { total: 0 }).with_handler::<NumberMessage>();
-    let logger = Agent::new(Logger { name: "TestLogger".to_string(), message_count: 0 })
-      .with_handler::<TextMessage>();
-
-    let counter_id = fabric.register_agent(counter);
-    let logger_id = fabric.register_agent(logger);
-
-    // Start agents
-    fabric.start_agent_by_id(counter_id).unwrap();
-    fabric.start_agent_by_id(logger_id).unwrap();
-
-    fabric.broadcast(Rc::new(NumberMessage { value: 42 }));
-    fabric.broadcast(Rc::new(TextMessage { content: "Hello".to_string() }));
-
-    // Process pending messages
-    fabric.start();
-    let counter =
-      fabric.agents.get(&counter_id).unwrap().inner_as_any().downcast_ref::<Counter>().unwrap();
-    let logger =
-      fabric.agents.get(&logger_id).unwrap().inner_as_any().downcast_ref::<Logger>().unwrap();
-
-    assert_eq!(counter.total, 42);
-    assert_eq!(logger.message_count, 1);
-  }
+  fn test_fabric_example() { todo!() }
 }

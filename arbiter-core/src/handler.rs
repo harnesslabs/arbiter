@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::transport::Transport;
+use crate::connection::Connection;
 
 // The type that agents actually work with.
 pub trait Message: Any + Send + Sync + 'static {}
@@ -21,23 +21,23 @@ impl Payload for Arc<dyn Message> {}
 
 impl Payload for Vec<u8> {}
 
-pub struct Envelope<T: Transport> {
-  pub payload: T::Payload,
+pub struct Envelope<C: Connection> {
+  pub payload: C::Payload,
   pub type_id: TypeId,
 }
 
-impl<T: Transport> Clone for Envelope<T> {
+impl<C: Connection> Clone for Envelope<C> {
   fn clone(&self) -> Self { Self { payload: self.payload.clone(), type_id: self.type_id } }
 }
 
-impl<T: Transport> Envelope<T> {
+impl<C: Connection> Envelope<C> {
   pub fn package<M: Message>(message: M) -> Self
-  where T::Payload: Package<M> {
-    Self { payload: T::Payload::package(message), type_id: TypeId::of::<M>() }
+  where C::Payload: Package<M> {
+    Self { payload: C::Payload::package(message), type_id: TypeId::of::<M>() }
   }
 
   pub fn unpackage<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>
-  where T::Payload: Unpacackage<M> {
+  where C::Payload: Unpacackage<M> {
     self.payload.unpackage()
   }
 }
@@ -81,17 +81,17 @@ pub trait Handler<M> {
 }
 
 // TODO: I think we want this T::Payload to also have the ability to take a unit type ()
-pub type MessageHandlerFn<T: Transport> =
-  Box<dyn Fn(&mut dyn Any, T::Payload) -> T::Payload + Send + Sync>;
+pub type MessageHandlerFn<C: Connection> =
+  Box<dyn Fn(&mut dyn Any, C::Payload) -> C::Payload + Send + Sync>;
 
 // TODO: This panic is bad.
-pub fn create_handler<'a_unused, M, L, T>() -> MessageHandlerFn<T>
+pub fn create_handler<'a_unused, M, L, C>() -> MessageHandlerFn<C>
 where
   L: Handler<M> + 'static,
   M: Message,
-  T: Transport,
-  T::Payload: Unpacackage<M> + Package<L::Reply>, {
-  Box::new(|agent: &mut dyn Any, message_payload: T::Payload| {
+  C: Connection,
+  C::Payload: Unpacackage<M> + Package<L::Reply>, {
+  Box::new(|agent: &mut dyn Any, message_payload: C::Payload| {
     agent.downcast_mut::<L>().map_or_else(
       || {
         unreachable!(
@@ -103,7 +103,7 @@ where
         match unpacked_message_option {
           Some(unpacked_message) => {
             let reply = typed_agent.handle(&*unpacked_message);
-            T::Payload::package(reply)
+            C::Payload::package(reply)
           },
           None => panic!("Failed to unpackage message of type {:?}", std::any::TypeId::of::<M>()),
         }
