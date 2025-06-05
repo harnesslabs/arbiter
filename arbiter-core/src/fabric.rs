@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use crate::{
   agent::{Agent, LifeCycle, RuntimeAgent, State},
   connection::{memory::InMemory, Connection},
+  handler::Package,
 };
 
 /// A generic fabric that manages agents over a specific transport layer
@@ -13,8 +14,6 @@ pub struct Fabric<C: Connection> {
   agents:     HashMap<C::Address, Box<dyn RuntimeAgent<C>>>,
   name_to_id: HashMap<String, C::Address>,
 }
-
-pub struct Start;
 
 impl<C: Connection> Fabric<C> {
   /// Create a new fabric with the given transport
@@ -32,7 +31,9 @@ impl<C: Connection> Fabric<C> {
   /// Register an agent with the fabric
   // TODO: Give all the other agents access to the new agent's connection and vice versa.
   pub fn register_agent<A>(&mut self, mut new_agent: Agent<A, C>) -> C::Address
-  where A: LifeCycle {
+  where
+    A: LifeCycle,
+    C::Payload: Package<A::StartMessage> + Package<A::StopMessage>, {
     if let Some(name) = new_agent.name.clone() {
       if self.name_to_id.contains_key(&name) {
         panic!("Agent name '{name}' already exists");
@@ -62,6 +63,7 @@ impl<C: Connection> Fabric<C> {
   ) -> Result<C::Address, String>
   where
     A: LifeCycle,
+    C::Payload: Package<A::StartMessage> + Package<A::StopMessage>,
   {
     agent.name = Some(name.into());
     Ok(self.register_agent(agent))
@@ -69,7 +71,9 @@ impl<C: Connection> Fabric<C> {
 
   /// Register an agent and start it immediately
   pub fn spawn_agent<A>(&mut self, agent: Agent<A, C>) -> C::Address
-  where A: LifeCycle {
+  where
+    A: LifeCycle,
+    C::Payload: Package<A::StartMessage> + Package<A::StopMessage>, {
     let id = self.register_agent(agent);
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
     id
@@ -83,6 +87,7 @@ impl<C: Connection> Fabric<C> {
   ) -> Result<C::Address, String>
   where
     A: LifeCycle,
+    C::Payload: Package<A::StartMessage> + Package<A::StopMessage>,
   {
     let id = self.register_named_agent(name, agent)?;
     self.start_agent_by_id(id).unwrap(); // Safe since we just added it
@@ -176,16 +181,19 @@ pub type InMemoryFabric = Fabric<InMemory>;
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{fixtures::*, handler::Handler};
+  use crate::fixtures::*;
 
   pub struct Starter;
 
-  impl Handler<Start> for Starter {
-    type Reply = TextMessage;
+  impl LifeCycle for Starter {
+    type StartMessage = TextMessage;
+    type StopMessage = ();
 
-    fn handle(&mut self, message: &Start) -> Self::Reply {
+    fn on_start(&mut self) -> Self::StartMessage {
       TextMessage { content: "Hello, world!".to_string() }
     }
+
+    fn on_stop(&mut self) -> Self::StopMessage {}
   }
 
   #[test]
@@ -212,6 +220,7 @@ mod tests {
   #[test]
   fn test_fabric_example() {
     let mut fabric = InMemoryFabric::new();
+    let starter_id = fabric.register_agent(Agent::new(Starter));
     let logger_id = fabric
       .register_named_agent(
         "TestLogger",
@@ -219,5 +228,10 @@ mod tests {
           .with_handler::<TextMessage>(),
       )
       .unwrap();
+
+    fabric.start();
+    let logger = fabric.agents.get(&logger_id).unwrap();
+    let logger = logger.inner_as_any().downcast_ref::<Logger>().unwrap();
+    assert_eq!(logger.message_count, 1);
   }
 }

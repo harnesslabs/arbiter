@@ -30,14 +30,28 @@ pub mod fixtures {
     pub total: i32,
   }
 
-  impl LifeCycle for Counter {}
+  impl LifeCycle for Counter {
+    type StartMessage = ();
+    type StopMessage = ();
+
+    fn on_start(&mut self) -> Self::StartMessage {}
+
+    fn on_stop(&mut self) -> Self::StopMessage {}
+  }
 
   pub struct Logger {
     pub name:          String,
     pub message_count: i32,
   }
 
-  impl LifeCycle for Logger {}
+  impl LifeCycle for Logger {
+    type StartMessage = ();
+    type StopMessage = ();
+
+    fn on_start(&mut self) -> Self::StartMessage {}
+
+    fn on_stop(&mut self) -> Self::StopMessage {}
+  }
 
   impl Handler<NumberMessage> for Counter {
     type Reply = ();

@@ -7,7 +7,6 @@ use std::{
 
 use crate::{
   connection::{Connection, Transport},
-  fabric::Start,
   handler::{create_handler, Envelope, Handler, Message, MessageHandlerFn, Package, Unpacackage},
 };
 
@@ -54,8 +53,10 @@ pub enum State {
 }
 
 pub trait LifeCycle: Send + Sync + 'static {
-  fn on_start(&mut self) {}
-  fn on_stop(&mut self) {}
+  type StartMessage: Message;
+  type StopMessage: Message;
+  fn on_start(&mut self) -> Self::StartMessage;
+  fn on_stop(&mut self) -> Self::StopMessage;
 }
 
 // TODO: It would be worth adding a handler to each agent for an instruction for "Start"/"Stop" so
@@ -145,7 +146,9 @@ pub trait RuntimeAgent<C: Connection>: Send + Sync + Any {
   fn inner_as_any(&self) -> &dyn Any;
 }
 
-impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C> {
+impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C>
+where C::Payload: Package<L::StartMessage> + Package<L::StopMessage>
+{
   fn address(&self) -> C::Address { self.transport.inbound_connection.address() }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
@@ -176,7 +179,8 @@ impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C> {
 
   fn process(mut self) -> JoinHandle<Self> {
     std::thread::spawn(move || {
-      self.inner.on_start();
+      let start_message = self.inner.on_start();
+      self.transport.broadcast(Envelope::package(start_message));
 
       loop {
         println!("Agent {}: Loop iteration.", self.address());
