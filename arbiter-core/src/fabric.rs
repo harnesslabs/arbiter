@@ -14,6 +14,8 @@ pub struct Fabric<C: Connection> {
   name_to_id: HashMap<String, C::Address>,
 }
 
+pub struct Start;
+
 impl<C: Connection> Fabric<C> {
   /// Create a new fabric with the given transport
   pub fn new() -> Self {
@@ -29,10 +31,26 @@ impl<C: Connection> Fabric<C> {
 
   /// Register an agent with the fabric
   // TODO: Give all the other agents access to the new agent's connection and vice versa.
-  pub fn register_agent<A>(&mut self, agent: Agent<A, C>) -> C::Address
+  pub fn register_agent<A>(&mut self, mut new_agent: Agent<A, C>) -> C::Address
   where A: LifeCycle {
-    let id = agent.address();
-    self.agents.insert(id, Box::new(agent));
+    if let Some(name) = new_agent.name.clone() {
+      if self.name_to_id.contains_key(&name) {
+        panic!("Agent name '{name}' already exists");
+      }
+      self.name_to_id.insert(name, new_agent.address());
+    }
+    let id = new_agent.address();
+    for agent in self.agents.values_mut() {
+      // Get the new agent's inbound connection and give it to all the other agents as an outbound
+      // connection.
+      let (address, sender) = new_agent.transport().create_inbound_connection();
+      agent.add_outbound_connection(address, sender);
+      // Get the other agent's inbound connection and give it to the new agent as an outbound
+      // connection.
+      let (address, sender) = agent.transport().create_inbound_connection();
+      new_agent.add_outbound_connection(address, sender);
+    }
+    self.agents.insert(id, Box::new(new_agent));
     id
   }
 
@@ -40,20 +58,13 @@ impl<C: Connection> Fabric<C> {
   pub fn register_named_agent<A>(
     &mut self,
     name: impl Into<String>,
-    agent: Agent<A, C>,
+    mut agent: Agent<A, C>,
   ) -> Result<C::Address, String>
   where
     A: LifeCycle,
   {
-    let name = name.into();
-    if self.name_to_id.contains_key(&name) {
-      return Err(format!("Agent name '{name}' already exists"));
-    }
-    let id = agent.address();
-    self.agents.insert(id, Box::new(agent));
-    self.name_to_id.insert(name, id);
-
-    Ok(id)
+    agent.name = Some(name.into());
+    Ok(self.register_agent(agent))
   }
 
   /// Register an agent and start it immediately
@@ -165,7 +176,17 @@ pub type InMemoryFabric = Fabric<InMemory>;
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::fixtures::*;
+  use crate::{fixtures::*, handler::Handler};
+
+  pub struct Starter;
+
+  impl Handler<Start> for Starter {
+    type Reply = TextMessage;
+
+    fn handle(&mut self, message: &Start) -> Self::Reply {
+      TextMessage { content: "Hello, world!".to_string() }
+    }
+  }
 
   #[test]
   fn test_fabric_basics() {
@@ -184,8 +205,19 @@ mod tests {
     assert_eq!(fabric.agent_ids().len(), 2);
     assert!(fabric.agent_ids().contains(&counter_id));
     assert!(fabric.agent_ids().contains(&logger_id));
+
+    assert_eq!(fabric.agent_id_by_name("TestLogger").unwrap(), logger_id);
   }
 
   #[test]
-  fn test_fabric_example() { todo!() }
+  fn test_fabric_example() {
+    let mut fabric = InMemoryFabric::new();
+    let logger_id = fabric
+      .register_named_agent(
+        "TestLogger",
+        Agent::new(Logger { name: "TestLogger".to_string(), message_count: 0 })
+          .with_handler::<TextMessage>(),
+      )
+      .unwrap();
+  }
 }

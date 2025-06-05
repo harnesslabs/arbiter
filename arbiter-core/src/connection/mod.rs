@@ -78,4 +78,8 @@ impl<C: Connection> Transport<C> {
   pub fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
     self.outbound_connections.insert(address, sender);
   }
+
+  pub fn create_inbound_connection(&self) -> (C::Address, C::Sender) {
+    self.inbound_connection.create_outbound_connection()
+  }
 }

@@ -7,11 +7,12 @@ use std::{
 
 use crate::{
   connection::{Connection, Transport},
+  fabric::Start,
   handler::{create_handler, Envelope, Handler, Message, MessageHandlerFn, Package, Unpacackage},
 };
 
 pub struct Agent<L: LifeCycle, C: Connection> {
-  name:                  Option<String>,
+  pub name:              Option<String>,
   inner:                 L,
   pub(crate) controller: Arc<Controller>,
   handlers:              HashMap<TypeId, MessageHandlerFn<C>>,
@@ -129,6 +130,7 @@ impl std::fmt::Display for AgentIdentity {
 pub trait RuntimeAgent<C: Connection>: Send + Sync + Any {
   fn address(&self) -> C::Address;
   fn name(&self) -> Option<&str>;
+  fn transport(&self) -> &Transport<C>;
   fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender);
 
   // Methods to signal the agent's desired state
@@ -147,6 +149,8 @@ impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C> {
   fn address(&self) -> C::Address { self.transport.inbound_connection.address() }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
+
+  fn transport(&self) -> &Transport<C> { &self.transport }
 
   fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
     self.transport.add_outbound_connection(address, sender);
