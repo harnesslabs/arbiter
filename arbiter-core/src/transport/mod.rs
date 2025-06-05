@@ -40,7 +40,7 @@ impl Runtime for AsyncRuntime {
 
 /// Low-level transport mechanism (TCP, Bluetooth, in-memory, etc.)
 // TODO: The transport needs to be able to handle `Serializable` data, and `Any` data.
-pub trait Transport: Sized + 'static {
+pub trait Transport: Send + Sync + Sized + 'static {
   type Runtime: Runtime;
 
   /// Transport-specific address type (SocketAddr, BluetoothAddr, AgentId, etc.)
@@ -58,6 +58,9 @@ pub trait Transport: Sized + 'static {
 
   /// Get the local address for this transport
   fn local_address(&self) -> Self::Address;
+
+  /// Receive a message from the transport
+  fn receive(&mut self) -> Option<Envelope<Self>>;
 
   fn broadcast(&mut self, envelope: Envelope<Self>);
 }

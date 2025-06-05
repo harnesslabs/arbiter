@@ -1,7 +1,7 @@
 #![cfg(feature = "tcp")]
 
 use std::{
-  io::Write,
+  io::{Read, Write},
   net::{SocketAddr, TcpStream},
 };
 
@@ -27,6 +27,13 @@ impl Transport for TcpTransport {
   }
 
   fn local_address(&self) -> Self::Address { self.local_identity }
+
+  fn receive(&mut self) -> Option<Envelope<Self>> {
+    let mut stream = TcpStream::connect(self.local_identity).unwrap();
+    let mut buffer = Vec::new();
+    stream.read_to_end(&mut buffer).unwrap();
+    Some(Envelope::package(buffer))
+  }
 
   fn broadcast(&mut self, envelope: Envelope<Self>) {
     for stream in &mut self.connections {

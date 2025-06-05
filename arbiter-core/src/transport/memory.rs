@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::Transport;
 use crate::{
-  agent::AgentIdentity,
+  agent::{AgentIdentity, Controller},
   handler::{Envelope, Message},
   transport::SyncRuntime,
 };
@@ -10,8 +10,15 @@ use crate::{
 // TODO: Perhaps Transport really should be a struct.
 /// In-memory transport that preserves current Runtime behavior
 pub struct InMemoryTransport {
-  local_identity: AgentIdentity,
-  connections:    Vec<flume::Sender<Envelope<Self>>>,
+  local_identity:    AgentIdentity,
+  receiver:          flume::Receiver<Envelope<Self>>,
+  pub(crate) sender: flume::Sender<Envelope<Self>>,
+  connections:       Vec<InMemoryConnection>,
+}
+
+pub struct InMemoryConnection {
+  controller: Arc<Controller>,
+  sender:     flume::Sender<Envelope<InMemoryTransport>>,
 }
 
 impl Transport for InMemoryTransport {
@@ -20,13 +27,27 @@ impl Transport for InMemoryTransport {
   type Payload = Arc<dyn Message>;
   type Runtime = SyncRuntime;
 
-  fn new() -> Self { Self { local_identity: AgentIdentity::generate(), connections: Vec::new() } }
+  fn new() -> Self {
+    let (tx, rx) = flume::unbounded();
+    Self {
+      local_identity: AgentIdentity::generate(),
+      receiver:       rx,
+      sender:         tx,
+      connections:    Vec::new(),
+    }
+  }
 
   fn local_address(&self) -> Self::Address { self.local_identity }
 
+  fn receive(&mut self) -> Option<Envelope<Self>> {
+    // dbg!("recieve");
+    self.receiver.try_recv().ok()
+  }
+
   fn broadcast(&mut self, envelope: Envelope<Self>) {
-    for sender in self.connections.iter_mut() {
-      sender.send(envelope.clone());
+    for connection in self.connections.iter_mut() {
+      connection.sender.send(envelope.clone());
+      connection.controller.condvar.notify_one();
     }
   }
 }

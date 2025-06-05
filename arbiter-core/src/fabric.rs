@@ -1,8 +1,7 @@
-use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
   agent::{Agent, Controller, LifeCycle, RuntimeAgent, State},
-  handler::Envelope,
   transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
 };
 
@@ -10,14 +9,13 @@ use crate::{
 // TODO: Instead of storing agents, we could just store the transport components (e.g., a sender
 // and an atomic for their state)
 pub struct Fabric<T: Transport<Runtime = R>, R: Runtime> {
-  id:        FabricId,
-  transport: T,
+  id: FabricId,
 
   // TODO: This should store a task handle for each RUNNING or PAUSEED agent, we should dump
   // stopped agents into a different list.
-  agents:     HashMap<T::Address, Box<dyn RuntimeAgent<T>>>,
-  name_to_id: HashMap<String, T::Address>,
-  channels:   HashMap<T::Address, Controller<T>>,
+  agents:      HashMap<T::Address, Box<dyn RuntimeAgent<T>>>,
+  name_to_id:  HashMap<String, T::Address>,
+  controllers: HashMap<T::Address, Arc<Controller>>,
 }
 
 impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R>
@@ -26,11 +24,10 @@ where T::Payload: std::fmt::Debug
   /// Create a new fabric with the given transport
   pub fn new() -> Self {
     Self {
-      id:         FabricId::generate(),
-      transport:  T::new(),
-      agents:     HashMap::new(),
-      name_to_id: HashMap::new(),
-      channels:   HashMap::new(),
+      id:          FabricId::generate(),
+      agents:      HashMap::new(),
+      name_to_id:  HashMap::new(),
+      controllers: HashMap::new(),
     }
   }
 
@@ -40,9 +37,9 @@ where T::Payload: std::fmt::Debug
   /// Register an agent with the fabric
   pub fn register_agent<A>(&mut self, agent: Agent<A, T>) -> T::Address
   where A: LifeCycle {
-    let tx = agent.communication_channel();
+    let controller = agent.controller();
     let id = agent.address();
-    self.channels.insert(id, tx);
+    self.controllers.insert(id, controller);
 
     id
   }
@@ -95,7 +92,7 @@ where T::Payload: std::fmt::Debug
 
   /// Start an agent by ID
   pub fn start_agent_by_id(&mut self, agent_id: T::Address) -> Result<(), String> {
-    self.channels.get_mut(&agent_id).map_or_else(
+    self.controllers.get_mut(&agent_id).map_or_else(
       || Err(format!("Agent with ID {agent_id} not found")),
       |sender| {
         sender.signal_start();
@@ -133,7 +130,7 @@ where T::Payload: std::fmt::Debug
 {
   /// Execute a single fabric step: poll transport and process messages
   pub fn start(&mut self) {
-    for sender in self.channels.values_mut() {
+    for sender in self.controllers.values_mut() {
       sender.signal_start();
     }
   }
