@@ -6,12 +6,16 @@ use std::{
 };
 
 use crate::{
-  connection::{Connection, Receiver, Sender},
+  connection::{Connection, GetNew, Receiver, Sender},
   handler::Envelope,
 };
 
 pub struct Tcp {
   pub(crate) stream: TcpStream,
+}
+
+impl GetNew for TcpStream {
+  fn get_new(&self) -> Self { self.try_clone().unwrap() }
 }
 
 impl Sender for TcpStream {

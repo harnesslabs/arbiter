@@ -15,7 +15,15 @@ pub struct Agent<L: LifeCycle, C: Connection> {
   inner:                 L,
   pub(crate) controller: Arc<Controller>,
   handlers:              HashMap<TypeId, MessageHandlerFn<C>>,
-  transport:             Transport<C>,
+  pub(crate) transport:  Transport<C>,
+}
+
+pub struct RunningAgent<C: Connection> {
+  pub name: Option<String>,
+  pub(crate) task: JoinHandle<Box<dyn RuntimeAgent<C>>>,
+  pub(crate) controller: Arc<Controller>,
+  pub(crate) outbound_connections: Arc<Mutex<HashMap<C::Address, C::Sender>>>,
+  pub(crate) sender: C::Sender,
 }
 
 pub struct Controller {
@@ -86,11 +94,6 @@ impl<L: LifeCycle, C: Connection> Agent<L, C> {
 
   pub fn clear_name(&mut self) { self.name = None; }
 
-  // Access to inner L, requires locking.
-  pub fn inner_mut(&mut self) -> &mut L { &mut self.inner }
-
-  pub fn inner(&self) -> &L { &self.inner }
-
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
@@ -137,10 +140,8 @@ pub trait RuntimeAgent<C: Connection>: Send + Sync + Any {
   // Methods to signal the agent's desired state
   fn signal_start(&self);
   fn signal_stop(&self);
-  fn current_loop_state(&self) -> State;
 
-  fn process(self) -> JoinHandle<Self>
-  where Self: Sized;
+  fn process(self) -> RunningAgent<C>;
 
   #[cfg(test)]
   fn inner_as_any(&self) -> &dyn Any;
@@ -175,12 +176,16 @@ where C::Payload: Package<L::StartMessage> + Package<L::StopMessage>
     }
   }
 
-  fn current_loop_state(&self) -> State { *self.controller.state.lock().unwrap() }
+  fn process(mut self) -> RunningAgent<C> {
+    let name = self.name.clone();
+    let outbound_connections = self.transport.outbound_connections.clone();
+    let controller = self.controller.clone();
+    let (_, sender) = self.transport.create_inbound_connection();
 
-  fn process(mut self) -> JoinHandle<Self> {
-    std::thread::spawn(move || {
+    let handle = std::thread::spawn(move || {
       let start_message = self.inner.on_start();
       self.transport.broadcast(Envelope::package(start_message));
+      println!("Agent {}: Sent start message.", self.address());
 
       loop {
         println!("Agent {}: Loop iteration.", self.address());
@@ -269,8 +274,9 @@ where C::Payload: Package<L::StartMessage> + Package<L::StopMessage>
 
       self.inner.on_stop();
       println!("Agent {}: Executed on_stop. Main loop finished.", self.address());
-      self
-    })
+      Box::new(self) as Box<dyn RuntimeAgent<C>>
+    });
+    RunningAgent { name, task: handle, controller, outbound_connections, sender }
   }
 
   #[cfg(test)]
@@ -287,20 +293,21 @@ mod tests {
   fn test_agent_lifecycle() {
     let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
     let agent = Agent::<Logger, InMemory>::new(logger);
-    assert_eq!(agent.current_loop_state(), State::Stopped);
+    assert_eq!(*agent.controller.state.lock().unwrap(), State::Stopped);
 
     // Start agent
     let controller = agent.controller.clone();
-    let handle = agent.process();
+    let running_agent = agent.process();
 
     controller.signal_start();
     std::thread::sleep(std::time::Duration::from_millis(50)); // Give time for agent to start
     assert_eq!(controller.state.lock().unwrap().clone(), State::Running);
 
     controller.signal_stop();
-    let joined_agent = handle.join().unwrap();
-    assert_eq!(joined_agent.inner().message_count, 0);
-    assert_eq!(joined_agent.current_loop_state(), State::Stopped);
+    let joined_agent = running_agent.task.join().unwrap();
+    let agent = joined_agent.inner_as_any().downcast_ref::<Logger>().unwrap();
+    assert_eq!(agent.message_count, 0);
+    assert_eq!(*running_agent.controller.state.lock().unwrap(), State::Stopped);
   }
 
   #[test]
@@ -310,7 +317,7 @@ mod tests {
     let sender = agent.transport.inbound_connection.sender.clone();
 
     let controller = agent.controller.clone();
-    let handle = agent.process();
+    let running_agent = agent.process();
 
     controller.signal_start();
     std::thread::sleep(std::time::Duration::from_millis(50)); // Allow agent to start and enter wait
@@ -321,9 +328,9 @@ mod tests {
     assert_eq!(controller.state.lock().unwrap().clone(), State::Running);
 
     controller.signal_stop();
-    let result_agent = handle.join().unwrap();
-
-    assert_eq!(result_agent.inner().message_count, 1);
+    let result_agent = running_agent.task.join().unwrap();
+    let agent = result_agent.inner_as_any().downcast_ref::<Logger>().unwrap();
+    assert_eq!(agent.message_count, 1);
   }
 
   #[test]
@@ -335,10 +342,10 @@ mod tests {
     agent_struct = agent_struct.with_handler::<TextMessage>().with_handler::<NumberMessage>();
     let sender = agent_struct.transport.inbound_connection.sender.clone();
 
-    assert_eq!(agent_struct.current_loop_state(), State::Stopped);
+    assert_eq!(*agent_struct.controller.state.lock().unwrap(), State::Stopped);
 
     let controller = agent_struct.controller.clone();
-    let handle = agent_struct.process();
+    let running_agent = agent_struct.process();
 
     controller.signal_start();
     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -352,7 +359,8 @@ mod tests {
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     controller.signal_stop();
-    let result_agent = handle.join().unwrap();
-    assert_eq!(result_agent.inner().message_count, 2);
+    let result_agent = running_agent.task.join().unwrap();
+    let agent = result_agent.inner_as_any().downcast_ref::<Logger>().unwrap();
+    assert_eq!(agent.message_count, 2);
   }
 }

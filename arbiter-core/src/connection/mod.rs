@@ -1,4 +1,10 @@
-use std::{collections::HashMap, future::Future, hash::Hash, pin::Pin};
+use std::{
+  collections::HashMap,
+  future::Future,
+  hash::Hash,
+  pin::Pin,
+  sync::{Arc, Mutex},
+};
 
 use crate::handler::{Envelope, Message, Package};
 
@@ -26,8 +32,12 @@ impl Runtime for AsyncRuntime {
   fn wrap<T: 'static>(value: T) -> Self::Output<T> { Box::pin(async move { value }) }
 }
 
+pub trait GetNew {
+  fn get_new(&self) -> Self;
+}
+
 // TODO: Need to have results for send and receive.
-pub trait Sender: Send + Sync + 'static {
+pub trait Sender: GetNew + Send + Sync + 'static {
   type Connection: Connection;
   fn send(&self, envelope: Envelope<Self::Connection>);
 }
@@ -56,27 +66,35 @@ pub trait Connection: Send + Sync + 'static {
 
 pub struct Transport<C: Connection> {
   pub(crate) inbound_connection:   C,
-  pub(crate) outbound_connections: HashMap<C::Address, C::Sender>,
+  pub(crate) outbound_connections: Arc<Mutex<HashMap<C::Address, C::Sender>>>,
 }
 
 // TODO: These should return results
 impl<C: Connection> Transport<C> {
   pub fn new() -> Self {
-    Self { inbound_connection: C::new(), outbound_connections: HashMap::new() }
+    Self {
+      inbound_connection:   C::new(),
+      outbound_connections: Arc::new(Mutex::new(HashMap::new())),
+    }
   }
 
   pub fn send(&mut self, envelope: Envelope<C>, address: C::Address) {
-    self.outbound_connections.get_mut(&address).map(|sender| sender.send(envelope));
+    self.outbound_connections.lock().unwrap().get_mut(&address).map(|sender| sender.send(envelope));
   }
 
   pub fn broadcast(&mut self, envelope: Envelope<C>) {
-    self.outbound_connections.values_mut().for_each(|sender| sender.send(envelope.clone()));
+    self
+      .outbound_connections
+      .lock()
+      .unwrap()
+      .values_mut()
+      .for_each(|sender| sender.send(envelope.clone()));
   }
 
   pub fn receive(&mut self) -> Option<Envelope<C>> { self.inbound_connection.receiver().receive() }
 
   pub fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
-    self.outbound_connections.insert(address, sender);
+    self.outbound_connections.lock().unwrap().insert(address, sender);
   }
 
   pub fn create_inbound_connection(&self) -> (C::Address, C::Sender) {

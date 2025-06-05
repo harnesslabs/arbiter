@@ -1,8 +1,12 @@
-use std::collections::HashMap;
+use std::{
+  collections::HashMap,
+  sync::{Arc, Mutex},
+  thread::JoinHandle,
+};
 
 use crate::{
-  agent::{Agent, LifeCycle, RuntimeAgent, State},
-  connection::{memory::InMemory, Connection},
+  agent::{Agent, LifeCycle, RunningAgent, RuntimeAgent, State},
+  connection::{memory::InMemory, Connection, GetNew, Transport},
   handler::Package,
 };
 
@@ -11,7 +15,7 @@ use crate::{
 // and an atomic for their state)
 pub struct Fabric<C: Connection> {
   id:         FabricId,
-  agents:     HashMap<C::Address, Box<dyn RuntimeAgent<C>>>,
+  agents:     HashMap<C::Address, RunningAgent<C>>,
   name_to_id: HashMap<String, C::Address>,
 }
 
@@ -40,18 +44,20 @@ impl<C: Connection> Fabric<C> {
       }
       self.name_to_id.insert(name, new_agent.address());
     }
+
     let id = new_agent.address();
-    for agent in self.agents.values_mut() {
+    for (agent_address, agent) in self.agents.iter_mut() {
       // Get the new agent's inbound connection and give it to all the other agents as an outbound
       // connection.
-      let (address, sender) = new_agent.transport().create_inbound_connection();
-      agent.add_outbound_connection(address, sender);
+      let (address, sender) = new_agent.transport.create_inbound_connection();
+      agent.outbound_connections.lock().unwrap().insert(address, sender);
+
       // Get the other agent's inbound connection and give it to the new agent as an outbound
       // connection.
-      let (address, sender) = agent.transport().create_inbound_connection();
-      new_agent.add_outbound_connection(address, sender);
+      new_agent.add_outbound_connection(*agent_address, agent.sender.get_new());
     }
-    self.agents.insert(id, Box::new(new_agent));
+    let new_agent = new_agent.process();
+    self.agents.insert(id, new_agent);
     id
   }
 
@@ -65,7 +71,7 @@ impl<C: Connection> Fabric<C> {
     A: LifeCycle,
     C::Payload: Package<A::StartMessage> + Package<A::StopMessage>,
   {
-    agent.name = Some(name.into());
+    agent.set_name(name);
     Ok(self.register_agent(agent))
   }
 
@@ -104,7 +110,7 @@ impl<C: Connection> Fabric<C> {
     self.agents.get_mut(&agent_id).map_or_else(
       || Err(format!("Agent with ID {agent_id} not found")),
       |agent| {
-        agent.signal_start();
+        agent.controller.signal_start();
         Ok(())
       },
     )
@@ -124,7 +130,7 @@ found"
   // TODO: This is a bit clunky. Perhaps we can combine these states.
   /// Get the state of an agent by ID
   pub fn agent_state_by_id(&self, agent_id: C::Address) -> Option<State> {
-    self.agents.get(&agent_id).map(|agent| agent.current_loop_state())
+    self.agents.get(&agent_id).map(|agent| *agent.controller.state.lock().unwrap())
   }
 
   /// Get agent count
@@ -138,7 +144,7 @@ impl<C: Connection> Fabric<C> {
   /// Execute a single fabric step: poll transport and process messages
   pub fn start(&mut self) {
     for agent in self.agents.values_mut() {
-      agent.signal_start();
+      agent.controller.signal_start();
     }
   }
 }
@@ -230,7 +236,10 @@ mod tests {
       .unwrap();
 
     fabric.start();
-    let logger = fabric.agents.get(&logger_id).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let running_logger = fabric.agents.remove(&logger_id).unwrap();
+    running_logger.controller.signal_stop();
+    let logger = running_logger.task.join().unwrap();
     let logger = logger.inner_as_any().downcast_ref::<Logger>().unwrap();
     assert_eq!(logger.message_count, 1);
   }

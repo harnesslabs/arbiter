@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{
   agent::AgentIdentity,
-  connection::{Connection, Receiver, Sender},
+  connection::{Connection, GetNew, Receiver, Sender},
   handler::{Envelope, Message},
 };
 
@@ -11,6 +11,10 @@ pub struct InMemory {
   pub(crate) address: AgentIdentity,
   pub(crate) sender:  flume::Sender<Envelope<Self>>,
   receiver:           flume::Receiver<Envelope<Self>>,
+}
+
+impl GetNew for flume::Sender<Envelope<InMemory>> {
+  fn get_new(&self) -> Self { self.clone() }
 }
 
 impl Sender for flume::Sender<Envelope<InMemory>> {
