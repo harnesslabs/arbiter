@@ -9,7 +9,7 @@ use std::{
 
 use serde::Deserialize;
 
-use crate::handler::{Message, Payload};
+use crate::handler::{Envelope, Message, Payload};
 
 pub mod memory;
 pub mod tcp;
@@ -58,4 +58,6 @@ pub trait Transport: Sized + 'static {
 
   /// Get the local address for this transport
   fn local_address(&self) -> Self::Address;
+
+  fn broadcast(&mut self, envelope: Envelope<Self>);
 }

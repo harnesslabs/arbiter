@@ -1,11 +1,18 @@
 #![cfg(feature = "tcp")]
 
-use std::net::SocketAddr;
+use std::{
+  io::Write,
+  net::{SocketAddr, TcpStream},
+};
 
-use crate::transport::{AsyncRuntime, Transport};
+use crate::{
+  handler::Envelope,
+  transport::{AsyncRuntime, Transport},
+};
 
 pub struct TcpTransport {
   local_identity: SocketAddr,
+  connections:    Vec<TcpStream>,
 }
 
 impl Transport for TcpTransport {
@@ -14,7 +21,16 @@ impl Transport for TcpTransport {
   type Payload = Vec<u8>;
   type Runtime = AsyncRuntime;
 
-  fn new() -> Self { Self { local_identity: todo!() } }
+  // TODO: This should be configurable.
+  fn new() -> Self {
+    Self { local_identity: SocketAddr::from(([127, 0, 0, 1], 0)), connections: Vec::new() }
+  }
 
-  fn local_address(&self) -> Self::Address { todo!() }
+  fn local_address(&self) -> Self::Address { self.local_identity }
+
+  fn broadcast(&mut self, envelope: Envelope<Self>) {
+    for stream in &mut self.connections {
+      stream.write_all(&envelope.payload).unwrap();
+    }
+  }
 }

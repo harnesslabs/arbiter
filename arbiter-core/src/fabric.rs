@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc, thread::JoinHandle};
 
 use crate::{
-  agent::{Agent, CommunicationChannel, LifeCycle, RuntimeAgent, State},
+  agent::{Agent, Controller, LifeCycle, RuntimeAgent, State},
   handler::Envelope,
   transport::{memory::InMemoryTransport, Runtime, SyncRuntime, Transport},
 };
@@ -17,7 +17,7 @@ pub struct Fabric<T: Transport<Runtime = R>, R: Runtime> {
   // stopped agents into a different list.
   agents:     HashMap<T::Address, Box<dyn RuntimeAgent<T>>>,
   name_to_id: HashMap<String, T::Address>,
-  channels:   HashMap<T::Address, CommunicationChannel<T>>,
+  channels:   HashMap<T::Address, Controller<T>>,
 }
 
 impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R>
@@ -126,14 +126,6 @@ found"
 
   /// Get list of all agent IDs
   pub fn agent_ids(&self) -> Vec<T::Address> { self.agents.keys().copied().collect() }
-
-  /// Helper function to broadcast messages to all agents
-  // TODO: This should be a method on the transport so the agents access it directly.
-  fn broadcast(&mut self, envelope: Envelope<T>) {
-    for sender in self.channels.values_mut() {
-      sender.send(envelope.clone());
-    }
-  }
 }
 
 impl<T: Transport<Runtime = R>, R: Runtime> Fabric<T, R>

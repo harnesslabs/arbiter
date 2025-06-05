@@ -1,6 +1,6 @@
 use std::{
   any::{Any, TypeId},
-  collections::{HashMap, HashSet},
+  collections::HashMap,
   sync::{Arc, Condvar, Mutex},
   thread::JoinHandle,
 };
@@ -40,13 +40,13 @@ pub struct Agent<L: LifeCycle, T: Transport> {
   handlers:    HashMap<TypeId, MessageHandlerFn<T>>,
 }
 
-pub struct CommunicationChannel<T: Transport> {
+pub struct Controller<T: Transport> {
   tx:          flume::Sender<Envelope<T>>,
   address:     T::Address,
   shared_sync: Arc<AgentSharedSync>,
 }
 
-impl<T: Transport> CommunicationChannel<T> {
+impl<T: Transport> Controller<T> {
   // Greedily send the message to the channel, agents will handle the message in their own time.
   pub fn send(&self, message: Envelope<T>) {
     if self.tx.send(message).is_ok() {
@@ -110,8 +110,8 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
 
   pub fn clear_name(&mut self) { self.name = None; }
 
-  pub fn communication_channel(&self) -> CommunicationChannel<T> {
-    CommunicationChannel {
+  pub fn communication_channel(&self) -> Controller<T> {
+    Controller {
       tx:          self.tx.clone(),
       address:     self.address,
       shared_sync: self.shared_sync.clone(),
