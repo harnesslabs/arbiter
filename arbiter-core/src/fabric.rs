@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
   agent::{Agent, LifeCycle, RuntimeAgent, State},
-  connection::{memory::InMemoryConnection, Connection},
+  connection::{memory::InMemory, Connection},
 };
 
 /// A generic fabric that manages agents over a specific transport layer
@@ -160,7 +160,7 @@ impl std::fmt::Display for FabricId {
 }
 
 /// Type alias for in-memory fabric
-pub type InMemoryFabric = Fabric<InMemoryConnection>;
+pub type InMemoryFabric = Fabric<InMemory>;
 
 #[cfg(test)]
 mod tests {

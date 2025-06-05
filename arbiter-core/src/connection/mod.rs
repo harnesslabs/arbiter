@@ -26,28 +26,37 @@ impl Runtime for AsyncRuntime {
   fn wrap<T: 'static>(value: T) -> Self::Output<T> { Box::pin(async move { value }) }
 }
 
+// TODO: Need to have results for send and receive.
+pub trait Sender: Send + Sync + 'static {
+  type Connection: Connection;
+  fn send(&self, envelope: Envelope<Self::Connection>);
+}
+
+pub trait Receiver: Send + Sync + 'static {
+  type Connection: Connection;
+  fn receive(&self) -> Option<Envelope<Self::Connection>>;
+}
+
 pub trait Connection: Send + Sync + 'static {
   type Address: Copy + Send + Sync + PartialEq + Eq + Hash + std::fmt::Debug + std::fmt::Display;
   type Payload: Clone + Message + Package<Self::Payload>;
-  type Sender;
-  type Receiver;
+  type Sender: Sender<Connection = Self>;
+  type Receiver: Receiver<Connection = Self>;
 
   fn new() -> Self;
 
   fn address(&self) -> Self::Address;
 
-  fn get_sender(&self) -> Self::Sender;
+  fn sender(&mut self) -> &mut Self::Sender;
 
-  fn send(&mut self, envelope: Envelope<Self>)
-  where Self: Sized;
+  fn receiver(&mut self) -> &mut Self::Receiver;
 
-  fn receive(&mut self) -> Option<Envelope<Self>>
-  where Self: Sized;
+  fn create_outbound_connection(&self) -> (Self::Address, Self::Sender);
 }
 
 pub struct Transport<C: Connection> {
   pub(crate) inbound_connection:   C,
-  pub(crate) outbound_connections: HashMap<C::Address, C>,
+  pub(crate) outbound_connections: HashMap<C::Address, C::Sender>,
 }
 
 // TODO: These should return results
@@ -57,16 +66,16 @@ impl<C: Connection> Transport<C> {
   }
 
   pub fn send(&mut self, envelope: Envelope<C>, address: C::Address) {
-    self.outbound_connections.get_mut(&address).map(|connection| connection.send(envelope));
+    self.outbound_connections.get_mut(&address).map(|sender| sender.send(envelope));
   }
 
   pub fn broadcast(&mut self, envelope: Envelope<C>) {
-    self.outbound_connections.values_mut().for_each(|connection| connection.send(envelope.clone()));
+    self.outbound_connections.values_mut().for_each(|sender| sender.send(envelope.clone()));
   }
 
-  pub fn receive(&mut self) -> Option<Envelope<C>> { self.inbound_connection.receive() }
+  pub fn receive(&mut self) -> Option<Envelope<C>> { self.inbound_connection.receiver().receive() }
 
-  pub fn add_outbound_connection(&mut self, connection: C) {
-    self.outbound_connections.insert(connection.address(), connection);
+  pub fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
+    self.outbound_connections.insert(address, sender);
   }
 }

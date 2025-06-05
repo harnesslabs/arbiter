@@ -129,7 +129,7 @@ impl std::fmt::Display for AgentIdentity {
 pub trait RuntimeAgent<C: Connection>: Send + Sync + Any {
   fn address(&self) -> C::Address;
   fn name(&self) -> Option<&str>;
-  fn add_outbound_connection(&mut self, connection: C);
+  fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender);
 
   // Methods to signal the agent's desired state
   fn signal_start(&self);
@@ -148,8 +148,8 @@ impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C> {
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
 
-  fn add_outbound_connection(&mut self, connection: C) {
-    self.transport.add_outbound_connection(connection);
+  fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
+    self.transport.add_outbound_connection(address, sender);
   }
 
   fn signal_start(&self) {
@@ -273,12 +273,12 @@ impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C> {
 mod tests {
 
   use super::*; // Tests need complete rework
-  use crate::{connection::memory::InMemoryConnection, fixtures::*};
+  use crate::{connection::memory::InMemory, fixtures::*};
 
   #[test]
   fn test_agent_lifecycle() {
     let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
-    let agent = Agent::<Logger, InMemoryConnection>::new(logger);
+    let agent = Agent::<Logger, InMemory>::new(logger);
     assert_eq!(agent.current_loop_state(), State::Stopped);
 
     // Start agent
@@ -298,8 +298,8 @@ mod tests {
   #[test]
   fn test_single_agent_handler() {
     let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
-    let agent = Agent::<Logger, InMemoryConnection>::new(logger).with_handler::<TextMessage>();
-    let sender = agent.transport.inbound_connection.get_sender();
+    let agent = Agent::<Logger, InMemory>::new(logger).with_handler::<TextMessage>();
+    let sender = agent.transport.inbound_connection.sender.clone();
 
     let controller = agent.controller.clone();
     let handle = agent.process();
@@ -320,12 +320,12 @@ mod tests {
 
   #[test]
   fn test_multiple_agent_handlers() {
-    let mut agent_struct = Agent::<Logger, InMemoryConnection>::new(Logger {
+    let mut agent_struct = Agent::<Logger, InMemory>::new(Logger {
       name:          "TestLogger".to_string(),
       message_count: 0,
     });
     agent_struct = agent_struct.with_handler::<TextMessage>().with_handler::<NumberMessage>();
-    let sender = agent_struct.transport.inbound_connection.get_sender();
+    let sender = agent_struct.transport.inbound_connection.sender.clone();
 
     assert_eq!(agent_struct.current_loop_state(), State::Stopped);
 

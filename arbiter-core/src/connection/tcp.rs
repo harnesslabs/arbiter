@@ -1,18 +1,32 @@
 #![cfg(feature = "tcp")]
 
 use std::{
+  io::Write,
   net::{SocketAddr, TcpStream},
-  sync::Arc,
 };
 
-use crate::{agent::Controller, connection::Connection, handler::Envelope};
+use crate::{
+  connection::{Connection, Receiver, Sender},
+  handler::Envelope,
+};
 
-pub struct TcpConnection {
-  pub(crate) address:     SocketAddr,
-  pub(crate) connections: Vec<TcpStream>,
+pub struct Tcp {
+  pub(crate) stream: TcpStream,
 }
 
-impl Connection for TcpConnection {
+impl Sender for TcpStream {
+  type Connection = Tcp;
+
+  fn send(&self, envelope: Envelope<Self::Connection>) { todo!() }
+}
+
+impl Receiver for TcpStream {
+  type Connection = Tcp;
+
+  fn receive(&self) -> Option<Envelope<Self::Connection>> { todo!() }
+}
+
+impl Connection for Tcp {
   type Address = SocketAddr;
   type Payload = Vec<u8>;
   type Receiver = TcpStream;
@@ -20,14 +34,18 @@ impl Connection for TcpConnection {
 
   // TODO: This should be configurable.
   fn new() -> Self {
-    Self { address: SocketAddr::from(([127, 0, 0, 1], 0)), connections: Vec::new() }
+    let stream = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+    Self { stream }
   }
 
-  fn address(&self) -> Self::Address { self.address }
+  fn address(&self) -> Self::Address { self.stream.peer_addr().unwrap() }
 
-  fn get_sender(&self) -> Self::Sender { todo!() }
+  fn create_outbound_connection(&self) -> (Self::Address, Self::Sender) {
+    let stream = TcpStream::connect(self.address()).unwrap();
+    (self.address(), stream)
+  }
 
-  fn send(&mut self, envelope: Envelope<Self>) { todo!() }
+  fn sender(&mut self) -> &mut Self::Sender { &mut self.stream }
 
-  fn receive(&mut self) -> Option<Envelope<Self>> { todo!() }
+  fn receiver(&mut self) -> &mut Self::Receiver { &mut self.stream }
 }

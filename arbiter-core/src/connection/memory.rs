@@ -1,20 +1,31 @@
 use std::sync::Arc;
 
-use super::Transport;
 use crate::{
-  agent::{AgentIdentity, Controller},
-  connection::{Connection, SyncRuntime},
+  agent::AgentIdentity,
+  connection::{Connection, Receiver, Sender},
   handler::{Envelope, Message},
 };
 
 #[derive(Clone)]
-pub struct InMemoryConnection {
+pub struct InMemory {
   pub(crate) address: AgentIdentity,
-  sender:             flume::Sender<Envelope<Self>>,
+  pub(crate) sender:  flume::Sender<Envelope<Self>>,
   receiver:           flume::Receiver<Envelope<Self>>,
 }
 
-impl Connection for InMemoryConnection {
+impl Sender for flume::Sender<Envelope<InMemory>> {
+  type Connection = InMemory;
+
+  fn send(&self, envelope: Envelope<Self::Connection>) { self.send(envelope).unwrap(); }
+}
+
+impl Receiver for flume::Receiver<Envelope<InMemory>> {
+  type Connection = InMemory;
+
+  fn receive(&self) -> Option<Envelope<Self::Connection>> { self.try_recv().ok() }
+}
+
+impl Connection for InMemory {
   type Address = AgentIdentity;
   type Payload = Arc<dyn Message>;
   type Receiver = flume::Receiver<Envelope<Self>>;
@@ -27,9 +38,11 @@ impl Connection for InMemoryConnection {
 
   fn address(&self) -> Self::Address { self.address }
 
-  fn get_sender(&self) -> Self::Sender { self.sender.clone() }
+  fn sender(&mut self) -> &mut Self::Sender { &mut self.sender }
 
-  fn send(&mut self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
+  fn receiver(&mut self) -> &mut Self::Receiver { &mut self.receiver }
 
-  fn receive(&mut self) -> Option<Envelope<Self>> { self.receiver.try_recv().ok() }
+  fn create_outbound_connection(&self) -> (Self::Address, Self::Sender) {
+    (self.address, self.sender.clone())
+  }
 }
