@@ -1,55 +1,34 @@
 #![cfg(feature = "tcp")]
 
-use std::{
-  io::Write,
-  net::{SocketAddr, TcpStream},
-};
+use std::net::{SocketAddr, TcpStream};
 
 use crate::{
-  connection::{Connection, GetNew, Receiver, Sender},
+  connection::{Generateable, Joinable, Spawnable, Transport},
   handler::Envelope,
 };
 
-pub struct Tcp {
-  pub(crate) stream: TcpStream,
+// TODO
+impl Spawnable for TcpStream {
+  fn spawn() -> Self {
+    let stream = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
+    stream
+  }
 }
 
-impl GetNew for TcpStream {
-  fn get_new(&self) -> Self { self.try_clone().unwrap() }
+impl Joinable for TcpStream {
+  fn join(&self) -> Self { self.try_clone().unwrap() }
 }
 
-impl Sender for TcpStream {
-  type Connection = Tcp;
-
-  fn send(&self, envelope: Envelope<Self::Connection>) { todo!() }
+// TODO
+impl Generateable for SocketAddr {
+  fn generate() -> Self { SocketAddr::from(([127, 0, 0, 1], 0)) }
 }
 
-impl Receiver for TcpStream {
-  type Connection = Tcp;
-
-  fn receive(&self) -> Option<Envelope<Self::Connection>> { todo!() }
-}
-
-impl Connection for Tcp {
+impl Transport for TcpStream {
   type Address = SocketAddr;
   type Payload = Vec<u8>;
-  type Receiver = TcpStream;
-  type Sender = TcpStream;
 
-  // TODO: This should be configurable.
-  fn new() -> Self {
-    let stream = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
-    Self { stream }
-  }
+  fn send(&self, envelope: Envelope<Self>) { todo!() }
 
-  fn address(&self) -> Self::Address { self.stream.peer_addr().unwrap() }
-
-  fn create_outbound_connection(&self) -> (Self::Address, Self::Sender) {
-    let stream = TcpStream::connect(self.address()).unwrap();
-    (self.address(), stream)
-  }
-
-  fn sender(&mut self) -> &mut Self::Sender { &mut self.stream }
-
-  fn receiver(&mut self) -> &mut Self::Receiver { &mut self.stream }
+  fn receive(&self) -> Option<Envelope<Self>> { todo!() }
 }

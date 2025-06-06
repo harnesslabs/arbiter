@@ -32,72 +32,85 @@ impl Runtime for AsyncRuntime {
   fn wrap<T: 'static>(value: T) -> Self::Output<T> { Box::pin(async move { value }) }
 }
 
-pub trait GetNew {
-  fn get_new(&self) -> Self;
+pub trait Spawnable {
+  fn spawn() -> Self;
 }
 
-// TODO: Need to have results for send and receive.
-pub trait Sender: GetNew + Send + Sync + 'static {
-  type Connection: Connection;
-  fn send(&self, envelope: Envelope<Self::Connection>);
+pub trait Joinable {
+  fn join(&self) -> Self;
 }
 
-pub trait Receiver: Send + Sync + 'static {
-  type Connection: Connection;
-  fn receive(&self) -> Option<Envelope<Self::Connection>>;
+pub trait Generateable {
+  fn generate() -> Self;
 }
 
-pub trait Connection: Send + Sync + 'static {
-  type Address: Copy + Send + Sync + PartialEq + Eq + Hash + std::fmt::Debug + std::fmt::Display;
+pub struct Connection<T: Transport> {
+  pub address:   T::Address,
+  pub transport: T,
+}
+
+impl<T: Transport> Connection<T> {
+  pub fn new(address: T::Address) -> Self {
+    let channel = T::spawn();
+    Self { address, transport: channel }
+  }
+
+  pub fn join(&self) -> Self {
+    let channel = self.transport.join();
+    Self { address: self.address, transport: channel }
+  }
+}
+
+pub trait Transport: Spawnable + Joinable + Send + Sync + Sized + 'static {
+  type Address: Generateable
+    + Copy
+    + Send
+    + Sync
+    + PartialEq
+    + Eq
+    + Hash
+    + std::fmt::Debug
+    + std::fmt::Display;
   type Payload: Clone + Message + Package<Self::Payload>;
-  type Sender: Sender<Connection = Self>;
-  type Receiver: Receiver<Connection = Self>;
 
-  fn new() -> Self;
-
-  fn address(&self) -> Self::Address;
-
-  fn sender(&mut self) -> &mut Self::Sender;
-
-  fn receiver(&mut self) -> &mut Self::Receiver;
-
-  fn create_outbound_connection(&self) -> (Self::Address, Self::Sender);
+  fn send(&self, envelope: Envelope<Self>);
+  fn receive(&self) -> Option<Envelope<Self>>;
 }
 
-pub struct Transport<C: Connection> {
-  pub(crate) inbound_connection:   C,
-  pub(crate) outbound_connections: Arc<Mutex<HashMap<C::Address, C::Sender>>>,
-}
+// pub struct Transport<C: Connection> {
+//   pub(crate) inbound_connection: C,
+// }
 
-// TODO: These should return results
-impl<C: Connection> Transport<C> {
-  pub fn new() -> Self {
-    Self {
-      inbound_connection:   C::new(),
-      outbound_connections: Arc::new(Mutex::new(HashMap::new())),
-    }
-  }
+// // TODO: These should return results
+// impl<C: Connection> Transport<C> {
+//   pub fn new() -> Self {
+//     Self {
+//       inbound_connection:   C::new(),
+//       outbound_connections: Arc::new(Mutex::new(HashMap::new())),
+//     }
+//   }
 
-  pub fn send(&mut self, envelope: Envelope<C>, address: C::Address) {
-    self.outbound_connections.lock().unwrap().get_mut(&address).map(|sender| sender.send(envelope));
-  }
+//   pub fn send(&mut self, envelope: Envelope<C>, address: C::Address) {
+//     self.outbound_connections.lock().unwrap().get_mut(&address).map(|sender|
+// sender.send(envelope));   }
 
-  pub fn broadcast(&mut self, envelope: Envelope<C>) {
-    self
-      .outbound_connections
-      .lock()
-      .unwrap()
-      .values_mut()
-      .for_each(|sender| sender.send(envelope.clone()));
-  }
+//   pub fn broadcast(&mut self, envelope: Envelope<C>) {
+//     self
+//       .outbound_connections
+//       .lock()
+//       .unwrap()
+//       .values_mut()
+//       .for_each(|sender| sender.send(envelope.clone()));
+//   }
 
-  pub fn receive(&mut self) -> Option<Envelope<C>> { self.inbound_connection.receiver().receive() }
+//   pub fn receive(&mut self) -> Option<Envelope<C>> { self.inbound_connection.receiver().receive()
+// }
 
-  pub fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
-    self.outbound_connections.lock().unwrap().insert(address, sender);
-  }
+//   pub fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
+//     self.outbound_connections.lock().unwrap().insert(address, sender);
+//   }
 
-  pub fn create_inbound_connection(&self) -> (C::Address, C::Sender) {
-    self.inbound_connection.create_outbound_connection()
-  }
-}
+//   pub fn create_inbound_connection(&self) -> (C::Address, C::Sender) {
+//     self.inbound_connection.create_outbound_connection()
+//   }
+// }

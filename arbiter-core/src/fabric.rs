@@ -6,20 +6,20 @@ use std::{
 
 use crate::{
   agent::{Agent, LifeCycle, RunningAgent, RuntimeAgent, State},
-  connection::{memory::InMemory, Connection, GetNew, Transport},
+  connection::{memory::InMemory, Joinable, Transport},
   handler::Package,
 };
 
 /// A generic fabric that manages agents over a specific transport layer
 // TODO: Instead of storing agents, we could just store the transport components (e.g., a sender
 // and an atomic for their state)
-pub struct Fabric<C: Connection> {
+pub struct Transport<C: Transport> {
   id:         FabricId,
   agents:     HashMap<C::Address, RunningAgent<C>>,
   name_to_id: HashMap<String, C::Address>,
 }
 
-impl<C: Connection> Fabric<C> {
+impl<C: Transport> Transport<C> {
   /// Create a new fabric with the given transport
   pub fn new() -> Self {
     Self {
@@ -140,7 +140,7 @@ found"
   pub fn agent_ids(&self) -> Vec<C::Address> { self.agents.keys().copied().collect() }
 }
 
-impl<C: Connection> Fabric<C> {
+impl<C: Transport> Transport<C> {
   /// Execute a single fabric step: poll transport and process messages
   pub fn start(&mut self) {
     for agent in self.agents.values_mut() {
@@ -149,7 +149,7 @@ impl<C: Connection> Fabric<C> {
   }
 }
 
-impl<C: Connection> Default for Fabric<C> {
+impl<C: Transport> Default for Transport<C> {
   fn default() -> Self { Self::new() }
 }
 
@@ -182,7 +182,7 @@ impl std::fmt::Display for FabricId {
 }
 
 /// Type alias for in-memory fabric
-pub type InMemoryFabric = Fabric<InMemory>;
+pub type InMemoryFabric = Transport<InMemory>;
 
 #[cfg(test)]
 mod tests {

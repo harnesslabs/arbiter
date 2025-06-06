@@ -6,7 +6,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::connection::Connection;
+use crate::connection::Transport;
 
 // The type that agents actually work with.
 pub trait Message: Any + Send + Sync + 'static {}
@@ -21,16 +21,16 @@ impl Payload for Arc<dyn Message> {}
 
 impl Payload for Vec<u8> {}
 
-pub struct Envelope<C: Connection> {
+pub struct Envelope<C: Transport> {
   pub payload: C::Payload,
   pub type_id: TypeId,
 }
 
-impl<C: Connection> Clone for Envelope<C> {
+impl<C: Transport> Clone for Envelope<C> {
   fn clone(&self) -> Self { Self { payload: self.payload.clone(), type_id: self.type_id } }
 }
 
-impl<C: Connection> Envelope<C> {
+impl<C: Transport> Envelope<C> {
   pub fn package<M: Message>(message: M) -> Self
   where C::Payload: Package<M> {
     Self { payload: C::Payload::package(message), type_id: TypeId::of::<M>() }
@@ -81,7 +81,7 @@ pub trait Handler<M> {
 }
 
 // TODO: I think we want this T::Payload to also have the ability to take a unit type ()
-pub type MessageHandlerFn<C: Connection> =
+pub type MessageHandlerFn<C: Transport> =
   Box<dyn Fn(&mut dyn Any, C::Payload) -> C::Payload + Send + Sync>;
 
 // TODO: This panic is bad.
@@ -89,7 +89,7 @@ pub fn create_handler<'a_unused, M, L, C>() -> MessageHandlerFn<C>
 where
   L: Handler<M> + 'static,
   M: Message,
-  C: Connection,
+  C: Transport,
   C::Payload: Unpacackage<M> + Package<L::Reply>, {
   Box::new(|agent: &mut dyn Any, message_payload: C::Payload| {
     agent.downcast_mut::<L>().map_or_else(

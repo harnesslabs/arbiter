@@ -1,29 +1,26 @@
 use std::{
-  any::{Any, TypeId},
+  any::TypeId,
   collections::HashMap,
-  sync::{Arc, Condvar, Mutex},
+  sync::{Condvar, Mutex},
   thread::JoinHandle,
 };
 
 use crate::{
-  connection::{Connection, Transport},
+  connection::{Connection, Generateable, Transport},
   handler::{create_handler, Envelope, Handler, Message, MessageHandlerFn, Package, Unpacackage},
 };
 
-pub struct Agent<L: LifeCycle, C: Connection> {
-  pub name:              Option<String>,
-  inner:                 L,
-  pub(crate) controller: Arc<Controller>,
-  handlers:              HashMap<TypeId, MessageHandlerFn<C>>,
-  pub(crate) transport:  Transport<C>,
+pub struct Agent<L: LifeCycle, T: Transport> {
+  pub name:   Option<String>,
+  inner:      L,
+  connection: Connection<T>,
+  handlers:   HashMap<TypeId, MessageHandlerFn<T>>,
 }
 
-pub struct RunningAgent<C: Connection> {
-  pub name: Option<String>,
-  pub(crate) task: JoinHandle<Box<dyn RuntimeAgent<C>>>,
-  pub(crate) controller: Arc<Controller>,
-  pub(crate) outbound_connections: Arc<Mutex<HashMap<C::Address, C::Sender>>>,
-  pub(crate) sender: C::Sender,
+pub struct RunningAgent<L: LifeCycle, T: Transport> {
+  pub name:        Option<String>,
+  pub address:     T::Address,
+  pub(crate) task: JoinHandle<Agent<L, T>>,
 }
 
 pub struct Controller {
@@ -69,24 +66,42 @@ pub trait LifeCycle: Send + Sync + 'static {
 
 // TODO: It would be worth adding a handler to each agent for an instruction for "Start"/"Stop" so
 // the agent can be remotely shut off.
-impl<L: LifeCycle, C: Connection> Agent<L, C> {
+impl<L: LifeCycle, T: Transport> Agent<L, T> {
   pub fn new(agent_inner: L) -> Self {
+    let address = T::Address::generate();
     Self {
       name:       None,
       inner:      agent_inner,
-      controller: Arc::new(Controller::new()),
+      connection: Connection::<T>::new(address),
       handlers:   HashMap::new(),
-      transport:  Transport::new(),
     }
   }
 
-  pub fn with_name(agent_inner: L, name: impl Into<String>) -> Self {
+  pub fn new_with_connection(agent_inner: L, connection: Connection<T>) -> Self {
+    Self {
+      name:       None,
+      inner:      agent_inner,
+      connection: Connection {
+        address:   T::Address::generate(),
+        transport: connection.transport.join(),
+      },
+      handlers:   HashMap::new(),
+    }
+  }
+
+  pub fn new_with_connection_and_name(
+    agent_inner: L,
+    connection: &Connection<T>,
+    name: impl Into<String>,
+  ) -> Self {
     Self {
       name:       Some(name.into()),
       inner:      agent_inner,
-      controller: Arc::new(Controller::new()),
+      connection: Connection {
+        address:   connection.address,
+        transport: connection.transport.join(),
+      },
       handlers:   HashMap::new(),
-      transport:  Transport::new(),
     }
   }
 
@@ -98,91 +113,37 @@ impl<L: LifeCycle, C: Connection> Agent<L, C> {
   where
     M: Message,
     L: Handler<M>,
-    C::Payload: Unpacackage<M> + Package<L::Reply>, {
+    T::Payload: Unpacackage<M> + Package<L::Reply>, {
     dbg!(TypeId::of::<M>());
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, C>());
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T>());
     self
   }
-}
 
-/// Unique identifier for agents across fabrics
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct AgentIdentity([u8; 32]);
-
-impl AgentIdentity {
-  pub fn generate() -> Self {
-    use std::sync::atomic::{AtomicU64, Ordering}; // Keep this for unique ID generation
-    static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let mut bytes = [0u8; 32];
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    bytes[..8].copy_from_slice(&id.to_le_bytes());
-    Self(bytes)
-  }
-
-  pub const fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
-
-  pub const fn as_bytes(&self) -> &[u8; 32] { &self.0 }
-}
-
-impl std::fmt::Display for AgentIdentity {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let short = &self.0[..4];
-    write!(f, "agent-{:02x}{:02x}{:02x}{:02x}", short[0], short[1], short[2], short[3])
-  }
-}
-
-pub trait RuntimeAgent<C: Connection>: Send + Sync + Any {
-  fn address(&self) -> C::Address;
-  fn name(&self) -> Option<&str>;
-  fn transport(&self) -> &Transport<C>;
-  fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender);
-
-  // Methods to signal the agent's desired state
-  fn signal_start(&self);
-  fn signal_stop(&self);
-
-  fn process(self) -> RunningAgent<C>;
-
-  #[cfg(test)]
-  fn inner_as_any(&self) -> &dyn Any;
-}
-
-impl<L: LifeCycle, C: Connection> RuntimeAgent<C> for Agent<L, C>
-where C::Payload: Package<L::StartMessage> + Package<L::StopMessage>
-{
-  fn address(&self) -> C::Address { self.transport.inbound_connection.address() }
+  fn address(&self) -> T::Address { self.connection.address }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
 
-  fn transport(&self) -> &Transport<C> { &self.transport }
+  // fn signal_start(&self) {
+  //   let mut sync_guard = self.controller.state.lock().unwrap();
+  //   if *sync_guard != State::Running {
+  //     *sync_guard = State::Running;
+  //     self.controller.condvar.notify_one();
+  //   }
+  // }
 
-  fn add_outbound_connection(&mut self, address: C::Address, sender: C::Sender) {
-    self.transport.add_outbound_connection(address, sender);
-  }
+  // fn signal_stop(&self) {
+  //   let mut sync_guard = self.controller.state.lock().unwrap();
+  //   if *sync_guard != State::Stopped {
+  //     *sync_guard = State::Stopped;
+  //     self.controller.condvar.notify_one();
+  //   }
+  // }
 
-  fn signal_start(&self) {
-    let mut sync_guard = self.controller.state.lock().unwrap();
-    if *sync_guard != State::Running {
-      *sync_guard = State::Running;
-      self.controller.condvar.notify_one();
-    }
-  }
-
-  fn signal_stop(&self) {
-    let mut sync_guard = self.controller.state.lock().unwrap();
-    if *sync_guard != State::Stopped {
-      *sync_guard = State::Stopped;
-      self.controller.condvar.notify_one();
-    }
-  }
-
-  fn process(mut self) -> RunningAgent<C> {
+  fn process(mut self) -> RunningAgent<L, T> {
     let name = self.name.clone();
-    let outbound_connections = self.transport.outbound_connections.clone();
-    let controller = self.controller.clone();
-    let (_, sender) = self.transport.create_inbound_connection();
+    let address = self.address();
 
-    let handle = std::thread::spawn(move || {
+    let task = std::thread::spawn(move || {
       let start_message = self.inner.on_start();
       self.transport.broadcast(Envelope::package(start_message));
       println!("Agent {}: Sent start message.", self.address());
@@ -274,13 +235,10 @@ where C::Payload: Package<L::StartMessage> + Package<L::StopMessage>
 
       self.inner.on_stop();
       println!("Agent {}: Executed on_stop. Main loop finished.", self.address());
-      Box::new(self) as Box<dyn RuntimeAgent<C>>
+      self
     });
-    RunningAgent { name, task: handle, controller, outbound_connections, sender }
+    RunningAgent { name, address, task }
   }
-
-  #[cfg(test)]
-  fn inner_as_any(&self) -> &dyn Any { &self.inner }
 }
 
 #[cfg(test)]

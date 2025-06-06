@@ -1,13 +1,13 @@
 pub mod agent;
 // TODO: We need to have a wasm fabric or something.
 pub mod connection;
-pub mod fabric;
+// pub mod fabric;
 pub mod handler;
 
 pub mod prelude {
   pub use crate::{
-    agent::{LifeCycle, RuntimeAgent},
-    connection::Connection,
+    agent::LifeCycle,
+    connection::Transport,
     handler::{Handler, Message},
   };
 }

@@ -1,52 +1,69 @@
 use std::sync::Arc;
 
 use crate::{
-  agent::AgentIdentity,
-  connection::{Connection, GetNew, Receiver, Sender},
+  connection::{Generateable, Joinable, Spawnable, Transport},
   handler::{Envelope, Message},
 };
 
 #[derive(Clone)]
 pub struct InMemory {
-  pub(crate) address: AgentIdentity,
-  pub(crate) sender:  flume::Sender<Envelope<Self>>,
-  receiver:           flume::Receiver<Envelope<Self>>,
+  sender:   flume::Sender<Envelope<Self>>,
+  receiver: flume::Receiver<Envelope<Self>>,
 }
 
-impl GetNew for flume::Sender<Envelope<InMemory>> {
-  fn get_new(&self) -> Self { self.clone() }
-}
-
-impl Sender for flume::Sender<Envelope<InMemory>> {
-  type Connection = InMemory;
-
-  fn send(&self, envelope: Envelope<Self::Connection>) { self.send(envelope).unwrap(); }
-}
-
-impl Receiver for flume::Receiver<Envelope<InMemory>> {
-  type Connection = InMemory;
-
-  fn receive(&self) -> Option<Envelope<Self::Connection>> { self.try_recv().ok() }
-}
-
-impl Connection for InMemory {
-  type Address = AgentIdentity;
-  type Payload = Arc<dyn Message>;
-  type Receiver = flume::Receiver<Envelope<Self>>;
-  type Sender = flume::Sender<Envelope<Self>>;
-
-  fn new() -> Self {
+impl InMemory {
+  pub fn new() -> Self {
     let (sender, receiver) = flume::unbounded();
-    Self { address: AgentIdentity::generate(), sender, receiver }
+    Self { sender, receiver }
   }
+}
 
-  fn address(&self) -> Self::Address { self.address }
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct InMemoryAddress([u8; 32]);
 
-  fn sender(&mut self) -> &mut Self::Sender { &mut self.sender }
+impl InMemoryAddress {
+  pub const fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
 
-  fn receiver(&mut self) -> &mut Self::Receiver { &mut self.receiver }
+  pub const fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+}
 
-  fn create_outbound_connection(&self) -> (Self::Address, Self::Sender) {
-    (self.address, self.sender.clone())
+impl Generateable for InMemoryAddress {
+  fn generate() -> Self {
+    use std::sync::atomic::{AtomicU64, Ordering}; // Keep this for unique ID generation
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    let mut bytes = [0u8; 32];
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    bytes[..8].copy_from_slice(&id.to_le_bytes());
+    Self(bytes)
   }
+}
+
+impl std::fmt::Display for InMemoryAddress {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let short = &self.0[..4];
+    write!(f, "agent-{:02x}{:02x}{:02x}{:02x}", short[0], short[1], short[2], short[3])
+  }
+}
+
+impl Joinable for InMemory {
+  fn join(&self) -> Self {
+    let (sender, receiver) = (self.sender.clone(), self.receiver.clone());
+    Self { sender, receiver }
+  }
+}
+
+impl Spawnable for InMemory {
+  fn spawn() -> Self {
+    let (sender, receiver) = flume::unbounded();
+    Self { sender, receiver }
+  }
+}
+
+impl Transport for InMemory {
+  type Address = InMemoryAddress;
+  type Payload = Arc<dyn Message>;
+
+  fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
+
+  fn receive(&self) -> Option<Envelope<Self>> { self.receiver.try_recv().ok() }
 }
