@@ -5,10 +5,10 @@ use crate::{
   handler::{Envelope, Message},
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct InMemory {
-  sender:   flume::Sender<Envelope<Self>>,
-  receiver: flume::Receiver<Envelope<Self>>,
+  pub(crate) sender:   flume::Sender<Envelope<Self>>,
+  pub(crate) receiver: flume::Receiver<Envelope<Self>>,
 }
 
 impl InMemory {
@@ -65,5 +65,5 @@ impl Transport for InMemory {
 
   fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
 
-  fn receive(&self) -> Option<Envelope<Self>> { self.receiver.try_recv().ok() }
+  fn receive(&self) -> Option<Envelope<Self>> { self.receiver.recv().ok() }
 }

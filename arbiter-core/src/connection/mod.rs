@@ -44,6 +44,7 @@ pub trait Generateable {
   fn generate() -> Self;
 }
 
+#[derive(Debug)]
 pub struct Connection<T: Transport> {
   pub address:   T::Address,
   pub transport: T,

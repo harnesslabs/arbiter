@@ -21,6 +21,7 @@ impl Payload for Arc<dyn Message> {}
 
 impl Payload for Vec<u8> {}
 
+#[derive(Debug)]
 pub struct Envelope<C: Transport> {
   pub payload: C::Payload,
   pub type_id: TypeId,

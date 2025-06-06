@@ -1,60 +1,90 @@
 use std::{
-  any::TypeId,
+  any::{Any, TypeId},
   collections::HashMap,
-  sync::{Condvar, Mutex},
+  ops::Deref,
+  sync::{Arc, Condvar, Mutex},
   thread::JoinHandle,
 };
 
 use crate::{
-  connection::{Connection, Generateable, Transport},
+  connection::{memory::InMemory, Connection, Generateable, Joinable, Spawnable, Transport},
   handler::{create_handler, Envelope, Handler, Message, MessageHandlerFn, Package, Unpacackage},
 };
 
 pub struct Agent<L: LifeCycle, T: Transport> {
   pub name:   Option<String>,
+  state:      State,
   inner:      L,
   connection: Connection<T>,
   handlers:   HashMap<TypeId, MessageHandlerFn<T>>,
 }
 
 pub struct RunningAgent<L: LifeCycle, T: Transport> {
-  pub name:        Option<String>,
-  pub address:     T::Address,
-  pub(crate) task: JoinHandle<Agent<L, T>>,
+  pub name:                    Option<String>,
+  pub address:                 T::Address,
+  pub(crate) task:             JoinHandle<Agent<L, T>>,
+  pub(crate) outer_controller: OuterController,
 }
 
-pub struct Controller {
-  pub state:   Mutex<State>,
-  pub condvar: Condvar,
+impl<L: LifeCycle, T: Transport> RunningAgent<L, T> {
+  pub fn state(&self) -> State { self.outer_controller.get_state() }
+
+  pub fn start(&self) { self.outer_controller.signal_start(); }
+
+  pub fn stop(&self) { self.outer_controller.signal_stop(); }
 }
 
-impl Controller {
-  pub fn new() -> Self { Self { state: Mutex::new(State::Stopped), condvar: Condvar::new() } }
-}
-
-impl Controller {
-  pub fn signal_start(&self) {
-    println!("Controller: signal_start");
-    let mut sync_guard = self.state.lock().unwrap();
-    if *sync_guard != State::Running {
-      *sync_guard = State::Running;
-      self.condvar.notify_one();
-    }
-  }
-
-  pub fn signal_stop(&self) {
-    let mut sync_guard = self.state.lock().unwrap();
-    if *sync_guard != State::Stopped {
-      *sync_guard = State::Stopped;
-      self.condvar.notify_one();
-    }
-  }
-}
-
-#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
   Stopped,
   Running,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlSignal {
+  Start,
+  Stop,
+  GetState,
+}
+
+pub struct InnerController {
+  pub(crate) instruction_receiver: flume::Receiver<ControlSignal>,
+  pub(crate) state_sender:         flume::Sender<State>,
+}
+
+pub struct OuterController {
+  pub(crate) instruction_sender: flume::Sender<ControlSignal>,
+  pub(crate) state_receiver:     flume::Receiver<State>,
+}
+
+pub struct Controller {
+  pub(crate) inner: InnerController,
+  pub(crate) outer: OuterController,
+}
+
+impl Controller {
+  pub fn new() -> Self {
+    let (instruction_sender, instruction_receiver) = flume::unbounded();
+    let (state_sender, state_receiver) = flume::unbounded();
+    Self {
+      inner: InnerController { instruction_receiver, state_sender },
+      outer: OuterController { instruction_sender, state_receiver },
+    }
+  }
+}
+
+impl OuterController {
+  pub fn signal_start(&self) {
+    println!("Controller: signal_start");
+    self.instruction_sender.send(ControlSignal::Start);
+  }
+
+  pub fn signal_stop(&self) { self.instruction_sender.send(ControlSignal::Stop); }
+
+  pub fn get_state(&self) -> State {
+    self.instruction_sender.send(ControlSignal::GetState);
+    self.state_receiver.recv().unwrap()
+  }
 }
 
 pub trait LifeCycle: Send + Sync + 'static {
@@ -71,6 +101,7 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     let address = T::Address::generate();
     Self {
       name:       None,
+      state:      State::Stopped,
       inner:      agent_inner,
       connection: Connection::<T>::new(address),
       handlers:   HashMap::new(),
@@ -80,6 +111,7 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   pub fn new_with_connection(agent_inner: L, connection: Connection<T>) -> Self {
     Self {
       name:       None,
+      state:      State::Stopped,
       inner:      agent_inner,
       connection: Connection {
         address:   T::Address::generate(),
@@ -96,6 +128,7 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   ) -> Self {
     Self {
       name:       Some(name.into()),
+      state:      State::Stopped,
       inner:      agent_inner,
       connection: Connection {
         address:   connection.address,
@@ -122,122 +155,63 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   fn address(&self) -> T::Address { self.connection.address }
 
   fn name(&self) -> Option<&str> { self.name.as_deref() }
+}
 
-  // fn signal_start(&self) {
-  //   let mut sync_guard = self.controller.state.lock().unwrap();
-  //   if *sync_guard != State::Running {
-  //     *sync_guard = State::Running;
-  //     self.controller.condvar.notify_one();
-  //   }
-  // }
-
-  // fn signal_stop(&self) {
-  //   let mut sync_guard = self.controller.state.lock().unwrap();
-  //   if *sync_guard != State::Stopped {
-  //     *sync_guard = State::Stopped;
-  //     self.controller.condvar.notify_one();
-  //   }
-  // }
-
-  fn process(mut self) -> RunningAgent<L, T> {
+impl<L: LifeCycle> Agent<L, InMemory> {
+  pub fn process(mut self) -> RunningAgent<L, InMemory> {
     let name = self.name.clone();
     let address = self.address();
+    let controller = Controller::new();
+    let inner_controller = controller.inner;
+    let outer_controller = controller.outer;
 
     let task = std::thread::spawn(move || {
-      let start_message = self.inner.on_start();
-      self.transport.broadcast(Envelope::package(start_message));
-      println!("Agent {}: Sent start message.", self.address());
+      let mut prev_state = self.state;
 
       loop {
-        println!("Agent {}: Loop iteration.", self.address());
-        let mut state_guard = self.controller.state.lock().unwrap();
+        let (new_state, message, get_state) = flume::Selector::new()
+          .recv(&inner_controller.instruction_receiver, |signal| match signal {
+            Ok(ControlSignal::Start) => (State::Running, None, false),
+            Ok(ControlSignal::Stop) => (State::Stopped, None, false),
+            Ok(ControlSignal::GetState) => (prev_state, None, true),
+            Err(_) => (prev_state, None, false),
+          })
+          .recv(&self.connection.transport.receiver, |message| (prev_state, Some(message), false))
+          .wait();
 
-        match *state_guard {
-          State::Stopped => {
-            println!("Agent {}: Loop detected Stopped state. Exiting.", self.address());
-            break;
-          },
-          State::Running => {
-            // Try to receive a message. This call consumes the message from the transport if one
-            // exists.
-            if let Some(message) = self.transport.receive() {
-              // A message was received. Release the lock and process it, then potentially more.
-              drop(state_guard);
+        if get_state {
+          inner_controller.state_sender.send(prev_state);
+          continue;
+        }
 
-              println!(
-                "Agent {}: Received message (TypeId: {:?})",
-                self.address(),
-                message.type_id // Corrected: Direct field access
-              );
-              let concrete_message_type_id = message.type_id;
-              if let Some(handler) = self.handlers.get(&concrete_message_type_id) {
-                let reply = handler(&mut self.inner, message.payload); // self.inner is L
-                self.transport.broadcast(Envelope::package(reply));
-              } else {
-                println!(
-                  "Agent {}: Unhandled message type {:?}",
-                  self.address(),
-                  concrete_message_type_id
-                );
-              }
+        if prev_state == State::Stopped && new_state == State::Running {
+          prev_state = new_state;
+          self.state = new_state;
+          let start_message = self.inner.on_start();
+          self.connection.transport.send(Envelope::package(start_message));
+          println!("Agent {}: Sent start message.", self.address());
+          continue;
+        }
 
-              // Check for stop signal immediately after processing one message.
-              // Re-acquire lock to check state.
-              let mut current_state_check_guard = self.controller.state.lock().unwrap();
-              if *current_state_check_guard == State::Stopped {
-                println!(
-                  "Agent {}: Stop signal detected after processing a message.",
-                  self.address()
-                );
-                // The lock will be released, and the outer loop will detect the Stopped state.
-              } else {
-                // If not stopped, release the lock and try to process more messages in a burst.
-                drop(current_state_check_guard);
-                while let Some(burst_message) = self.transport.receive() {
-                  println!(
-                    "Agent {}: Received burst message (TypeId: {:?})",
-                    self.address(),
-                    burst_message.type_id // Corrected: Direct field access
-                  );
-                  let burst_concrete_message_type_id = burst_message.type_id;
-                  if let Some(handler) = self.handlers.get(&burst_concrete_message_type_id) {
-                    let _reply = handler(&mut self.inner, burst_message.payload);
-                  } else {
-                    println!(
-                      "Agent {}: Unhandled burst message type {:?}",
-                      self.address(),
-                      burst_concrete_message_type_id
-                    );
-                  }
+        if prev_state == State::Running && new_state == State::Stopped {
+          prev_state = new_state;
+          self.state = new_state;
+          self.inner.on_stop();
+          println!("Agent {}: Executed on_stop. Main loop finished.", self.address());
+          break;
+        }
 
-                  // Check for stop signal during the burst.
-                  let inner_burst_state_lock = self.controller.state.lock().unwrap();
-                  if *inner_burst_state_lock == State::Stopped {
-                    println!(
-                      "Agent {}: Stop signal detected during message burst.",
-                      self.address()
-                    );
-                    drop(inner_burst_state_lock);
-                    break; // Break from the inner burst 'while' loop
-                  }
-                  drop(inner_burst_state_lock);
-                }
-              }
-              // After processing the first message and any burst,
-              // the outer 'loop' will continue, re-acquire its lock, and re-check state.
-            } else {
-              // No message was available. Release the lock and wait for a signal.
-              state_guard = Condvar::wait(&self.controller.condvar, state_guard).unwrap();
-            }
-          },
+        if let Some(Ok(message)) = message {
+          if let Some(handler) = self.handlers.get(&message.type_id) {
+            let reply = handler(&mut self.inner, message.payload);
+            self.connection.transport.send(Envelope::package(reply));
+          }
         }
       }
 
-      self.inner.on_stop();
-      println!("Agent {}: Executed on_stop. Main loop finished.", self.address());
       self
     });
-    RunningAgent { name, address, task }
+    RunningAgent { name, address, task, outer_controller }
   }
 }
 
@@ -251,44 +225,35 @@ mod tests {
   fn test_agent_lifecycle() {
     let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
     let agent = Agent::<Logger, InMemory>::new(logger);
-    assert_eq!(*agent.controller.state.lock().unwrap(), State::Stopped);
+    assert_eq!(agent.state, State::Stopped);
 
     // Start agent
-    let controller = agent.controller.clone();
     let running_agent = agent.process();
 
-    controller.signal_start();
-    std::thread::sleep(std::time::Duration::from_millis(50)); // Give time for agent to start
-    assert_eq!(controller.state.lock().unwrap().clone(), State::Running);
+    running_agent.start();
+    assert_eq!(running_agent.state(), State::Running);
 
-    controller.signal_stop();
+    running_agent.stop();
     let joined_agent = running_agent.task.join().unwrap();
-    let agent = joined_agent.inner_as_any().downcast_ref::<Logger>().unwrap();
-    assert_eq!(agent.message_count, 0);
-    assert_eq!(*running_agent.controller.state.lock().unwrap(), State::Stopped);
+    assert_eq!(joined_agent.state, State::Stopped);
   }
 
   #[test]
   fn test_single_agent_handler() {
     let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
     let agent = Agent::<Logger, InMemory>::new(logger).with_handler::<TextMessage>();
-    let sender = agent.transport.inbound_connection.sender.clone();
+    let sender = agent.connection.transport.sender.clone();
 
-    let controller = agent.controller.clone();
     let running_agent = agent.process();
-
-    controller.signal_start();
-    std::thread::sleep(std::time::Duration::from_millis(50)); // Allow agent to start and enter wait
+    running_agent.start();
 
     sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
-    controller.condvar.notify_one(); // Wake up the agent to process the message
-    std::thread::sleep(std::time::Duration::from_millis(100)); // Allow time for message
-    assert_eq!(controller.state.lock().unwrap().clone(), State::Running);
+    assert_eq!(running_agent.state(), State::Running);
 
-    controller.signal_stop();
-    let result_agent = running_agent.task.join().unwrap();
-    let agent = result_agent.inner_as_any().downcast_ref::<Logger>().unwrap();
-    assert_eq!(agent.message_count, 1);
+    running_agent.stop();
+    let joined_agent = running_agent.task.join().unwrap();
+    assert_eq!(joined_agent.state, State::Stopped);
+    assert_eq!(joined_agent.inner.message_count, 1);
   }
 
   #[test]
@@ -298,27 +263,20 @@ mod tests {
       message_count: 0,
     });
     agent_struct = agent_struct.with_handler::<TextMessage>().with_handler::<NumberMessage>();
-    let sender = agent_struct.transport.inbound_connection.sender.clone();
+    let sender = agent_struct.connection.transport.sender.clone();
 
-    assert_eq!(*agent_struct.controller.state.lock().unwrap(), State::Stopped);
+    assert_eq!(agent_struct.state, State::Stopped);
 
-    let controller = agent_struct.controller.clone();
     let running_agent = agent_struct.process();
 
-    controller.signal_start();
-    std::thread::sleep(std::time::Duration::from_millis(50));
-
+    running_agent.start();
     sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
-    controller.condvar.notify_one(); // Wake up the agent to process the message
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
     sender.send(Envelope::package(NumberMessage { value: 3 })).unwrap();
-    controller.condvar.notify_one(); // Wake up the agent to process the message
-    std::thread::sleep(std::time::Duration::from_millis(50));
 
-    controller.signal_stop();
-    let result_agent = running_agent.task.join().unwrap();
-    let agent = result_agent.inner_as_any().downcast_ref::<Logger>().unwrap();
-    assert_eq!(agent.message_count, 2);
+    running_agent.stop();
+    let joined_agent = running_agent.task.join().unwrap();
+    assert_eq!(joined_agent.state, State::Stopped);
+    assert_eq!(joined_agent.inner.message_count, 2);
   }
 }
