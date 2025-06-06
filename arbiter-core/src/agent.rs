@@ -70,7 +70,6 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     M: Message,
     L: Handler<M>,
     T::Payload: Unpacackage<M> + Package<L::Reply>, {
-    dbg!(TypeId::of::<M>());
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T>());
     self
   }
@@ -80,14 +79,14 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 }
 
-pub struct RunningAgent<L: LifeCycle, T: Transport> {
+pub struct ProcessingAgent<L: LifeCycle, T: Transport> {
   pub name:                    Option<String>,
   pub address:                 T::Address,
   pub(crate) task:             JoinHandle<Agent<L, T>>,
   pub(crate) outer_controller: OuterController,
 }
 
-impl<L: LifeCycle, T: Transport> RunningAgent<L, T> {
+impl<L: LifeCycle, T: Transport> ProcessingAgent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
   pub fn address(&self) -> T::Address { self.address }
@@ -99,10 +98,14 @@ impl<L: LifeCycle, T: Transport> RunningAgent<L, T> {
 
   pub fn start(&self) {
     self.outer_controller.instruction_sender.send(ControlSignal::Start).unwrap();
+    let state = self.outer_controller.state_receiver.recv().unwrap();
+    assert_eq!(state, State::Running);
   }
 
   pub fn stop(&self) {
     self.outer_controller.instruction_sender.send(ControlSignal::Stop).unwrap();
+    let state = self.outer_controller.state_receiver.recv().unwrap();
+    assert_eq!(state, State::Stopped);
   }
 }
 
@@ -153,7 +156,7 @@ pub trait LifeCycle: Send + Sync + 'static {
 }
 
 impl<L: LifeCycle> Agent<L, InMemory> {
-  pub fn process(mut self) -> RunningAgent<L, InMemory> {
+  pub fn process(mut self) -> ProcessingAgent<L, InMemory> {
     let name = self.name.clone();
     let address = self.address();
     let controller = Controller::new();
@@ -182,17 +185,17 @@ impl<L: LifeCycle> Agent<L, InMemory> {
         if prev_state == State::Stopped && new_state == State::Running {
           prev_state = new_state;
           self.state = new_state;
+          inner_controller.state_sender.send(new_state);
           let start_message = self.inner.on_start();
           self.connection.transport.send(Envelope::package(start_message));
-          println!("Agent {}: Sent start message.", self.address());
           continue;
         }
 
         if prev_state == State::Running && new_state == State::Stopped {
           prev_state = new_state;
           self.state = new_state;
+          inner_controller.state_sender.send(new_state);
           self.inner.on_stop();
-          println!("Agent {}: Executed on_stop. Main loop finished.", self.address());
           break;
         }
 
@@ -206,72 +209,80 @@ impl<L: LifeCycle> Agent<L, InMemory> {
 
       self
     });
-    RunningAgent { name, address, task, outer_controller }
+    ProcessingAgent { name, address, task, outer_controller }
   }
 }
 
 #[cfg(test)]
 mod tests {
 
-  use super::*; // Tests need complete rework
-  use crate::{connection::memory::InMemory, fixtures::*};
+  use super::*;
+  use crate::fixtures::*;
 
   #[test]
   fn test_agent_lifecycle() {
-    let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
-    let agent = Agent::<Logger, InMemory>::new(logger);
+    let agent = Agent::<Logger, InMemory>::new(Logger {
+      name:          "TestLogger".to_string(),
+      message_count: 0,
+    });
     assert_eq!(agent.state, State::Stopped);
 
-    // Start agent
-    let running_agent = agent.process();
+    let processing_agent = agent.process();
+    processing_agent.start();
+    assert_eq!(processing_agent.state(), State::Running);
 
-    running_agent.start();
-    assert_eq!(running_agent.state(), State::Running);
-
-    running_agent.stop();
-    let joined_agent = running_agent.task.join().unwrap();
+    processing_agent.stop();
+    let joined_agent = processing_agent.task.join().unwrap();
     assert_eq!(joined_agent.state, State::Stopped);
   }
 
   #[test]
   fn test_single_agent_handler() {
-    let logger = Logger { name: "TestLogger".to_string(), message_count: 0 };
-    let agent = Agent::<Logger, InMemory>::new(logger).with_handler::<TextMessage>();
+    let agent = Agent::<Logger, InMemory>::new(Logger {
+      name:          "TestLogger".to_string(),
+      message_count: 0,
+    })
+    .with_handler::<TextMessage>();
+
+    // Grab a sender from the agent
     let sender = agent.connection.transport.sender.clone();
 
-    let running_agent = agent.process();
-    running_agent.start();
+    let processing_agent = agent.process();
+    processing_agent.start();
+    assert_eq!(processing_agent.state(), State::Running);
 
+    // Send a message to the agent
     sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
-    assert_eq!(running_agent.state(), State::Running);
 
-    running_agent.stop();
-    let joined_agent = running_agent.task.join().unwrap();
-    assert_eq!(joined_agent.state, State::Stopped);
-    assert_eq!(joined_agent.inner.message_count, 1);
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
+    processing_agent.stop();
+    let agent = processing_agent.task.join().unwrap();
+    assert_eq!(agent.state, State::Stopped);
+    assert_eq!(agent.inner.message_count, 1);
   }
 
   #[test]
   fn test_multiple_agent_handlers() {
-    let mut agent_struct = Agent::<Logger, InMemory>::new(Logger {
+    let mut agent = Agent::<Logger, InMemory>::new(Logger {
       name:          "TestLogger".to_string(),
       message_count: 0,
     });
-    agent_struct = agent_struct.with_handler::<TextMessage>().with_handler::<NumberMessage>();
-    let sender = agent_struct.connection.transport.sender.clone();
+    agent = agent.with_handler::<TextMessage>().with_handler::<NumberMessage>();
+    let sender = agent.connection.transport.sender.clone();
 
-    assert_eq!(agent_struct.state, State::Stopped);
+    assert_eq!(agent.state, State::Stopped);
 
-    let running_agent = agent_struct.process();
+    let processing_agent = agent.process();
 
-    running_agent.start();
+    processing_agent.start();
     sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
-
     sender.send(Envelope::package(NumberMessage { value: 3 })).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(10));
 
-    running_agent.stop();
-    let joined_agent = running_agent.task.join().unwrap();
-    assert_eq!(joined_agent.state, State::Stopped);
-    assert_eq!(joined_agent.inner.message_count, 2);
+    processing_agent.stop();
+    let agent = processing_agent.task.join().unwrap();
+    assert_eq!(agent.state, State::Stopped);
+    assert_eq!(agent.inner.message_count, 2);
   }
 }
