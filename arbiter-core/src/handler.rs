@@ -81,7 +81,6 @@ pub trait Handler<M> {
   fn handle(&mut self, message: &M) -> Self::Reply;
 }
 
-// TODO: I think we want this T::Payload to also have the ability to take a unit type ()
 pub type MessageHandlerFn<C: Transport> =
   Box<dyn Fn(&mut dyn Any, C::Payload) -> C::Payload + Send + Sync>;
 

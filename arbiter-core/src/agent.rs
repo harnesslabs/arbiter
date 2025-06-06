@@ -19,83 +19,6 @@ pub struct Agent<L: LifeCycle, T: Transport> {
   handlers:   HashMap<TypeId, MessageHandlerFn<T>>,
 }
 
-pub struct RunningAgent<L: LifeCycle, T: Transport> {
-  pub name:                    Option<String>,
-  pub address:                 T::Address,
-  pub(crate) task:             JoinHandle<Agent<L, T>>,
-  pub(crate) outer_controller: OuterController,
-}
-
-impl<L: LifeCycle, T: Transport> RunningAgent<L, T> {
-  pub fn state(&self) -> State { self.outer_controller.get_state() }
-
-  pub fn start(&self) { self.outer_controller.signal_start(); }
-
-  pub fn stop(&self) { self.outer_controller.signal_stop(); }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum State {
-  Stopped,
-  Running,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControlSignal {
-  Start,
-  Stop,
-  GetState,
-}
-
-pub struct InnerController {
-  pub(crate) instruction_receiver: flume::Receiver<ControlSignal>,
-  pub(crate) state_sender:         flume::Sender<State>,
-}
-
-pub struct OuterController {
-  pub(crate) instruction_sender: flume::Sender<ControlSignal>,
-  pub(crate) state_receiver:     flume::Receiver<State>,
-}
-
-pub struct Controller {
-  pub(crate) inner: InnerController,
-  pub(crate) outer: OuterController,
-}
-
-impl Controller {
-  pub fn new() -> Self {
-    let (instruction_sender, instruction_receiver) = flume::unbounded();
-    let (state_sender, state_receiver) = flume::unbounded();
-    Self {
-      inner: InnerController { instruction_receiver, state_sender },
-      outer: OuterController { instruction_sender, state_receiver },
-    }
-  }
-}
-
-impl OuterController {
-  pub fn signal_start(&self) {
-    println!("Controller: signal_start");
-    self.instruction_sender.send(ControlSignal::Start);
-  }
-
-  pub fn signal_stop(&self) { self.instruction_sender.send(ControlSignal::Stop); }
-
-  pub fn get_state(&self) -> State {
-    self.instruction_sender.send(ControlSignal::GetState);
-    self.state_receiver.recv().unwrap()
-  }
-}
-
-pub trait LifeCycle: Send + Sync + 'static {
-  type StartMessage: Message;
-  type StopMessage: Message;
-  fn on_start(&mut self) -> Self::StartMessage;
-  fn on_stop(&mut self) -> Self::StopMessage;
-}
-
-// TODO: It would be worth adding a handler to each agent for an instruction for "Start"/"Stop" so
-// the agent can be remotely shut off.
 impl<L: LifeCycle, T: Transport> Agent<L, T> {
   pub fn new(agent_inner: L) -> Self {
     let address = T::Address::generate();
@@ -152,9 +75,81 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     self
   }
 
-  fn address(&self) -> T::Address { self.connection.address }
+  pub fn address(&self) -> T::Address { self.connection.address }
 
-  fn name(&self) -> Option<&str> { self.name.as_deref() }
+  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+}
+
+pub struct RunningAgent<L: LifeCycle, T: Transport> {
+  pub name:                    Option<String>,
+  pub address:                 T::Address,
+  pub(crate) task:             JoinHandle<Agent<L, T>>,
+  pub(crate) outer_controller: OuterController,
+}
+
+impl<L: LifeCycle, T: Transport> RunningAgent<L, T> {
+  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+
+  pub fn address(&self) -> T::Address { self.address }
+
+  pub fn state(&self) -> State {
+    self.outer_controller.instruction_sender.send(ControlSignal::GetState);
+    self.outer_controller.state_receiver.recv().unwrap()
+  }
+
+  pub fn start(&self) {
+    self.outer_controller.instruction_sender.send(ControlSignal::Start).unwrap();
+  }
+
+  pub fn stop(&self) {
+    self.outer_controller.instruction_sender.send(ControlSignal::Stop).unwrap();
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+  Stopped,
+  Running,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlSignal {
+  Start,
+  Stop,
+  GetState,
+}
+
+pub struct InnerController {
+  pub(crate) instruction_receiver: flume::Receiver<ControlSignal>,
+  pub(crate) state_sender:         flume::Sender<State>,
+}
+
+pub struct OuterController {
+  pub(crate) instruction_sender: flume::Sender<ControlSignal>,
+  pub(crate) state_receiver:     flume::Receiver<State>,
+}
+
+pub struct Controller {
+  pub(crate) inner: InnerController,
+  pub(crate) outer: OuterController,
+}
+
+impl Controller {
+  pub fn new() -> Self {
+    let (instruction_sender, instruction_receiver) = flume::unbounded();
+    let (state_sender, state_receiver) = flume::unbounded();
+    Self {
+      inner: InnerController { instruction_receiver, state_sender },
+      outer: OuterController { instruction_sender, state_receiver },
+    }
+  }
+}
+
+pub trait LifeCycle: Send + Sync + 'static {
+  type StartMessage: Message;
+  type StopMessage: Message;
+  fn on_start(&mut self) -> Self::StartMessage;
+  fn on_stop(&mut self) -> Self::StopMessage;
 }
 
 impl<L: LifeCycle> Agent<L, InMemory> {
