@@ -1,4 +1,6 @@
-use std::{any::TypeId, collections::HashMap, thread::JoinHandle};
+use std::{any::TypeId, collections::HashMap};
+
+use tokio::task::JoinHandle;
 
 use crate::{
   connection::{memory::InMemory, Connection, Generateable, Transport},
@@ -113,7 +115,7 @@ impl<L: LifeCycle, T: Transport> ProcessingAgent<L, T> {
     assert_eq!(state, State::Stopped);
   }
 
-  pub fn join(self) -> Agent<L, T> { self.task.join().unwrap() }
+  pub async fn join(self) -> Agent<L, T> { self.task.await.unwrap() }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,61 +171,115 @@ impl<L: LifeCycle> Agent<L, InMemory> {
     let name = self.name.clone();
     let address = self.address();
     let controller = Controller::new();
-    let inner_controller = controller.inner;
+    let mut inner_controller = controller.inner;
     let outer_controller = controller.outer;
 
-    let task = std::thread::spawn(move || {
-      let mut prev_state = self.state;
-
+    let task = tokio::spawn(async move {
       loop {
-        let (new_state, message, get_state) = flume::Selector::new()
-          .recv(&inner_controller.instruction_receiver, |signal| match signal {
-            Ok(ControlSignal::Start) => (State::Running, None, false),
-            Ok(ControlSignal::Stop) => (State::Stopped, None, false),
-            Ok(ControlSignal::GetState) => (prev_state, None, true),
-            Err(_) => (prev_state, None, false),
-          })
-          .recv(&self.connection.transport.receiver, |message| (prev_state, Some(message), false))
-          .wait();
-
-        if get_state {
-          inner_controller.state_sender.send(prev_state);
-          continue;
-        }
-
-        if prev_state == State::Stopped && new_state == State::Running {
-          prev_state = new_state;
-          self.state = new_state;
-          inner_controller.state_sender.send(new_state);
-          let start_message = self.inner.on_start();
-          self.connection.transport.send(Envelope::package(start_message));
-          continue;
-        }
-
-        if prev_state == State::Running && new_state == State::Stopped {
-          prev_state = new_state;
-          self.state = new_state;
-          inner_controller.state_sender.send(new_state);
-          self.inner.on_stop();
-          break;
-        }
-
-        if let Some(Ok(message)) = message {
-          if let Some(handler) = self.handlers.get(&message.type_id) {
-            let reply = handler(&mut self.inner, message.payload);
-            match reply {
-              HandleResult::Message(message) => {
-                self.connection.transport.send(Envelope::package(message));
+        // ────────────────────────────────────────────────────────────────
+        // Control-plane messages (START / STOP / GET_STATE)
+        // ────────────────────────────────────────────────────────────────
+        let prev_state = self.state;
+        tokio::select! {
+          biased;
+          control_signal = inner_controller.instruction_receiver.recv() => {
+            match control_signal {
+              Some(ControlSignal::Start) => {
+                self.state = State::Running;
+                inner_controller.state_sender.send(State::Running).await.unwrap();
+                let start_message = self.inner.on_start();
+                self.connection.transport.send(Envelope::package(start_message)).await;
               },
-              HandleResult::None => {},
-              HandleResult::Stop => break,
+              Some(ControlSignal::Stop) => {
+                self.state = State::Stopped;
+                inner_controller.state_sender.send(State::Stopped).await.unwrap();
+                let stop_message = self.inner.on_stop();
+                self.connection.transport.send(Envelope::package(stop_message)).await;
+                break;
+              },
+              Some(ControlSignal::GetState) => {
+                inner_controller.state_sender.send(prev_state).await.unwrap();
+              },
+              None => {
+                break;
+              },
             }
           }
+          // ────────────────────────────────────────────────────────────────
+            // Application messages coming from the transport
+            // ────────────────────────────────────────────────────────────────
+            message = self.connection.transport.receive() => {
+              if let Some(message) = message {
+                if let Some(handler) = self.handlers.get(&message.type_id) {
+                  let reply = handler(&mut self.inner, message.payload);
+                  match reply {
+                    HandleResult::Message(message) => {
+                      self.connection.transport.send(Envelope::package(message)).await;
+                    },
+                    HandleResult::None => {},
+                    HandleResult::Stop => break,
+                  }
+                }
+              }
+            }
         }
       }
 
       self
     });
+
+    // let task = std::thread::spawn(move || {
+    //   let mut prev_state = self.state;
+
+    //   loop {
+    //     let (new_state, message, get_state) = flume::Selector::new()
+    //       .recv(&inner_controller.instruction_receiver, |signal| match signal {
+    //         Ok(ControlSignal::Start) => (State::Running, None, false),
+    //         Ok(ControlSignal::Stop) => (State::Stopped, None, false),
+    //         Ok(ControlSignal::GetState) => (prev_state, None, true),
+    //         Err(_) => (prev_state, None, false),
+    //       })
+    //       .recv(&self.connection.transport.receiver, |message| (prev_state, Some(message),
+    // false))       .wait();
+
+    //     if get_state {
+    //       inner_controller.state_sender.send(prev_state);
+    //       continue;
+    //     }
+
+    //     if prev_state == State::Stopped && new_state == State::Running {
+    //       prev_state = new_state;
+    //       self.state = new_state;
+    //       inner_controller.state_sender.send(new_state);
+    //       let start_message = self.inner.on_start();
+    //       self.connection.transport.send(Envelope::package(start_message));
+    //       continue;
+    //     }
+
+    //     if prev_state == State::Running && new_state == State::Stopped {
+    //       prev_state = new_state;
+    //       self.state = new_state;
+    //       inner_controller.state_sender.send(new_state);
+    //       self.inner.on_stop();
+    //       break;
+    //     }
+
+    //     if let Some(Ok(message)) = message {
+    //       if let Some(handler) = self.handlers.get(&message.type_id) {
+    //         let reply = handler(&mut self.inner, message.payload);
+    //         match reply {
+    //           HandleResult::Message(message) => {
+    //             self.connection.transport.send(Envelope::package(message));
+    //           },
+    //           HandleResult::None => {},
+    //           HandleResult::Stop => break,
+    //         }
+    //       }
+    //     }
+    //   }
+
+    //   self
+    // });
     ProcessingAgent { name, address, task, outer_controller }
   }
 }
@@ -234,25 +290,25 @@ mod tests {
   use super::*;
   use crate::fixtures::*;
 
-  #[test]
-  fn test_agent_lifecycle() {
+  #[tokio::test]
+  async fn test_agent_lifecycle() {
     let agent = Agent::<Logger, InMemory>::new(Logger {
       name:          "TestLogger".to_string(),
       message_count: 0,
     });
     assert_eq!(agent.state, State::Stopped);
 
-    let processing_agent = agent.process();
-    processing_agent.start();
-    assert_eq!(processing_agent.state(), State::Running);
+    let mut processing_agent = agent.process();
+    processing_agent.start().await;
+    assert_eq!(processing_agent.state().await, State::Running);
 
-    processing_agent.stop();
-    let joined_agent = processing_agent.task.join().unwrap();
+    processing_agent.stop().await;
+    let joined_agent = processing_agent.join().await;
     assert_eq!(joined_agent.state, State::Stopped);
   }
 
-  #[test]
-  fn test_single_agent_handler() {
+  #[tokio::test]
+  async fn test_single_agent_handler() {
     let agent = Agent::<Logger, InMemory>::new(Logger {
       name:          "TestLogger".to_string(),
       message_count: 0,
@@ -262,23 +318,23 @@ mod tests {
     // Grab a sender from the agent
     let sender = agent.connection.transport.sender.clone();
 
-    let processing_agent = agent.process();
-    processing_agent.start();
-    assert_eq!(processing_agent.state(), State::Running);
+    let mut processing_agent = agent.process();
+    processing_agent.start().await;
+    assert_eq!(processing_agent.state().await, State::Running);
 
     // Send a message to the agent
-    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
+    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() }));
 
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    processing_agent.stop();
-    let agent = processing_agent.task.join().unwrap();
+    processing_agent.stop().await;
+    let agent = processing_agent.join().await;
     assert_eq!(agent.state, State::Stopped);
     assert_eq!(agent.inner.message_count, 1);
   }
 
-  #[test]
-  fn test_multiple_agent_handlers() {
+  #[tokio::test]
+  async fn test_multiple_agent_handlers() {
     let mut agent = Agent::<Logger, InMemory>::new(Logger {
       name:          "TestLogger".to_string(),
       message_count: 0,
@@ -288,15 +344,15 @@ mod tests {
 
     assert_eq!(agent.state, State::Stopped);
 
-    let processing_agent = agent.process();
+    let mut processing_agent = agent.process();
 
-    processing_agent.start();
-    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
-    sender.send(Envelope::package(NumberMessage { value: 3 })).unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(10));
+    processing_agent.start().await;
+    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() }));
+    sender.send(Envelope::package(NumberMessage { value: 3 }));
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-    processing_agent.stop();
-    let agent = processing_agent.task.join().unwrap();
+    processing_agent.stop().await;
+    let agent = processing_agent.join().await;
     assert_eq!(agent.state, State::Stopped);
     assert_eq!(agent.inner.message_count, 2);
   }
