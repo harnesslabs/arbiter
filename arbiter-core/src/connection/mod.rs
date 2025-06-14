@@ -1,15 +1,10 @@
-use std::{
-  collections::HashMap,
-  future::Future,
-  hash::Hash,
-  pin::Pin,
-  sync::{Arc, Mutex},
-};
+use std::{future::Future, hash::Hash, pin::Pin};
 
 use crate::handler::{Envelope, Message, Package};
 
-pub mod memory;
-pub mod tcp;
+#[cfg(feature = "in-memory")] pub mod memory;
+
+#[cfg(feature = "tcp")] pub mod tcp;
 
 pub trait Runtime: 'static {
   type Output<T>;

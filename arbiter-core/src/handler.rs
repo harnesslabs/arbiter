@@ -75,17 +75,32 @@ where M: Message + for<'de> Deserialize<'de>
   }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub enum HandleResult<M: Message> {
+  Message(M),
+  None,
+  Stop,
+}
+
+impl<M: Message> From<M> for HandleResult<M> {
+  fn from(message: M) -> Self { HandleResult::Message(message) }
+}
+
+impl<M: Message> From<Option<M>> for HandleResult<M> {
+  fn from(message: Option<M>) -> Self { message.map_or(HandleResult::None, HandleResult::Message) }
+}
+
 pub trait Handler<M> {
   type Reply: Message;
 
-  fn handle(&mut self, message: &M) -> Self::Reply;
+  fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply>>;
 }
 
 pub type MessageHandlerFn<C: Transport> =
-  Box<dyn Fn(&mut dyn Any, C::Payload) -> C::Payload + Send + Sync>;
+  Box<dyn Fn(&mut dyn Any, C::Payload) -> HandleResult<C::Payload> + Send + Sync>;
 
 // TODO: This panic is bad.
-pub fn create_handler<'a_unused, M, L, C>() -> MessageHandlerFn<C>
+pub fn create_handler<M, L, C>() -> MessageHandlerFn<C>
 where
   L: Handler<M> + 'static,
   M: Message,
@@ -100,13 +115,17 @@ where
       },
       |typed_agent| {
         let unpacked_message_option = message_payload.unpackage();
-        match unpacked_message_option {
-          Some(unpacked_message) => {
-            let reply = typed_agent.handle(&*unpacked_message);
-            C::Payload::package(reply)
+        unpacked_message_option.map_or_else(
+          || panic!("Failed to unpackage message of type {:?}", std::any::TypeId::of::<M>()),
+          |unpacked_message| {
+            let reply = typed_agent.handle(&*unpacked_message).into();
+            match reply {
+              HandleResult::Message(message) => HandleResult::Message(C::Payload::package(message)),
+              HandleResult::None => HandleResult::None,
+              HandleResult::Stop => HandleResult::Stop,
+            }
           },
-          None => panic!("Failed to unpackage message of type {:?}", std::any::TypeId::of::<M>()),
-        }
+        )
       },
     )
   })

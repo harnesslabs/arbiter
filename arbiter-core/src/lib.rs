@@ -1,18 +1,16 @@
 pub mod agent;
-// TODO: We need to have a wasm fabric or something.
 pub mod connection;
-// pub mod fabric;
 pub mod handler;
 
 pub mod prelude {
   pub use crate::{
     agent::LifeCycle,
     connection::Transport,
-    handler::{Handler, Message},
+    handler::{HandleResult, Handler, Message},
   };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures {
   use crate::prelude::*;
 
@@ -56,7 +54,7 @@ pub mod fixtures {
   impl Handler<NumberMessage> for Counter {
     type Reply = ();
 
-    fn handle(&mut self, message: &NumberMessage) -> Self::Reply {
+    fn handle(&mut self, message: &NumberMessage) {
       self.total += message.value;
       println!("CounterAgent total is now: {}", self.total);
     }
@@ -65,7 +63,7 @@ pub mod fixtures {
   impl Handler<TextMessage> for Logger {
     type Reply = ();
 
-    fn handle(&mut self, message: &TextMessage) -> Self::Reply {
+    fn handle(&mut self, message: &TextMessage) {
       self.message_count += 1;
       println!(
         "LogAgent '{}' received: '{}' (count: {})",
@@ -77,7 +75,7 @@ pub mod fixtures {
   impl Handler<NumberMessage> for Logger {
     type Reply = ();
 
-    fn handle(&mut self, message: &NumberMessage) -> Self::Reply {
+    fn handle(&mut self, message: &NumberMessage) {
       self.message_count += 1;
       println!(
         "LoggerAgent '{}' received: '{}' (count: {})",

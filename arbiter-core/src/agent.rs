@@ -1,14 +1,11 @@
-use std::{
-  any::{Any, TypeId},
-  collections::HashMap,
-  ops::Deref,
-  sync::{Arc, Condvar, Mutex},
-  thread::JoinHandle,
-};
+use std::{any::TypeId, collections::HashMap, thread::JoinHandle};
 
 use crate::{
-  connection::{memory::InMemory, Connection, Generateable, Joinable, Spawnable, Transport},
-  handler::{create_handler, Envelope, Handler, Message, MessageHandlerFn, Package, Unpacackage},
+  connection::{memory::InMemory, Connection, Generateable, Transport},
+  handler::{
+    create_handler, Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package,
+    Unpacackage,
+  },
 };
 
 pub struct Agent<L: LifeCycle, T: Transport> {
@@ -31,7 +28,7 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     }
   }
 
-  pub fn new_with_connection(agent_inner: L, connection: Connection<T>) -> Self {
+  pub fn new_with_connection(agent_inner: L, connection: &Connection<T>) -> Self {
     Self {
       name:       None,
       state:      State::Stopped,
@@ -74,9 +71,11 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
     self
   }
 
-  pub fn address(&self) -> T::Address { self.connection.address }
+  pub const fn address(&self) -> T::Address { self.connection.address }
 
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+
+  pub const fn get_connection(&self) -> &Connection<T> { &self.connection }
 }
 
 pub struct ProcessingAgent<L: LifeCycle, T: Transport> {
@@ -89,7 +88,7 @@ pub struct ProcessingAgent<L: LifeCycle, T: Transport> {
 impl<L: LifeCycle, T: Transport> ProcessingAgent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
-  pub fn address(&self) -> T::Address { self.address }
+  pub const fn address(&self) -> T::Address { self.address }
 
   pub fn state(&self) -> State {
     self.outer_controller.instruction_sender.send(ControlSignal::GetState);
@@ -122,6 +121,8 @@ pub enum ControlSignal {
   GetState,
 }
 
+// TODO (autoparallel): These controllers are hard-coded to use flume, we should use a more generic
+// controller that can be used with any channel implementation.
 pub struct InnerController {
   pub(crate) instruction_receiver: flume::Receiver<ControlSignal>,
   pub(crate) state_sender:         flume::Sender<State>,
@@ -202,7 +203,13 @@ impl<L: LifeCycle> Agent<L, InMemory> {
         if let Some(Ok(message)) = message {
           if let Some(handler) = self.handlers.get(&message.type_id) {
             let reply = handler(&mut self.inner, message.payload);
-            self.connection.transport.send(Envelope::package(reply));
+            match reply {
+              HandleResult::Message(message) => {
+                self.connection.transport.send(Envelope::package(message));
+              },
+              HandleResult::None => {},
+              HandleResult::Stop => break,
+            }
           }
         }
       }

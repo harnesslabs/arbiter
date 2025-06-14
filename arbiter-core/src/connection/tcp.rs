@@ -1,4 +1,4 @@
-#![cfg(feature = "tcp")]
+// TODO (autoparallel): This is not a functional implementation
 
 use std::net::{SocketAddr, TcpStream};
 
