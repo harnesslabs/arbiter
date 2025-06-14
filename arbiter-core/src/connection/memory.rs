@@ -5,17 +5,10 @@ use crate::{
   handler::{Envelope, Message},
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct InMemory {
-  pub(crate) sender:   flume::Sender<Envelope<Self>>,
-  pub(crate) receiver: flume::Receiver<Envelope<Self>>,
-}
-
-impl InMemory {
-  pub fn new() -> Self {
-    let (sender, receiver) = flume::unbounded();
-    Self { sender, receiver }
-  }
+  pub(crate) sender:   tokio::sync::broadcast::Sender<Envelope<Self>>,
+  pub(crate) receiver: tokio::sync::broadcast::Receiver<Envelope<Self>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,16 +43,16 @@ impl Transport for InMemory {
   type Payload = Arc<dyn Message>;
 
   fn spawn() -> Self {
-    let (sender, receiver) = flume::unbounded();
+    let (sender, receiver) = tokio::sync::broadcast::channel(1024);
     Self { sender, receiver }
   }
 
   fn join(&self) -> Self {
-    let (sender, receiver) = (self.sender.clone(), self.receiver.clone());
+    let (sender, receiver) = (self.sender.clone(), self.sender.subscribe());
     Self { sender, receiver }
   }
 
-  fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
+  async fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope); }
 
-  fn receive(&self) -> Option<Envelope<Self>> { self.receiver.recv().ok() }
+  async fn receive(&mut self) -> Option<Envelope<Self>> { self.receiver.recv().await.ok() }
 }

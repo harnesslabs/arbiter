@@ -23,7 +23,7 @@ impl Transport for TcpStream {
 
   fn join(&self) -> Self { self.try_clone().unwrap() }
 
-  fn send(&self, envelope: Envelope<Self>) { todo!() }
+  async fn send(&self, envelope: Envelope<Self>) { todo!() }
 
-  fn receive(&self) -> Option<Envelope<Self>> { todo!() }
+  async fn receive(&mut self) -> Option<Envelope<Self>> { todo!() }
 }

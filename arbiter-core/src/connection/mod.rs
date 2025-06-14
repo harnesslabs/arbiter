@@ -63,8 +63,8 @@ pub trait Transport: Send + Sync + Sized + 'static {
 
   fn spawn() -> Self;
   fn join(&self) -> Self;
-  fn send(&self, envelope: Envelope<Self>);
-  fn receive(&self) -> Option<Envelope<Self>>;
+  async fn send(&self, envelope: Envelope<Self>);
+  async fn receive(&mut self) -> Option<Envelope<Self>>;
 }
 
 // pub struct Transport<C: Connection> {

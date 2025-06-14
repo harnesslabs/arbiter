@@ -96,20 +96,20 @@ impl<L: LifeCycle, T: Transport> ProcessingAgent<L, T> {
 
   pub const fn address(&self) -> T::Address { self.address }
 
-  pub fn state(&self) -> State {
-    self.outer_controller.instruction_sender.send(ControlSignal::GetState);
-    self.outer_controller.state_receiver.recv().unwrap()
+  pub async fn state(&mut self) -> State {
+    self.outer_controller.instruction_sender.send(ControlSignal::GetState).await.unwrap();
+    self.outer_controller.state_receiver.recv().await.unwrap()
   }
 
-  pub fn start(&self) {
-    self.outer_controller.instruction_sender.send(ControlSignal::Start).unwrap();
-    let state = self.outer_controller.state_receiver.recv().unwrap();
+  pub async fn start(&mut self) {
+    self.outer_controller.instruction_sender.send(ControlSignal::Start).await.unwrap();
+    let state = self.outer_controller.state_receiver.recv().await.unwrap();
     assert_eq!(state, State::Running);
   }
 
-  pub fn stop(&self) {
-    self.outer_controller.instruction_sender.send(ControlSignal::Stop).unwrap();
-    let state = self.outer_controller.state_receiver.recv().unwrap();
+  pub async fn stop(&mut self) {
+    self.outer_controller.instruction_sender.send(ControlSignal::Stop).await.unwrap();
+    let state = self.outer_controller.state_receiver.recv().await.unwrap();
     assert_eq!(state, State::Stopped);
   }
 
@@ -132,13 +132,13 @@ pub enum ControlSignal {
 // TODO (autoparallel): These controllers are hard-coded to use flume, we should use a more generic
 // controller that can be used with any channel implementation.
 pub struct InnerController {
-  pub(crate) instruction_receiver: flume::Receiver<ControlSignal>,
-  pub(crate) state_sender:         flume::Sender<State>,
+  pub(crate) instruction_receiver: tokio::sync::mpsc::Receiver<ControlSignal>,
+  pub(crate) state_sender:         tokio::sync::mpsc::Sender<State>,
 }
 
 pub struct OuterController {
-  pub(crate) instruction_sender: flume::Sender<ControlSignal>,
-  pub(crate) state_receiver:     flume::Receiver<State>,
+  pub(crate) instruction_sender: tokio::sync::mpsc::Sender<ControlSignal>,
+  pub(crate) state_receiver:     tokio::sync::mpsc::Receiver<State>,
 }
 
 pub struct Controller {
@@ -148,8 +148,8 @@ pub struct Controller {
 
 impl Controller {
   pub fn new() -> Self {
-    let (instruction_sender, instruction_receiver) = flume::unbounded();
-    let (state_sender, state_receiver) = flume::unbounded();
+    let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel(8);
+    let (state_sender, state_receiver) = tokio::sync::mpsc::channel(8);
     Self {
       inner: InnerController { instruction_receiver, state_sender },
       outer: OuterController { instruction_sender, state_receiver },
