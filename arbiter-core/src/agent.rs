@@ -76,6 +76,12 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
   pub const fn get_connection(&self) -> &Connection<T> { &self.connection }
+
+  pub const fn inner(&self) -> &L { &self.inner }
+
+  pub const fn inner_mut(&mut self) -> &mut L { &mut self.inner }
+
+  pub const fn state(&self) -> State { self.state }
 }
 
 pub struct ProcessingAgent<L: LifeCycle, T: Transport> {
@@ -106,6 +112,8 @@ impl<L: LifeCycle, T: Transport> ProcessingAgent<L, T> {
     let state = self.outer_controller.state_receiver.recv().unwrap();
     assert_eq!(state, State::Stopped);
   }
+
+  pub fn join(self) -> Agent<L, T> { self.task.join().unwrap() }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

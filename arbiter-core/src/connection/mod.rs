@@ -27,14 +27,6 @@ impl Runtime for AsyncRuntime {
   fn wrap<T: 'static>(value: T) -> Self::Output<T> { Box::pin(async move { value }) }
 }
 
-pub trait Spawnable {
-  fn spawn() -> Self;
-}
-
-pub trait Joinable {
-  fn join(&self) -> Self;
-}
-
 pub trait Generateable {
   fn generate() -> Self;
 }
@@ -57,7 +49,7 @@ impl<T: Transport> Connection<T> {
   }
 }
 
-pub trait Transport: Spawnable + Joinable + Send + Sync + Sized + 'static {
+pub trait Transport: Send + Sync + Sized + 'static {
   type Address: Generateable
     + Copy
     + Send
@@ -69,6 +61,8 @@ pub trait Transport: Spawnable + Joinable + Send + Sync + Sized + 'static {
     + std::fmt::Display;
   type Payload: Clone + Message + Package<Self::Payload>;
 
+  fn spawn() -> Self;
+  fn join(&self) -> Self;
   fn send(&self, envelope: Envelope<Self>);
   fn receive(&self) -> Option<Envelope<Self>>;
 }

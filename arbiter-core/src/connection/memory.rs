@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::{
-  connection::{Generateable, Joinable, Spawnable, Transport},
+  connection::{Generateable, Transport},
   handler::{Envelope, Message},
 };
 
@@ -45,23 +45,19 @@ impl std::fmt::Display for InMemoryAddress {
   }
 }
 
-impl Joinable for InMemory {
-  fn join(&self) -> Self {
-    let (sender, receiver) = (self.sender.clone(), self.receiver.clone());
-    Self { sender, receiver }
-  }
-}
+impl Transport for InMemory {
+  type Address = InMemoryAddress;
+  type Payload = Arc<dyn Message>;
 
-impl Spawnable for InMemory {
   fn spawn() -> Self {
     let (sender, receiver) = flume::unbounded();
     Self { sender, receiver }
   }
-}
 
-impl Transport for InMemory {
-  type Address = InMemoryAddress;
-  type Payload = Arc<dyn Message>;
+  fn join(&self) -> Self {
+    let (sender, receiver) = (self.sender.clone(), self.receiver.clone());
+    Self { sender, receiver }
+  }
 
   fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
 
