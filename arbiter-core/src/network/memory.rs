@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-  connection::{Generateable, Transport},
   handler::{Envelope, Message},
+  network::{Generateable, Network},
 };
 
 #[derive(Debug)]
@@ -38,11 +38,11 @@ impl std::fmt::Display for InMemoryAddress {
   }
 }
 
-impl Transport for InMemory {
+impl Network for InMemory {
   type Address = InMemoryAddress;
   type Payload = Arc<dyn Message>;
 
-  fn spawn() -> Self {
+  fn new() -> Self {
     let (sender, receiver) = tokio::sync::broadcast::channel(1024);
     Self { sender, receiver }
   }
@@ -52,7 +52,7 @@ impl Transport for InMemory {
     Self { sender, receiver }
   }
 
-  async fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope); }
+  async fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
 
   async fn receive(&mut self) -> Option<Envelope<Self>> { self.receiver.recv().await.ok() }
 }

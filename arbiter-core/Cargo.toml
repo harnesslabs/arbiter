@@ -33,5 +33,6 @@ tracing-test = { workspace = true }
 
 [features]
 default   = ["in-memory"]
+fixtures  = []
 in-memory = []
 tcp       = []

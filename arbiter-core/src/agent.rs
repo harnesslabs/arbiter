@@ -3,59 +3,39 @@ use std::{any::TypeId, collections::HashMap, fmt::Debug};
 use tokio::task::JoinHandle;
 
 use crate::{
-  connection::{memory::InMemory, Connection, Generateable, Transport},
   handler::{
     create_handler, Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package,
     Unpacackage,
   },
+  network::{memory::InMemory, Connection, Generateable, Network},
 };
 
-pub struct Agent<L: LifeCycle, T: Transport + Debug> {
+pub struct Agent<L: LifeCycle, N: Network> {
   pub name:   Option<String>,
   state:      State,
   inner:      L,
-  connection: Connection<T>,
-  handlers:   HashMap<TypeId, MessageHandlerFn<T>>,
+  connection: Connection<N>,
+  handlers:   HashMap<TypeId, MessageHandlerFn<N>>,
 }
 
-impl<L: LifeCycle, T: Transport + Debug> Agent<L, T> {
+impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
   pub fn new(agent_inner: L) -> Self {
-    let address = T::Address::generate();
+    let address = N::Address::generate();
     Self {
       name:       None,
       state:      State::Stopped,
       inner:      agent_inner,
-      connection: Connection::<T>::new(address),
+      connection: Connection::<N>::new(address),
       handlers:   HashMap::new(),
     }
   }
 
-  pub fn new_with_connection(agent_inner: L, connection: &Connection<T>) -> Self {
+  pub fn new_join_network(agent_inner: L, network: &N) -> Self {
     Self {
       name:       None,
       state:      State::Stopped,
       inner:      agent_inner,
-      connection: Connection {
-        address:   T::Address::generate(),
-        transport: connection.transport.join(),
-      },
-      handlers:   HashMap::new(),
-    }
-  }
-
-  pub fn new_with_connection_and_name(
-    agent_inner: L,
-    connection: &Connection<T>,
-    name: impl Into<String>,
-  ) -> Self {
-    Self {
-      name:       Some(name.into()),
-      state:      State::Stopped,
-      inner:      agent_inner,
-      connection: Connection {
-        address:   connection.address,
-        transport: connection.transport.join(),
-      },
+      connection: Connection { address: N::Address::generate(), network: network.join() },
       handlers:   HashMap::new(),
     }
   }
@@ -68,16 +48,16 @@ impl<L: LifeCycle, T: Transport + Debug> Agent<L, T> {
   where
     M: Message,
     L: Handler<M>,
-    T::Payload: Unpacackage<M> + Package<L::Reply>, {
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, T>());
+    N::Payload: Unpacackage<M> + Package<L::Reply>, {
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
   }
 
-  pub const fn address(&self) -> T::Address { self.connection.address }
+  pub const fn address(&self) -> N::Address { self.connection.address }
 
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
-  pub const fn get_connection(&self) -> &Connection<T> { &self.connection }
+  pub const fn network(&self) -> &N { &self.connection.network }
 
   pub const fn inner(&self) -> &L { &self.inner }
 
@@ -86,14 +66,14 @@ impl<L: LifeCycle, T: Transport + Debug> Agent<L, T> {
   pub const fn state(&self) -> State { self.state }
 }
 
-pub struct ProcessingAgent<L: LifeCycle, T: Transport + Debug> {
+pub struct ProcessingAgent<L: LifeCycle, T: Network + Debug> {
   pub name:                    Option<String>,
   pub address:                 T::Address,
   pub(crate) task:             JoinHandle<Agent<L, T>>,
   pub(crate) outer_controller: OuterController,
 }
 
-impl<L: LifeCycle, T: Transport + Debug> ProcessingAgent<L, T> {
+impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
   pub const fn address(&self) -> T::Address { self.address }
@@ -189,13 +169,13 @@ impl<L: LifeCycle> Agent<L, InMemory> {
                 inner_controller.state_sender.send(State::Running).await.unwrap();
                 let start_message = self.inner.on_start();
                 println!("sending start_message for agent {}", self.name.as_deref().unwrap_or("unknown"));
-                self.connection.transport.send(Envelope::package(start_message)).await;
+                self.connection.network.send(Envelope::package(start_message)).await;
               },
               Some(ControlSignal::Stop) => {
                 self.state = State::Stopped;
                 inner_controller.state_sender.send(State::Stopped).await.unwrap();
                 let stop_message = self.inner.on_stop();
-                self.connection.transport.send(Envelope::package(stop_message)).await;
+                self.connection.network.send(Envelope::package(stop_message)).await;
                 break;
               },
               Some(ControlSignal::GetState) => {
@@ -209,7 +189,7 @@ impl<L: LifeCycle> Agent<L, InMemory> {
           // ────────────────────────────────────────────────────────────────
           // Application messages coming from the transport
           // ────────────────────────────────────────────────────────────────
-          message = self.connection.transport.receive() => {
+          message = self.connection.network.receive() => {
             if let Some(message) = message {
               println!("received message {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
               if let Some(handler) = self.handlers.get(&message.type_id) {
@@ -218,7 +198,7 @@ impl<L: LifeCycle> Agent<L, InMemory> {
                 match reply {
                   HandleResult::Message(message) => {
                     println!("sending reply {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
-                    self.connection.transport.send(message).await;
+                    self.connection.network.send(message).await;
                   },
                   HandleResult::None => {},
                   HandleResult::Stop => break,
@@ -268,7 +248,7 @@ mod tests {
     .with_handler::<TextMessage>();
 
     // Grab a sender from the agent
-    let sender = agent.connection.transport.sender.clone();
+    let sender = agent.connection.network.sender.clone();
 
     let mut processing_agent = agent.process();
     processing_agent.start().await;
@@ -292,7 +272,7 @@ mod tests {
       message_count: 0,
     });
     agent = agent.with_handler::<TextMessage>().with_handler::<NumberMessage>();
-    let sender = agent.connection.transport.sender.clone();
+    let sender = agent.connection.network.sender.clone();
 
     assert_eq!(agent.state, State::Stopped);
 

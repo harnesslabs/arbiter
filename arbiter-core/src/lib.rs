@@ -1,12 +1,12 @@
 pub mod agent;
-pub mod connection;
 pub mod handler;
+pub mod network;
 
 pub mod prelude {
   pub use crate::{
     agent::LifeCycle,
-    connection::Transport,
     handler::{HandleResult, Handler, Message},
+    network::Network,
   };
 }
 

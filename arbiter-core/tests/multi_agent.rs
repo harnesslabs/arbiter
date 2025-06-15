@@ -1,6 +1,6 @@
 use arbiter_core::{
-  agent::{Agent, State},
-  connection::{memory::InMemory, Connection},
+  agent::Agent,
+  network::{memory::InMemory, Connection},
   prelude::*,
 };
 
@@ -66,12 +66,15 @@ impl Handler<PingMessage> for Pong {
 
 #[tokio::test]
 async fn test_multi_agent() {
+  let network = InMemory::new();
+
   let mut ping =
-    Agent::<Ping, InMemory>::new(Ping { max_count: 10, count: 0 }).with_handler::<PongMessage>();
+    Agent::<Ping, InMemory>::new_join_network(Ping { max_count: 10, count: 0 }, &network)
+      .with_handler::<PongMessage>();
   ping.set_name("ping");
-  let connection = ping.get_connection();
+
   let mut pong =
-    Agent::<Pong, InMemory>::new_with_connection(Pong, connection).with_handler::<PingMessage>();
+    Agent::<Pong, InMemory>::new_join_network(Pong, &network).with_handler::<PingMessage>();
   pong.set_name("pong");
   pong.address();
 

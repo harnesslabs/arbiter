@@ -7,7 +7,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::connection::Transport;
+use crate::network::Network;
 
 // The type that agents actually work with.
 pub trait Message: Any + Send + Sync + Debug + 'static {}
@@ -22,24 +22,29 @@ impl Payload for Arc<dyn Message> {}
 
 impl Payload for Vec<u8> {}
 
-#[derive(Debug)]
-pub struct Envelope<C: Transport> {
-  pub payload: C::Payload,
+pub struct Envelope<N: Network> {
+  pub payload: N::Payload,
   pub type_id: TypeId,
 }
 
-impl<C: Transport> Clone for Envelope<C> {
+impl<N: Network> Debug for Envelope<N> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "Envelope {{ payload: {:?}, type_id: {:?} }}", self.payload, self.type_id)
+  }
+}
+
+impl<N: Network> Clone for Envelope<N> {
   fn clone(&self) -> Self { Self { payload: self.payload.clone(), type_id: self.type_id } }
 }
 
-impl<C: Transport> Envelope<C> {
+impl<N: Network> Envelope<N> {
   pub fn package<M: Message>(message: M) -> Self
-  where C::Payload: Package<M> {
-    Self { payload: C::Payload::package(message), type_id: TypeId::of::<M>() }
+  where N::Payload: Package<M> {
+    Self { payload: N::Payload::package(message), type_id: TypeId::of::<M>() }
   }
 
   pub fn unpackage<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>
-  where C::Payload: Unpacackage<M> {
+  where N::Payload: Unpacackage<M> {
     self.payload.unpackage()
   }
 }
@@ -48,8 +53,8 @@ pub trait Package<M: Message> {
   fn package(message: M) -> Self;
 }
 
-impl<T: Message> Package<T> for Arc<dyn Message> {
-  fn package(message: T) -> Self { Arc::new(message) }
+impl<M: Message> Package<M> for Arc<dyn Message> {
+  fn package(message: M) -> Self { Arc::new(message) }
 }
 
 impl<M> Package<M> for Vec<u8>
@@ -97,17 +102,17 @@ pub trait Handler<M> {
   fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply>>;
 }
 
-pub type MessageHandlerFn<C: Transport> =
+pub type MessageHandlerFn<C: Network> =
   Box<dyn Fn(&mut dyn Any, C::Payload) -> HandleResult<Envelope<C>> + Send + Sync>;
 
 // TODO: This panic is bad.
-pub fn create_handler<M, L, C>() -> MessageHandlerFn<C>
+pub fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
   L: Handler<M> + 'static,
   M: Message,
-  C: Transport + Debug,
-  C::Payload: Unpacackage<M> + Package<L::Reply>, {
-  Box::new(|agent: &mut dyn Any, message_payload: C::Payload| {
+  N: Network,
+  N::Payload: Unpacackage<M> + Package<L::Reply>, {
+  Box::new(|agent: &mut dyn Any, message_payload: N::Payload| {
     agent.downcast_mut::<L>().map_or_else(
       || {
         unreachable!(
@@ -120,12 +125,8 @@ where
           || panic!("Failed to unpackage message of type {:?}", std::any::TypeId::of::<M>()),
           |unpacked_message| {
             let reply = typed_agent.handle(&*unpacked_message).into();
-            println!("reply for agent is {:?}", reply);
             match reply {
-              HandleResult::Message(message) => {
-                println!("reply for agent is {:?}", message);
-                HandleResult::Message(Envelope::package(message))
-              },
+              HandleResult::Message(message) => HandleResult::Message(Envelope::package(message)),
               HandleResult::None => HandleResult::None,
               HandleResult::Stop => HandleResult::Stop,
             }

@@ -3,8 +3,8 @@
 use std::net::{SocketAddr, TcpStream};
 
 use crate::{
-  connection::{Generateable, Transport},
   handler::Envelope,
+  network::{Generateable, Network},
 };
 
 // TODO
@@ -12,11 +12,11 @@ impl Generateable for SocketAddr {
   fn generate() -> Self { SocketAddr::from(([127, 0, 0, 1], 0)) }
 }
 
-impl Transport for TcpStream {
+impl Network for TcpStream {
   type Address = SocketAddr;
   type Payload = Vec<u8>;
 
-  fn spawn() -> Self {
+  fn new() -> Self {
     let stream = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], 0))).unwrap();
     stream
   }
