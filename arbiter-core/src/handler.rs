@@ -1,5 +1,6 @@
 use std::{
   any::{Any, TypeId},
+  fmt::Debug,
   ops::Deref,
   sync::Arc,
 };
@@ -9,13 +10,13 @@ use serde::{Deserialize, Serialize};
 use crate::connection::Transport;
 
 // The type that agents actually work with.
-pub trait Message: Any + Send + Sync + 'static {}
+pub trait Message: Any + Send + Sync + Debug + 'static {}
 
 // Blanket implementation for all types that meet the requirements
-impl<T> Message for T where T: Send + Sync + Any + 'static {}
+impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
 
 // A version of th message that is sent "over the wire".
-pub trait Payload: Clone + Send + Sync + 'static {}
+pub trait Payload: Clone + Send + Sync + Debug + 'static {}
 
 impl Payload for Arc<dyn Message> {}
 
@@ -83,11 +84,11 @@ pub enum HandleResult<M: Message> {
 }
 
 impl<M: Message> From<M> for HandleResult<M> {
-  fn from(message: M) -> Self { HandleResult::Message(message) }
+  fn from(message: M) -> Self { Self::Message(message) }
 }
 
 impl<M: Message> From<Option<M>> for HandleResult<M> {
-  fn from(message: Option<M>) -> Self { message.map_or(HandleResult::None, HandleResult::Message) }
+  fn from(message: Option<M>) -> Self { message.map_or(Self::None, Self::Message) }
 }
 
 pub trait Handler<M> {
@@ -119,8 +120,12 @@ where
           || panic!("Failed to unpackage message of type {:?}", std::any::TypeId::of::<M>()),
           |unpacked_message| {
             let reply = typed_agent.handle(&*unpacked_message).into();
+            println!("reply for agent is {:?}", reply);
             match reply {
-              HandleResult::Message(message) => HandleResult::Message(C::Payload::package(message)),
+              HandleResult::Message(message) => {
+                println!("reply for agent is {:?}", message);
+                HandleResult::Message(C::Payload::package(message))
+              },
               HandleResult::None => HandleResult::None,
               HandleResult::Stop => HandleResult::Stop,
             }

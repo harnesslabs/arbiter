@@ -1,3 +1,5 @@
+use std::any::Any;
+
 use arbiter_core::{
   agent::{Agent, State},
   connection::{memory::InMemory, Connection},
@@ -38,6 +40,7 @@ impl Handler<PongMessage> for Ping {
     if self.count == self.max_count {
       HandleResult::Stop
     } else {
+      println!("incrementing count");
       self.count += 1;
       HandleResult::Message(PingMessage)
     }
@@ -64,11 +67,13 @@ impl Handler<PingMessage> for Pong {
   }
 }
 
-#[tokio::test]
-async fn test_multi_agent() {
+#[tokio::main(flavor = "multi_thread")]
+async fn main() {
   let mut ping =
     Agent::<Ping, InMemory>::new(Ping { max_count: 10, count: 0 }).with_handler::<PongMessage>();
   ping.set_name("ping");
+  dbg!(PingMessage.type_id());
+  dbg!(PongMessage.type_id());
   let connection = ping.get_connection();
   let mut pong =
     Agent::<Pong, InMemory>::new_with_connection(Pong, connection).with_handler::<PingMessage>();
@@ -81,10 +86,10 @@ async fn test_multi_agent() {
   let mut ping = ping.process();
   ping.start().await;
 
-  tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+  //   tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-  ping.stop().await;
-  pong.stop().await;
+  //   ping.stop().await;
+  //   pong.stop().await;
 
   let agent = ping.join().await;
   assert_eq!(agent.inner().count, 10);

@@ -1,4 +1,4 @@
-use std::{any::TypeId, collections::HashMap};
+use std::{any::TypeId, collections::HashMap, fmt::Debug};
 
 use tokio::task::JoinHandle;
 
@@ -160,8 +160,8 @@ impl Controller {
 }
 
 pub trait LifeCycle: Send + Sync + 'static {
-  type StartMessage: Message;
-  type StopMessage: Message;
+  type StartMessage: Message + Debug;
+  type StopMessage: Message + Debug;
   fn on_start(&mut self) -> Self::StartMessage;
   fn on_stop(&mut self) -> Self::StopMessage;
 }
@@ -188,6 +188,7 @@ impl<L: LifeCycle> Agent<L, InMemory> {
                 self.state = State::Running;
                 inner_controller.state_sender.send(State::Running).await.unwrap();
                 let start_message = self.inner.on_start();
+                println!("sending start_message for agent {}", self.name.as_deref().unwrap_or("unknown"));
                 self.connection.transport.send(Envelope::package(start_message)).await;
               },
               Some(ControlSignal::Stop) => {
@@ -206,80 +207,31 @@ impl<L: LifeCycle> Agent<L, InMemory> {
             }
           }
           // ────────────────────────────────────────────────────────────────
-            // Application messages coming from the transport
-            // ────────────────────────────────────────────────────────────────
-            message = self.connection.transport.receive() => {
-              if let Some(message) = message {
-                if let Some(handler) = self.handlers.get(&message.type_id) {
-                  let reply = handler(&mut self.inner, message.payload);
-                  match reply {
-                    HandleResult::Message(message) => {
-                      self.connection.transport.send(Envelope::package(message)).await;
-                    },
-                    HandleResult::None => {},
-                    HandleResult::Stop => break,
-                  }
+          // Application messages coming from the transport
+          // ────────────────────────────────────────────────────────────────
+          message = self.connection.transport.receive() => {
+            if let Some(message) = message {
+              println!("received message {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
+              if let Some(handler) = self.handlers.get(&message.type_id) {
+                let reply = handler(&mut self.inner, message.payload);
+                println!("reply for agent {}", self.name.as_deref().unwrap_or("unknown"));
+                match reply {
+                  HandleResult::Message(message) => {
+                    println!("sending reply {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
+                    self.connection.transport.send(Envelope::package(message)).await;
+                  },
+                  HandleResult::None => {},
+                  HandleResult::Stop => break,
                 }
               }
             }
+          }
         }
       }
 
       self
     });
 
-    // let task = std::thread::spawn(move || {
-    //   let mut prev_state = self.state;
-
-    //   loop {
-    //     let (new_state, message, get_state) = flume::Selector::new()
-    //       .recv(&inner_controller.instruction_receiver, |signal| match signal {
-    //         Ok(ControlSignal::Start) => (State::Running, None, false),
-    //         Ok(ControlSignal::Stop) => (State::Stopped, None, false),
-    //         Ok(ControlSignal::GetState) => (prev_state, None, true),
-    //         Err(_) => (prev_state, None, false),
-    //       })
-    //       .recv(&self.connection.transport.receiver, |message| (prev_state, Some(message),
-    // false))       .wait();
-
-    //     if get_state {
-    //       inner_controller.state_sender.send(prev_state);
-    //       continue;
-    //     }
-
-    //     if prev_state == State::Stopped && new_state == State::Running {
-    //       prev_state = new_state;
-    //       self.state = new_state;
-    //       inner_controller.state_sender.send(new_state);
-    //       let start_message = self.inner.on_start();
-    //       self.connection.transport.send(Envelope::package(start_message));
-    //       continue;
-    //     }
-
-    //     if prev_state == State::Running && new_state == State::Stopped {
-    //       prev_state = new_state;
-    //       self.state = new_state;
-    //       inner_controller.state_sender.send(new_state);
-    //       self.inner.on_stop();
-    //       break;
-    //     }
-
-    //     if let Some(Ok(message)) = message {
-    //       if let Some(handler) = self.handlers.get(&message.type_id) {
-    //         let reply = handler(&mut self.inner, message.payload);
-    //         match reply {
-    //           HandleResult::Message(message) => {
-    //             self.connection.transport.send(Envelope::package(message));
-    //           },
-    //           HandleResult::None => {},
-    //           HandleResult::Stop => break,
-    //         }
-    //       }
-    //     }
-    //   }
-
-    //   self
-    // });
     ProcessingAgent { name, address, task, outer_controller }
   }
 }
