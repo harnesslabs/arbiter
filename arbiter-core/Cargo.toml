@@ -4,10 +4,6 @@ edition = "2021"
 name    = "arbiter-core"
 version = "0.1.0"
 
-[[bin]]
-name = "multi-agent"
-path = "main.rs"
-
 [dependencies]
 # Error and logging
 postage = "0.5.0"

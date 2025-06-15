@@ -75,11 +75,11 @@ async fn test_multi_agent() {
   pong.set_name("pong");
   pong.address();
 
-  let mut pong = pong.process();
-  pong.start().await;
-
   let mut ping = ping.process();
   ping.start().await;
+
+  let mut pong = pong.process();
+  pong.start().await;
 
   let agent = ping.join().await;
   assert_eq!(agent.inner().count, 10);
