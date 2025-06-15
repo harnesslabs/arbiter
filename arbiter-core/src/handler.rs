@@ -98,14 +98,14 @@ pub trait Handler<M> {
 }
 
 pub type MessageHandlerFn<C: Transport> =
-  Box<dyn Fn(&mut dyn Any, C::Payload) -> HandleResult<C::Payload> + Send + Sync>;
+  Box<dyn Fn(&mut dyn Any, C::Payload) -> HandleResult<Envelope<C>> + Send + Sync>;
 
 // TODO: This panic is bad.
 pub fn create_handler<M, L, C>() -> MessageHandlerFn<C>
 where
   L: Handler<M> + 'static,
   M: Message,
-  C: Transport,
+  C: Transport + Debug,
   C::Payload: Unpacackage<M> + Package<L::Reply>, {
   Box::new(|agent: &mut dyn Any, message_payload: C::Payload| {
     agent.downcast_mut::<L>().map_or_else(
@@ -124,7 +124,7 @@ where
             match reply {
               HandleResult::Message(message) => {
                 println!("reply for agent is {:?}", message);
-                HandleResult::Message(C::Payload::package(message))
+                HandleResult::Message(Envelope::package(message))
               },
               HandleResult::None => HandleResult::None,
               HandleResult::Stop => HandleResult::Stop,

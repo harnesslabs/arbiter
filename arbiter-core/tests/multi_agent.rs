@@ -81,11 +81,6 @@ async fn test_multi_agent() {
   let mut ping = ping.process();
   ping.start().await;
 
-  tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-  ping.stop().await;
-  pong.stop().await;
-
   let agent = ping.join().await;
   assert_eq!(agent.inner().count, 10);
 }

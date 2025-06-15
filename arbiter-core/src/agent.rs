@@ -10,7 +10,7 @@ use crate::{
   },
 };
 
-pub struct Agent<L: LifeCycle, T: Transport> {
+pub struct Agent<L: LifeCycle, T: Transport + Debug> {
   pub name:   Option<String>,
   state:      State,
   inner:      L,
@@ -18,7 +18,7 @@ pub struct Agent<L: LifeCycle, T: Transport> {
   handlers:   HashMap<TypeId, MessageHandlerFn<T>>,
 }
 
-impl<L: LifeCycle, T: Transport> Agent<L, T> {
+impl<L: LifeCycle, T: Transport + Debug> Agent<L, T> {
   pub fn new(agent_inner: L) -> Self {
     let address = T::Address::generate();
     Self {
@@ -86,14 +86,14 @@ impl<L: LifeCycle, T: Transport> Agent<L, T> {
   pub const fn state(&self) -> State { self.state }
 }
 
-pub struct ProcessingAgent<L: LifeCycle, T: Transport> {
+pub struct ProcessingAgent<L: LifeCycle, T: Transport + Debug> {
   pub name:                    Option<String>,
   pub address:                 T::Address,
   pub(crate) task:             JoinHandle<Agent<L, T>>,
   pub(crate) outer_controller: OuterController,
 }
 
-impl<L: LifeCycle, T: Transport> ProcessingAgent<L, T> {
+impl<L: LifeCycle, T: Transport + Debug> ProcessingAgent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
   pub const fn address(&self) -> T::Address { self.address }
@@ -218,7 +218,7 @@ impl<L: LifeCycle> Agent<L, InMemory> {
                 match reply {
                   HandleResult::Message(message) => {
                     println!("sending reply {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
-                    self.connection.transport.send(Envelope::package(message)).await;
+                    self.connection.transport.send(message).await;
                   },
                   HandleResult::None => {},
                   HandleResult::Stop => break,
