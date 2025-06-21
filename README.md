@@ -36,7 +36,7 @@ If mechanism security interests you, please see the [Vulnerability Corpus](https
 
 The Arbiter workspace has five crates:
 - `arbiter`: The bin that exposes a command line interface for forking and binding contracts.
-- `arbiter-core`: A lib containing the core logic for the Arbiter framework, including the `ArbiterMiddleware` discussed before, and the `Environment`, our sandbox.
+- `arbiter-ethereum`: A lib containing the core logic for the Arbiter framework, including the `ArbiterMiddleware` discussed before, and the `Environment`, our sandbox.
 - `arbiter-engine`: A lib that provides abstractions for building simulations, agents, and behaviors.
 - `arbiter-macros`: A lib crate that contains the macros used to simplify development with Arbiter.
 - `arbiter-bindings`: A lib crate containing bindings for utility smart contracts used for testing and development.
@@ -136,14 +136,14 @@ To see the Cargo docs for the Arbiter crates, please visit the following:
 You will find each of these on crates.io.
 
 ## Benchmarks
-In `arbiter-core`, we have a a small benchmarking suite that compares the `ArbiterMiddleware` implementation over the `Environment` to the [Anvil](https://github.com/foundry-rs/foundry/tree/master/crates/anvil) local testnet chain implementation.
+In `arbiter-ethereum`, we have a a small benchmarking suite that compares the `ArbiterMiddleware` implementation over the `Environment` to the [Anvil](https://github.com/foundry-rs/foundry/tree/master/crates/anvil) local testnet chain implementation.
 The biggest reasons we chose to build Arbiter was to gain more control over the EVM environment and to have a more robust simulation framework. Still, we also wanted to gain speed, so we chose to build our own interface over `revm` instead of using Anvil (which uses `revm` under the hood). 
 For the following, Anvil was set to mine blocks for each transaction instead of setting an enforced block time. The `Environment` was configured with a block rate of 10.0.
 Preliminary benchmarks of the `ArbiterMiddleware` interface over `revm` against Anvil are given in the following table.
 
 To run the benchmarking code yourself, you can run:
 ```bash
-cargo bench --package arbiter-core
+cargo bench --package arbiter-ethereum
 ```
 
 | Operation       |  ArbiterMiddleware |    Anvil     | Relative Difference |
@@ -170,8 +170,8 @@ Divide by 100 to get the time to call a single stateless function.
 In this call, we called `ArbiterToken`'s `mint` function 100 times.
 Divide by 100 to get the time to call a single stateful function.
 
-The benchmarking code can be found in the `arbiter-core/benches/` directory, and these specific times were achieved over a 1000 run average. 
-The above was achieved by running `cargo bench --package arbiter-core`, which will automatically run with the release profile.
+The benchmarking code can be found in the `arbiter-ethereum/benches/` directory, and these specific times were achieved over a 1000 run average. 
+The above was achieved by running `cargo bench --package arbiter-ethereum`, which will automatically run with the release profile.
 Times were achieved on an Apple Macbook Pro M1 Max with 8 performance and 2 efficiency cores and 32GB of RAM.
 
 Of course, the use cases of Anvil and the `ArbiterMiddleware` can be different. 

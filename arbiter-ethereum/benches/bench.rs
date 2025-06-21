@@ -5,11 +5,11 @@ use std::{
   time::{Duration, Instant},
 };
 
-use arbiter_bindings::bindings::{
+use arbiter_ethereum::bindings::{
   arbiter_math::ArbiterMath,
   arbiter_token::{self, ArbiterToken},
 };
-use arbiter_core::{environment::Environment, middleware::ArbiterMiddleware};
+use arbiter_ethereum::{environment::Environment, middleware::ArbiterMiddleware};
 use ethers::{
   core::{k256::ecdsa::SigningKey, utils::Anvil},
   middleware::SignerMiddleware,
@@ -29,10 +29,10 @@ const NUM_LOOP_STEPS: usize = 10;
 
 #[derive(Debug)]
 struct BenchDurations {
-  deploy:         Duration,
-  lookup:         Duration,
+  deploy: Duration,
+  lookup: Duration,
   stateless_call: Duration,
-  stateful_call:  Duration,
+  stateful_call: Duration,
 }
 
 #[tokio::main]
@@ -70,24 +70,24 @@ async fn main() {
     }
     let sum_durations = durations.iter().fold(
       BenchDurations {
-        deploy:         Duration::default(),
-        lookup:         Duration::default(),
+        deploy: Duration::default(),
+        lookup: Duration::default(),
         stateless_call: Duration::default(),
-        stateful_call:  Duration::default(),
+        stateful_call: Duration::default(),
       },
       |acc, duration| BenchDurations {
-        deploy:         acc.deploy + duration.deploy,
-        lookup:         acc.lookup + duration.lookup,
+        deploy: acc.deploy + duration.deploy,
+        lookup: acc.lookup + duration.lookup,
         stateless_call: acc.stateless_call + duration.stateless_call,
-        stateful_call:  acc.stateful_call + duration.stateful_call,
+        stateful_call: acc.stateful_call + duration.stateful_call,
       },
     );
 
     let average_durations = BenchDurations {
-      deploy:         sum_durations.deploy / NUM_BENCH_ITERATIONS as u32,
-      lookup:         sum_durations.lookup / NUM_BENCH_ITERATIONS as u32,
+      deploy: sum_durations.deploy / NUM_BENCH_ITERATIONS as u32,
+      lookup: sum_durations.lookup / NUM_BENCH_ITERATIONS as u32,
       stateless_call: sum_durations.stateless_call / NUM_BENCH_ITERATIONS as u32,
-      stateful_call:  sum_durations.stateful_call / NUM_BENCH_ITERATIONS as u32,
+      stateful_call: sum_durations.stateful_call / NUM_BENCH_ITERATIONS as u32,
     };
 
     item_results.insert("Deploy", average_durations.deploy);
@@ -142,10 +142,10 @@ async fn bencher<M: Middleware + 'static>(client: Arc<M>, label: &str) -> BenchD
   total_stateful_call_duration += statefull_call_duration.as_micros();
 
   BenchDurations {
-    deploy:         Duration::from_micros(total_deploy_duration as u64),
-    lookup:         Duration::from_micros(total_lookup_duration as u64),
+    deploy: Duration::from_micros(total_deploy_duration as u64),
+    lookup: Duration::from_micros(total_lookup_duration as u64),
     stateless_call: Duration::from_micros(total_stateless_call_duration as u64),
-    stateful_call:  Duration::from_micros(total_stateful_call_duration as u64),
+    stateful_call: Duration::from_micros(total_stateful_call_duration as u64),
   }
 }
 
