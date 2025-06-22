@@ -1530,6 +1530,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "winapi",
  "ws_stream_wasm",
 ]
 

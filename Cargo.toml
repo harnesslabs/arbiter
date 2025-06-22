@@ -16,7 +16,7 @@ arbiter-ethereum = { path = "arbiter-ethereum" }
 arbiter-macros   = { path = "arbiter-macros" }
 
 # Ethereum
-ethers          = { version = "2.0.14" }
+ethers          = { version = "2.0.14", features = ["ipc"] }
 revm            = { version = "8.0.0", features = ["ethersdb", "std", "serde"] }
 revm-primitives = "3.1.1"
 

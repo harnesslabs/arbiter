@@ -13,7 +13,7 @@ use arbiter_ethereum::{environment::Environment, middleware::ArbiterMiddleware};
 use ethers::{
   core::{k256::ecdsa::SigningKey, utils::Anvil},
   middleware::SignerMiddleware,
-  providers::{Http, Middleware, Provider},
+  providers::{Http, Ipc, Middleware, Provider},
   signers::{LocalWallet, Signer, Wallet},
   types::{Address, I256, U256},
   utils::AnvilInstance,
@@ -38,7 +38,7 @@ struct BenchDurations {
 #[tokio::main]
 async fn main() {
   // Choose the benchmark group items by label.
-  let group = ["anvil", "arbiter"];
+  let group = ["anvil", "anvil-ipc", "arbiter"];
   let mut results: HashMap<&str, HashMap<&str, Duration>> = HashMap::new();
 
   // Set up for showing percentage done.
@@ -54,6 +54,12 @@ async fn main() {
       durations.push(match item {
         label @ "anvil" => {
           let (client, _anvil_instance) = anvil_startup().await;
+          let duration = bencher(client, label).await;
+          drop(_anvil_instance);
+          duration
+        },
+        label @ "anvil-ipc" => {
+          let (client, _anvil_instance) = anvil_ipc_startup().await;
           let duration = bencher(client, label).await;
           drop(_anvil_instance);
           duration
@@ -100,8 +106,8 @@ async fn main() {
 
   let df = create_dataframe(&results, &group);
 
-  match get_version_of("arbiter-core") {
-    Some(version) => println!("arbiter-core version: {}", version),
+  match get_version_of("arbiter-ethereum") {
+    Some(version) => println!("arbiter-ethereum version: {}", version),
     None => println!("Could not find version for arbiter-core"),
   }
 
@@ -157,6 +163,33 @@ async fn anvil_startup(
 
   // Create a client
   let provider = Provider::<Http>::try_from(anvil.endpoint()).unwrap().interval(Duration::ZERO);
+
+  let wallet: LocalWallet = anvil.keys()[0].clone().into();
+  let client = Arc::new(SignerMiddleware::new(provider, wallet.with_chain_id(anvil.chain_id())));
+
+  (client, anvil)
+}
+
+async fn anvil_ipc_startup(
+) -> (Arc<SignerMiddleware<Provider<Ipc>, Wallet<SigningKey>>>, AnvilInstance) {
+  // Create an Anvil IPC instance
+  // No blocktime mines a new block for each tx, which is fastest.
+
+  #[cfg(unix)]
+  let (anvil, provider) = {
+    let ipc_path = "/tmp/anvil.ipc";
+    let anvil = Anvil::new().arg("--ipc").arg(ipc_path).spawn();
+    let provider = Provider::connect_ipc(ipc_path).await.unwrap().interval(Duration::ZERO);
+    (anvil, provider)
+  };
+
+  #[cfg(windows)]
+  let (anvil, provider) = {
+    let ipc_path = r"\\.\pipe\anvil.ipc";
+    let anvil = Anvil::new().arg("--ipc").arg(ipc_path).spawn();
+    let provider = Provider::connect_ipc(ipc_path).await.unwrap().interval(Duration::ZERO);
+    (anvil, provider)
+  };
 
   let wallet: LocalWallet = anvil.keys()[0].clone().into();
   let client = Arc::new(SignerMiddleware::new(provider, wallet.with_chain_id(anvil.chain_id())));
@@ -236,30 +269,38 @@ async fn stateful_call_loop<M: Middleware + 'static>(
 
 fn create_dataframe(results: &HashMap<&str, HashMap<&str, Duration>>, group: &[&str]) -> DataFrame {
   let operations = ["Deploy", "Lookup", "Stateless Call", "Stateful Call"];
-  let mut df = DataFrame::new(vec![
-    Series::new("Operation", operations.to_vec()),
-    Series::new(
-      &format!("{} (μs)", group[0]),
-      operations
-        .iter()
-        .map(|&op| results.get(group[0]).unwrap().get(op).unwrap().as_micros() as f64)
-        .collect::<Vec<_>>(),
-    ),
-    Series::new(
-      &format!("{} (μs)", group[1]),
-      operations
-        .iter()
-        .map(|&op| results.get(group[1]).unwrap().get(op).unwrap().as_micros() as f64)
-        .collect::<Vec<_>>(),
-    ),
-  ])
-  .unwrap();
+  let series_columns: Vec<Series> = group
+    .iter()
+    .map(|group_name| {
+      Series::new(
+        &format!("{} (μs)", group_name),
+        operations
+          .iter()
+          .map(|&op| results.get(group_name).unwrap().get(&op).unwrap().as_micros() as f64)
+          .collect::<Vec<_>>(),
+      )
+    })
+    .collect();
+
+  let mut columns = vec![Series::new("Operation", operations.to_vec())];
+  columns.extend(series_columns);
+
+  let mut df = DataFrame::new(columns).unwrap();
 
   let s0 = df.column(&format!("{} (μs)", group[0])).unwrap().to_owned();
   let s1 = df.column(&format!("{} (μs)", group[1])).unwrap().to_owned();
-  let mut relative_difference = s0.divide(&s1).unwrap();
+  let s2 = df.column(&format!("{} (μs)", group[2])).unwrap().to_owned();
+  let mut speedup_arb_anvil_rpc = s0.divide(&s2).unwrap();
+  let mut speedup_arb_anvil_ipc = s1.divide(&s2).unwrap();
+  let mut speedup_ipc_rpc = s0.divide(&s1).unwrap();
 
-  df.with_column::<Series>(relative_difference.rename("Relative Speedup").clone()).unwrap().clone()
+  df.with_column::<Series>(speedup_arb_anvil_rpc.rename("Speedup - arbiter vs anvil RPC").clone())
+    .unwrap()
+    .with_column::<Series>(speedup_arb_anvil_ipc.rename("Speedup - arbiter vs anvil IPC").clone())
+    .unwrap()
+    .with_column::<Series>(speedup_ipc_rpc.rename("Speedup - anvil IPC vs anvil RPC").clone())
+    .unwrap()
+    .clone()
 }
 
 fn get_version_of(crate_name: &str) -> Option<String> {
