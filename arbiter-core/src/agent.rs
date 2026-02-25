@@ -8,7 +8,7 @@ use crate::{
     create_handler,
   },
   network::{Connection, Generateable, Network, memory::InMemory},
-  protocol::AgentId,
+  protocol::{AgentId, MessageKind, SchemaVersion},
 };
 
 pub struct Agent<L: LifeCycle, N: Network> {
@@ -17,6 +17,7 @@ pub struct Agent<L: LifeCycle, N: Network> {
   inner: L,
   connection: Connection<N>,
   handlers: HashMap<TypeId, MessageHandlerFn<N>>,
+  wire_handlers: HashMap<(MessageKind, SchemaVersion), TypeId>,
 }
 
 impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
@@ -28,6 +29,7 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
       inner: agent_inner,
       connection: Connection::<N>::new(address),
       handlers: HashMap::new(),
+      wire_handlers: HashMap::new(),
     }
   }
 
@@ -38,6 +40,7 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
       inner: agent_inner,
       connection: Connection { address: N::Address::generate(), network: network.join() },
       handlers: HashMap::new(),
+      wire_handlers: HashMap::new(),
     }
   }
 
@@ -55,7 +58,21 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
     L: Handler<M>,
     N::Payload: Unpacackage<M> + Package<L::Reply>,
   {
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
+    self.register_handler::<M>(MessageKind::for_type::<M>(), SchemaVersion::default());
+    self
+  }
+
+  pub fn with_handler_kind<M>(
+    mut self,
+    message_kind: impl Into<MessageKind>,
+    schema_version: SchemaVersion,
+  ) -> Self
+  where
+    M: Message,
+    L: Handler<M>,
+    N::Payload: Unpacackage<M> + Package<L::Reply>,
+  {
+    self.register_handler::<M>(message_kind.into(), schema_version);
     self
   }
 
@@ -81,6 +98,28 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
 
   pub const fn state(&self) -> State {
     self.state
+  }
+
+  fn register_handler<M>(&mut self, message_kind: MessageKind, schema_version: SchemaVersion)
+  where
+    M: Message,
+    L: Handler<M>,
+    N::Payload: Unpacackage<M> + Package<L::Reply>,
+  {
+    let message_type_id = TypeId::of::<M>();
+    self.handlers.entry(message_type_id).or_insert_with(create_handler::<M, L, N>);
+    self.wire_handlers.insert((message_kind, schema_version), message_type_id);
+  }
+
+  fn resolve_handler_type_id(&self, message: &Envelope<N>) -> Option<TypeId> {
+    if self.handlers.contains_key(&message.type_id) {
+      return Some(message.type_id);
+    }
+
+    self
+      .wire_handlers
+      .get(&(message.meta.message_kind.clone(), message.meta.schema_version))
+      .copied()
   }
 }
 
@@ -231,8 +270,8 @@ impl<L: LifeCycle> Agent<L, InMemory> {
               }
 
               println!("received message {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
-              let message_type_id = message.type_id;
-              if let Some(handler) = self.handlers.get(&message_type_id) {
+              if let Some(message_type_id) = self.resolve_handler_type_id(&message) {
+                let handler = self.handlers.get(&message_type_id).expect("handler id registry drift");
                 let reply = handler(&mut self.inner, message);
                 println!("reply for agent {}", self.name.as_deref().unwrap_or("unknown"));
                 match reply {
@@ -268,7 +307,10 @@ fn log_handler_error(agent_name: &str, error: &HandlerError) {
 mod tests {
 
   use super::*;
-  use crate::fixtures::*;
+  use crate::{
+    fixtures::*,
+    protocol::{EnvelopeMeta, SchemaVersion},
+  };
 
   #[tokio::test]
   async fn test_agent_lifecycle() {
@@ -372,5 +414,49 @@ mod tests {
 
     assert_eq!(agent_a.inner.message_count, 1);
     assert_eq!(agent_b.inner.message_count, 0);
+  }
+
+  #[tokio::test]
+  async fn test_wire_metadata_dispatch_falls_back_when_type_id_does_not_match() {
+    let agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "fallback".to_string(), message_count: 0 })
+        .with_handler::<TextMessage>();
+    let sender = agent.connection.network.sender.clone();
+
+    let mut processing_agent = agent.process();
+    processing_agent.start().await;
+
+    let mut envelope = Envelope::package(TextMessage { content: "hello".to_string() });
+    envelope.type_id = std::any::TypeId::of::<NumberMessage>();
+    sender.send(envelope).unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    processing_agent.stop().await;
+    let agent = processing_agent.join().await;
+    assert_eq!(agent.inner.message_count, 1);
+  }
+
+  #[tokio::test]
+  async fn test_custom_message_kind_registration_dispatches_without_default_type_id_match() {
+    let agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "custom-kind".to_string(), message_count: 0 })
+        .with_handler_kind::<TextMessage>("app.text.event", SchemaVersion(7));
+    let sender = agent.connection.network.sender.clone();
+
+    let mut processing_agent = agent.process();
+    processing_agent.start().await;
+
+    let meta = EnvelopeMeta::new("app.text.event").with_schema_version(SchemaVersion(7));
+    let mut envelope =
+      Envelope::package_with_meta(TextMessage { content: "hello".to_string() }, meta);
+    envelope.type_id = std::any::TypeId::of::<NumberMessage>();
+    sender.send(envelope).unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    processing_agent.stop().await;
+    let agent = processing_agent.join().await;
+    assert_eq!(agent.inner.message_count, 1);
   }
 }

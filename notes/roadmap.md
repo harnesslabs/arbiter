@@ -35,7 +35,7 @@ Milestones:
 - [x] Seed protocol metadata primitives in `arbiter-core` (`MessageKind`, IDs, recipients, envelope metadata)
 - [x] Add envelope routing metadata and addressed/broadcast semantics for in-memory delivery
 - [x] Replace panic-prone handler decode path with structured errors
-- [ ] Add remote-capable message registration keyed by stable `MessageKind` + `SchemaVersion`
+- [x] Add remote-capable message registration keyed by stable `MessageKind` + `SchemaVersion`
 - [ ] Refactor runtime logic out of `Agent::<_, InMemory>::process` specialization into shared runtime module(s)
 - [ ] Align docs/examples with current public API (remove stale paths like `runtime::Runtime`)
 
@@ -44,7 +44,7 @@ Acceptance targets:
 - [x] Existing in-memory tests pass
 - [x] In-memory addressed delivery works
 - [x] Decode mismatch returns structured error (no panic)
-- [ ] Stable identifier dispatch path exists at wire boundary (not just metadata on envelope)
+- [x] Stable identifier dispatch path exists at wire boundary (not just metadata on envelope)
 - [ ] Docs/examples compile against current APIs
 
 ## Phase 1: LAN MVP (Brokered Mesh, Library-First)
@@ -102,4 +102,3 @@ Milestones:
 - Subsystem requires independent release cadence
 - Public API usability materially improves with separation
 - Build/test time becomes a sustained productivity bottleneck
-

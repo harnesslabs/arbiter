@@ -30,10 +30,11 @@ components:
 - Updated in-memory processing loop to filter on `Recipient`
 - Added structured `HandlerError` and removed panic on payload decode mismatch
 - Added tests for addressed delivery and structured decode error
+- Added stable kind/version handler registration + dispatch fallback (`TypeId` fallback to `MessageKind` + `SchemaVersion`)
+- Added tests proving dispatch works even when envelope `TypeId` is unusable
 
 ## Next Slice (Immediate Follow-On)
 
-- Add explicit remote dispatch registration keyed by `MessageKind` + `SchemaVersion`
 - Decouple runtime loop from `InMemory` specialization into shared runtime abstractions
 - Start docs/example API alignment pass (remove stale `runtime::Runtime` references)
 
@@ -41,10 +42,11 @@ components:
 
 - `MessageKind` currently defaults to Rust `type_name::<T>()`, which is convenient but may be unstable across refactors. Remote APIs should allow explicit user-specified kinds.
 - `Recipient::Group` is modeled but not yet implemented in in-memory routing.
-- Handler registration still keys runtime dispatch by `TypeId`; current work makes envelopes distributed-ready but does not yet complete wire-boundary dispatch migration.
+- Handler registration now maintains a stable wire registry (`MessageKind` + `SchemaVersion` -> local handler) and can dispatch without a usable `TypeId`, but transport/runtime layers are still local-only.
 
 ## Validation Status
 
 - `cargo test -p arbiter-core`: passed
 - `just lint`: passed
 - `just test`: passed
+- Latest validation after wire-dispatch fallback slice: `just lint` + `just test` passed
