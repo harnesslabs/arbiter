@@ -403,12 +403,32 @@ impl Heartbeat {
   }
 }
 
+/// Node->broker registration of locally hosted agents for addressed routing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvertiseAgents {
+  pub agents: Vec<AgentId>,
+}
+
+impl AdvertiseAgents {
+  pub fn new(agents: impl Into<Vec<AgentId>>) -> Self {
+    Self { agents: agents.into() }
+  }
+}
+
+/// Broker->node acknowledgement of agent registrations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvertiseAck {
+  pub registered_agents: usize,
+}
+
 /// Top-level framed payload exchanged over TCP.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireFrame {
   Hello(HandshakeHello),
   HelloAck(HandshakeAck),
   HelloReject(HandshakeReject),
+  AdvertiseAgents(AdvertiseAgents),
+  AdvertiseAck(AdvertiseAck),
   Envelope(WireEnvelope),
   Heartbeat(Heartbeat),
 }
@@ -419,6 +439,8 @@ impl WireFrame {
       Self::Hello(_) => "hello",
       Self::HelloAck(_) => "hello_ack",
       Self::HelloReject(_) => "hello_reject",
+      Self::AdvertiseAgents(_) => "advertise_agents",
+      Self::AdvertiseAck(_) => "advertise_ack",
       Self::Envelope(_) => "envelope",
       Self::Heartbeat(_) => "heartbeat",
     }

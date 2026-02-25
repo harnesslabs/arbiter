@@ -47,7 +47,7 @@ Acceptance targets:
 - [x] Stable identifier dispatch path exists at wire boundary (not just metadata on envelope)
 - [x] Docs/examples compile against current APIs
 
-## Phase 1: LAN MVP (Brokered Mesh, Library-First)
+## Phase 1: LAN MVP (Brokered Mesh, Library-First) (Complete)
 
 Goal: run agents across multiple processes on a LAN through a brokered topology.
 
@@ -56,10 +56,10 @@ Milestones:
 - [x] Functional TCP transport in `arbiter-core`
 - [x] Framing (length-delimited)
 - [x] Versioned handshake (protocol, node id, capabilities, codec)
-- [ ] Broker runtime + node runtime modules
-- [ ] Addressed + broadcast routing across processes
-- [ ] Heartbeats/liveness and disconnect handling
-- [ ] Bounded queue/backpressure semantics
+- [x] Broker runtime + node runtime modules
+- [x] Addressed + broadcast routing across processes
+- [x] Heartbeats/liveness and disconnect handling
+- [x] Bounded queue/backpressure semantics
 
 ## Phase 2: Observability + Replay
 

@@ -1,7 +1,7 @@
 ---
 date: 2026-02-25
 commit: 8ed4fe4c
-status: in_progress
+status: completed
 tags:
   - active
   - phase1
@@ -39,22 +39,28 @@ components:
   - handshake success
   - handshake protocol version rejection
   - handshake codec negotiation rejection
+- Added `runtime::broker` and `runtime::node` LAN MVP modules on top of framed TCP transport
+- Added node agent advertisement frames (`AdvertiseAgents` / `AdvertiseAck`) for addressed routing
+- Added broker routing for addressed and broadcast `WireEnvelope`s across connected nodes
+- Added heartbeat timeout enforcement and disconnect cleanup for peer/route registries
+- Added bounded outbound queue semantics with backpressure drop counters and tests
 
 ## Next Slice (Immediate Follow-On)
 
-- Add broker runtime + node runtime modules on top of `FramedTcpStream`
-- Route addressed and broadcast `WireEnvelope`s through a broker connection registry
-- Add heartbeat/session liveness checks and disconnect handling
-- Define bounded queue/backpressure behavior for broker routing
+- Phase 1 is complete in roadmap tracking
+- Start Phase 2: observability events for broker/node/transport/message lifecycle
+- Add replay log schema and recorded-order replay harness
 
 ## Risks / Design Notes
 
 - The new TCP transport is intentionally separate from the legacy `Network` trait; the existing `Network` abstraction is not yet a good fit for brokered LAN sessions.
 - Frames are JSON-encoded for debuggability; binary/alternative codecs can be layered later using `CodecKind`/`Codec`.
 - `ProtocolVersion::matches` currently requires exact version match (major+minor), which is conservative for the early LAN milestone.
+- Broker routing is currently based on explicit node advertisement of hosted `AgentId`s; richer service discovery and groups are deferred to later phases.
 
 ## Validation Status
 
 - `cargo test -p arbiter-core --all-features`: passed
 - `just lint`: passed
 - `just test`: passed
+- Broker e2e tests cover addressed routing, broadcast routing, disconnect cleanup, heartbeat timeout, and backpressure counters
