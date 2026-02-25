@@ -1,7 +1,7 @@
 ---
 date: 2026-02-25
 commit: pending
-status: in_progress
+status: completed
 tags:
   - active
   - phase2
@@ -31,10 +31,9 @@ components:
 
 ## Next Slice (Immediate Follow-On)
 
-- Create `arbiter_core::observe` module and event types
-- Instrument broker and node runtime paths with event emission hooks
-- Add a simple in-memory recorder and JSONL file sink
-- Add replay schema + recorded-order playback over observed envelope events
+- Phase 2 is complete in roadmap tracking
+- Start Phase 3: coordination primitives (registry, groups/topics, request/reply, supervision, timers)
+- Leverage observability events for coordination diagnostics and timeout behavior
 
 ## Risks / Design Notes
 
@@ -42,3 +41,23 @@ components:
 - Replay is recorded-order replay, not full distributed determinism.
 - Avoid entangling event schema with transport internals so local runtimes can emit the same event types later.
 
+## Completed in This Cycle
+
+- Added `arbiter_core::observe` module with structured event schema and envelope summaries
+- Added `Observer` dispatcher plus sinks:
+  - `InMemoryRecorder`
+  - `JsonlFileSink`
+  - `TracingSink`
+- Added `arbiter_core::replay` module behind `replay` feature with:
+  - JSONL replay log read/write
+  - recorded-order replay harness
+  - explicit mismatch errors
+- Instrumented `runtime::broker` and `runtime::node` with event emission hooks
+- Added e2e broker observability test verifying correlation metadata propagation into routed events
+- Added unit tests for observe JSONL sink and replay roundtrip/mismatch handling
+
+## Validation Status
+
+- `cargo test -p arbiter-core --all-features`: passed
+- `just lint`: passed
+- `just test`: passed

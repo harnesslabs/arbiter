@@ -1,7 +1,10 @@
 pub mod agent;
 pub mod handler;
 pub mod network;
+pub mod observe;
 pub mod protocol;
+#[cfg(feature = "replay")]
+pub mod replay;
 pub mod runtime;
 
 pub mod prelude {
@@ -9,6 +12,7 @@ pub mod prelude {
     agent::LifeCycle,
     handler::{HandleResult, Handler, Message},
     network::Network,
+    observe::{ObserveEvent, ObserveEventKind, Observer},
     protocol::{AgentId, EnvelopeMeta, MessageKind, Recipient, SchemaVersion},
   };
 }

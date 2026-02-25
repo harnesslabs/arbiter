@@ -61,16 +61,16 @@ Milestones:
 - [x] Heartbeats/liveness and disconnect handling
 - [x] Bounded queue/backpressure semantics
 
-## Phase 2: Observability + Replay
+## Phase 2: Observability + Replay (Complete)
 
 Goal: inspect and replay distributed runs before expanding coordination primitives.
 
 Milestones:
 
-- [ ] `observe` module with structured runtime events
-- [ ] Correlation metadata end-to-end
-- [ ] Tracing/file sink integration
-- [ ] Feature-gated `replay` module (recorded-order replay)
+- [x] `observe` module with structured runtime events
+- [x] Correlation metadata end-to-end
+- [x] Tracing/file sink integration
+- [x] Feature-gated `replay` module (recorded-order replay)
 
 ## Phase 3: Coordination Primitives
 

@@ -13,6 +13,7 @@ use tokio::{
 
 use crate::{
   network::tcp::{FramedTcpStream, ServerHandshakeConfig, TcpTransportError, bind},
+  observe::{EnvelopeSummary, ObserveEventKind, Observer},
   protocol::{AdvertiseAck, AdvertiseAgents, AgentId, NodeId, Recipient, WireEnvelope, WireFrame},
 };
 
@@ -31,6 +32,7 @@ pub struct BrokerConfig {
   pub outbound_queue_capacity: usize,
   pub heartbeat_timeout: Duration,
   pub heartbeat_check_period: Duration,
+  pub observer: Option<Observer>,
 }
 
 impl BrokerConfig {
@@ -41,6 +43,7 @@ impl BrokerConfig {
       outbound_queue_capacity: 64,
       heartbeat_timeout: Duration::from_secs(30),
       heartbeat_check_period: Duration::from_secs(5),
+      observer: None,
     }
   }
 
@@ -61,6 +64,11 @@ impl BrokerConfig {
 
   pub fn with_heartbeat_check_period(mut self, period: Duration) -> Self {
     self.heartbeat_check_period = period;
+    self
+  }
+
+  pub fn with_observer(mut self, observer: Observer) -> Self {
+    self.observer = Some(observer);
     self
   }
 }
@@ -144,6 +152,13 @@ struct PeerState {
 }
 
 #[derive(Debug, Default)]
+struct RouteOutcome {
+  recipients: Vec<NodeId>,
+  backpressure_drops: u64,
+  drop_reason: Option<String>,
+}
+
+#[derive(Debug, Default)]
 struct BrokerState {
   peers: HashMap<NodeId, PeerState>,
   agent_routes: HashMap<AgentId, NodeId>,
@@ -180,35 +195,50 @@ impl BrokerState {
     AdvertiseAck { registered_agents: advertise.agents.len() }
   }
 
-  fn route_envelope(&mut self, source_node_id: &NodeId, envelope: WireEnvelope) {
+  fn route_envelope(&mut self, source_node_id: &NodeId, envelope: WireEnvelope) -> RouteOutcome {
+    let mut outcome = RouteOutcome::default();
     match &envelope.meta.recipient {
       Recipient::Broadcast => {
         let frame = WireFrame::Envelope(envelope);
-        for peer in self.peers.values() {
+        for (target_node_id, peer) in &self.peers {
           if peer.outbound_tx.try_send(frame.clone()).is_err() {
             self.backpressure_drops += 1;
+            outcome.backpressure_drops += 1;
+          } else {
+            outcome.recipients.push(target_node_id.clone());
           }
+        }
+        if outcome.recipients.is_empty() && outcome.backpressure_drops > 0 {
+          outcome.drop_reason = Some("backpressure".to_string());
         }
       },
       Recipient::Agent(agent_id) => {
         let Some(target_node_id) = self.agent_routes.get(agent_id).cloned() else {
           self.unknown_recipient_drops += 1;
-          return;
+          outcome.drop_reason = Some("unknown_recipient".to_string());
+          return outcome;
         };
 
         if let Some(peer) = self.peers.get(&target_node_id) {
           if peer.outbound_tx.try_send(WireFrame::Envelope(envelope)).is_err() {
             self.backpressure_drops += 1;
+            outcome.backpressure_drops += 1;
+            outcome.drop_reason = Some("backpressure".to_string());
+          } else {
+            outcome.recipients.push(target_node_id);
           }
         } else {
           self.unknown_recipient_drops += 1;
+          outcome.drop_reason = Some("unknown_recipient".to_string());
         }
       },
       Recipient::Group(_) => {
         let _ = source_node_id;
         self.unsupported_group_drops += 1;
+        outcome.drop_reason = Some("unsupported_group".to_string());
       },
     }
+    outcome
   }
 
   fn remove_peer(&mut self, node_id: &NodeId) {
@@ -226,7 +256,28 @@ async fn run_connection(
   state: Arc<Mutex<BrokerState>>,
   config: BrokerConfig,
 ) -> Result<(), BrokerError> {
-  let hello = transport.server_handshake(&config.handshake).await?;
+  let observer = config.observer.clone();
+  let hello = match transport.server_handshake(&config.handshake).await {
+    Ok(hello) => {
+      if let Some(observer) = &observer
+        && let Some(codec) =
+          select_codec(&config.handshake.supported_codecs, &hello.supported_codecs)
+      {
+        observer.emit(ObserveEventKind::BrokerHandshakeAccepted {
+          node_id: hello.node_id.clone(),
+          protocol_version: hello.protocol_version,
+          codec,
+        });
+      }
+      hello
+    },
+    Err(error) => {
+      if let Some(observer) = &observer {
+        observer.emit(ObserveEventKind::BrokerHandshakeRejected { reason: error.to_string() });
+      }
+      return Err(error.into());
+    },
+  };
   let node_id = hello.node_id.clone();
   let (outbound_tx, mut outbound_rx) = mpsc::channel(config.outbound_queue_capacity.max(1));
 
@@ -234,10 +285,13 @@ async fn run_connection(
     let mut state = state.lock().await;
     state.register_peer(node_id.clone(), outbound_tx.clone());
   }
+  if let Some(observer) = &observer {
+    observer.emit(ObserveEventKind::BrokerNodeConnected { node_id: node_id.clone() });
+  }
 
   let mut heartbeat_interval = tokio::time::interval(config.heartbeat_check_period);
 
-  loop {
+  let disconnect_reason = loop {
     tokio::select! {
       _ = heartbeat_interval.tick() => {
         let timed_out = {
@@ -245,18 +299,23 @@ async fn run_connection(
           state.is_peer_timed_out(&node_id, config.heartbeat_timeout)
         };
         if timed_out {
-          break;
+          if let Some(observer) = &observer {
+            observer.emit(ObserveEventKind::BrokerHeartbeatTimeout { node_id: node_id.clone() });
+          }
+          break "heartbeat_timeout".to_string();
         }
       }
       outbound = outbound_rx.recv() => {
         match outbound {
           Some(frame) => transport.send_frame(&frame).await?,
-          None => break,
+          None => {
+            break "outbound_queue_closed".to_string();
+          },
         }
       }
       inbound = transport.recv_frame() => {
         let Some(frame) = inbound? else {
-          break;
+          break "peer_closed".to_string();
         };
 
         let mut state = state.lock().await;
@@ -266,11 +325,41 @@ async fn run_connection(
           WireFrame::Heartbeat(_) => {}
           WireFrame::AdvertiseAgents(advertise) => {
             let ack = state.register_agents(&node_id, &advertise);
+            let agent_count = advertise.agents.len();
             drop(state);
             transport.send_frame(&WireFrame::AdvertiseAck(ack)).await?;
+            if let Some(observer) = &observer {
+              observer.emit(ObserveEventKind::BrokerAgentsAdvertised {
+                node_id: node_id.clone(),
+                agent_count,
+              });
+            }
           }
           WireFrame::Envelope(envelope) => {
-            state.route_envelope(&node_id, envelope);
+            let summary = EnvelopeSummary::from_wire_envelope(&envelope);
+            let outcome = state.route_envelope(&node_id, envelope);
+            if let Some(observer) = &observer {
+              if !outcome.recipients.is_empty() {
+                observer.emit(ObserveEventKind::BrokerEnvelopeRouted {
+                  source_node_id: node_id.clone(),
+                  envelope: summary.clone(),
+                  recipients: outcome.recipients.clone(),
+                });
+              }
+              if let Some(reason) = outcome.drop_reason.clone() {
+                observer.emit(ObserveEventKind::BrokerEnvelopeDropped {
+                  source_node_id: node_id.clone(),
+                  envelope: summary.clone(),
+                  reason,
+                });
+              } else if outcome.backpressure_drops > 0 {
+                observer.emit(ObserveEventKind::BrokerEnvelopeDropped {
+                  source_node_id: node_id.clone(),
+                  envelope: summary.clone(),
+                  reason: "backpressure".to_string(),
+                });
+              }
+            }
           }
           WireFrame::Hello(_)
           | WireFrame::HelloAck(_)
@@ -279,20 +368,34 @@ async fn run_connection(
         }
       }
     }
-  }
+  };
 
   let mut state = state.lock().await;
   state.remove_peer(&node_id);
+  drop(state);
+  if let Some(observer) = &observer {
+    observer.emit(ObserveEventKind::BrokerNodeDisconnected { node_id, reason: disconnect_reason });
+  }
   Ok(())
+}
+
+fn select_codec(
+  server_supported: &[crate::protocol::CodecKind],
+  client_supported: &[crate::protocol::CodecKind],
+) -> Option<crate::protocol::CodecKind> {
+  server_supported.iter().copied().find(|codec| client_supported.contains(codec))
 }
 
 #[cfg(test)]
 mod tests {
+  use std::sync::Arc;
+
   use tokio::time::{Duration, timeout};
 
   use super::*;
   use crate::{
-    protocol::{AgentId, EnvelopeMeta, HandshakeHello, WireEnvelope},
+    observe::{InMemoryRecorder, ObserveEventKind, Observer},
+    protocol::{AgentId, CorrelationId, EnvelopeMeta, HandshakeHello, WireEnvelope},
     runtime::node::NodeClient,
   };
 
@@ -441,5 +544,62 @@ mod tests {
 
     state.route_envelope(&NodeId::from("source"), envelope);
     assert_eq!(state.backpressure_drops, 1);
+  }
+
+  #[tokio::test]
+  async fn broker_observability_events_include_correlation_metadata() {
+    let recorder = Arc::new(InMemoryRecorder::new());
+    let observer = Observer::from_sink(Arc::clone(&recorder));
+    let broker = spawn(
+      BrokerConfig::new(SocketAddr::from(([127, 0, 0, 1], 0)), "broker-1")
+        .with_observer(observer.clone())
+        .with_heartbeat_timeout(Duration::from_secs(2))
+        .with_heartbeat_check_period(Duration::from_millis(50)),
+    )
+    .await
+    .expect("spawn broker");
+
+    let mut node_a = NodeClient::connect_with_observer(
+      broker.local_addr(),
+      HandshakeHello::new("node-a"),
+      Some(observer.clone()),
+    )
+    .await
+    .expect("connect node a");
+    let mut node_b = NodeClient::connect_with_observer(
+      broker.local_addr(),
+      HandshakeHello::new("node-b"),
+      Some(observer.clone()),
+    )
+    .await
+    .expect("connect node b");
+
+    node_b.advertise_agents(vec![AgentId::from("agent-b")]).await.expect("advertise agents");
+
+    let correlation_id = CorrelationId::next();
+    let envelope = WireEnvelope::new(
+      EnvelopeMeta::new("example.msg").with_correlation_id(correlation_id).to_agent("agent-b"),
+      vec![7, 8, 9],
+    );
+    node_a.send_envelope(envelope).await.expect("send addressed");
+
+    let _ = timeout(Duration::from_secs(1), node_b.recv_frame())
+      .await
+      .expect("node b recv timeout")
+      .expect("node b recv result")
+      .expect("node b frame");
+
+    let events = recorder.snapshot();
+    let routed = events.into_iter().find_map(|event| match event.kind {
+      ObserveEventKind::BrokerEnvelopeRouted { envelope, .. } => Some(envelope),
+      _ => None,
+    });
+
+    let routed = routed.expect("broker routed event");
+    assert_eq!(routed.correlation_id, Some(correlation_id));
+
+    drop(node_a);
+    drop(node_b);
+    broker.shutdown().await.expect("shutdown broker");
   }
 }
