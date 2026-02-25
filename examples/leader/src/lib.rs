@@ -13,7 +13,6 @@ use std::{
 use arbiter_core::{
   agent::{Agent, LifeCycle},
   handler::Handler,
-  runtime::Runtime,
 };
 use wasm_bindgen::prelude::*;
 use web_sys::console;
@@ -140,7 +139,14 @@ impl Leader {
   }
 }
 
-impl LifeCycle for Leader {}
+impl LifeCycle for Leader {
+  type StartMessage = ();
+  type StopMessage = ();
+
+  fn on_start(&mut self) -> Self::StartMessage {}
+
+  fn on_stop(&mut self) -> Self::StopMessage {}
+}
 
 impl Handler<Tick> for Leader {
   type Reply = ();
@@ -211,7 +217,14 @@ impl Follower {
   }
 }
 
-impl LifeCycle for Follower {}
+impl LifeCycle for Follower {
+  type StartMessage = ();
+  type StopMessage = ();
+
+  fn on_start(&mut self) -> Self::StartMessage {}
+
+  fn on_stop(&mut self) -> Self::StopMessage {}
+}
 
 impl Handler<Tick> for Follower {
   type Reply = ();

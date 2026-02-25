@@ -34,11 +34,17 @@ components:
 - Added tests proving dispatch works even when envelope `TypeId` is unusable
 - Introduced `arbiter_core::runtime` with `runtime::in_memory::spawn(...)`
 - Moved in-memory processing loop out of `Agent::<_, InMemory>::process()` into runtime module (delegation now in `Agent::process`)
+- Started docs/example alignment pass:
+- Fixed stale `runtime::Runtime` import in `examples/leader/src/lib.rs`
+- Updated `examples/leader` `LifeCycle` impls to current trait shape (`StartMessage`/`StopMessage`)
+- Removed nonexistent `arbiter-core` `wasm` feature from `examples/leader/Cargo.toml`
+- `cargo check --manifest-path examples/leader/Cargo.toml` now passes on host target
 
 ## Next Slice (Immediate Follow-On)
 
 - Start docs/example API alignment pass (remove stale `runtime::Runtime` references)
 - Continue runtime modularization toward broker/node runtimes (shared dispatch/control utilities)
+- Audit remaining `examples/leader` API drift for wasm-target build compatibility
 
 ## Risks / Design Notes
 
@@ -54,3 +60,5 @@ components:
 - `just test`: passed
 - Latest validation after wire-dispatch fallback slice: `just lint` + `just test` passed
 - Latest validation after runtime-module extraction slice: `just lint` + `just test` passed
+- Latest validation after docs/example alignment slice: `just lint` + `just test` passed
+- Extra validation: `cargo check --manifest-path examples/leader/Cargo.toml` passed
