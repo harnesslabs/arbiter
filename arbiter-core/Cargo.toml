@@ -1,35 +1,18 @@
 [package]
 authors = ["Harness Labs"]
-edition = "2021"
+edition = "2024"
 name    = "arbiter-core"
 version = "0.1.0"
 
 [dependencies]
-# Error and logging
-postage = "0.5.0"
-serde = { workspace = true }
-thiserror = { workspace = true }
-tokio = { version = "1.45", default-features = false, features = [
-    "sync",
-    "rt",
-    "macros",
-    # remove these later
-    "rt-multi-thread",
-    "time",
-] }
-tracing = { workspace = true }
-
-# Temp, we should have a generic serialization strategy trait
+serde = { version = "1.0", features = ["derive"] }
+tokio = { workspace = true }
+# TODO: we should have a generic serialization strategy trait
 serde_json = { version = "1.0" }
 
 [dev-dependencies]
-tokio = { version = "1.45", default-features = false, features = [
-    "sync",
-    "rt",
-    "macros",
-    "time",
-] }
-tracing-test = { workspace = true }
+tokio        = { workspace = true }
+tracing-test = { version = "0.2" }
 
 [features]
 default   = ["in-memory"]

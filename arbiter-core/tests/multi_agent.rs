@@ -1,8 +1,4 @@
-use arbiter_core::{
-  agent::Agent,
-  network::{memory::InMemory, Connection},
-  prelude::*,
-};
+use arbiter_core::{agent::Agent, network::memory::InMemory, prelude::*};
 
 #[derive(Debug)]
 struct PingMessage;
@@ -33,6 +29,7 @@ impl LifeCycle for Ping {
 impl Handler<PongMessage> for Ping {
   type Reply = PingMessage;
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &PongMessage) -> HandleResult<Self::Reply> {
     println!("Ping received PongMessage, count: {}", self.count);
     if self.count == self.max_count {
@@ -58,6 +55,7 @@ impl LifeCycle for Pong {
 impl Handler<PingMessage> for Pong {
   type Reply = PongMessage;
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &PingMessage) -> Self::Reply {
     println!("Pong received PingMessage");
     PongMessage

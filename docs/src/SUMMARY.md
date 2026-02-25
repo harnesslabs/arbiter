@@ -1,22 +1,3 @@
 # Summary
 [Arbiter](./index.md)
-- [Getting Started](./getting_started/index.md)
-- [Examples](./getting_started/examples.md)
-# Usage
-- [Overview](./usage/index.md)
-  - [Arbiter Core](./usage/arbiter_core/index.md)
-    - [Environment](./usage/arbiter_core/environment.md)
-    - [Middleware](./usage/arbiter_core/middleware.md)
-  - [Arbiter Engine](./usage/arbiter_engine/index.md)
-    - [Behaviors](./usage/arbiter_engine/behaviors.md)
-    - [Agents and Engines](./usage/arbiter_engine/agents_and_engines.md)
-    - [Worlds and Universes](./usage/arbiter_engine/worlds_and_universes.md)
-    - [Configuration](./usage/arbiter_engine/configuration.md)
-  - [Arbiter CLI](./usage/arbiter_cli.md)
-  - [Arbiter Macros](./usage/arbiter_macros.md)
-- [Techniques](./usage/techniques/index.md)
-  - [Anomaly Detection](./usage/techniques/anomaly_detection.md)  
-  - [Measuring Risk](./usage/techniques/measuring_risk.md)
-# Engagement
-- [Contributing](./contributing.md)
-- [Vulnerability Corpus](./vulnerability_corpus.md)
+[Contributing](./CONTRIBUTING.md)

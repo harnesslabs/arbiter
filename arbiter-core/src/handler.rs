@@ -99,9 +99,11 @@ impl<M: Message> From<Option<M>> for HandleResult<M> {
 pub trait Handler<M> {
   type Reply: Message;
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply>>;
 }
 
+#[allow(type_alias_bounds)]
 pub type MessageHandlerFn<C: Network> =
   Box<dyn Fn(&mut dyn Any, C::Payload) -> HandleResult<Envelope<C>> + Send + Sync>;
 

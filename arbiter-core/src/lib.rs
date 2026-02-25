@@ -54,6 +54,7 @@ pub mod fixtures {
   impl Handler<NumberMessage> for Counter {
     type Reply = ();
 
+    #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &NumberMessage) {
       self.total += message.value;
       println!("CounterAgent total is now: {}", self.total);
@@ -63,6 +64,7 @@ pub mod fixtures {
   impl Handler<TextMessage> for Logger {
     type Reply = ();
 
+    #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &TextMessage) {
       self.message_count += 1;
       println!(
@@ -75,6 +77,7 @@ pub mod fixtures {
   impl Handler<NumberMessage> for Logger {
     type Reply = ();
 
+    #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &NumberMessage) {
       self.message_count += 1;
       println!(
