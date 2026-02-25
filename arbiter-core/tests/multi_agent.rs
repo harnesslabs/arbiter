@@ -11,7 +11,7 @@ struct StopMessage;
 
 struct Ping {
   pub max_count: usize,
-  pub count: usize,
+  pub count:     usize,
 }
 
 impl LifeCycle for Ping {
@@ -23,14 +23,13 @@ impl LifeCycle for Ping {
     PingMessage
   }
 
-  fn on_stop(&mut self) -> Self::StopMessage {
-    StopMessage
-  }
+  fn on_stop(&mut self) -> Self::StopMessage { StopMessage }
 }
 
 impl Handler<PongMessage> for Ping {
   type Reply = PingMessage;
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &PongMessage) -> HandleResult<Self::Reply> {
     println!("Ping received PongMessage, count: {}", self.count);
     if self.count == self.max_count {
@@ -56,6 +55,7 @@ impl LifeCycle for Pong {
 impl Handler<PingMessage> for Pong {
   type Reply = PongMessage;
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &PingMessage) -> Self::Reply {
     println!("Pong received PingMessage");
     PongMessage

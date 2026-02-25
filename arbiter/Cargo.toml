@@ -3,22 +3,17 @@ authors = ["Harness Labs"]
 description = "A Rust-based multi-agent framework."
 edition = "2021"
 keywords = [
-    "ethereum",
-    "evm",
-    "emulator",
-    "testing",
-    "smart-contracts",
-    "multi-agent",
-    "framework",
+  "ethereum",
+  "evm",
+  "emulator",
+  "testing",
+  "smart-contracts",
+  "multi-agent",
+  "framework",
 ]
 license = "AGPL-3.0"
 name = "arbiter"
 version = "0.5.0"
 
 [dependencies]
-arbiter-core     = { workspace = true }
-arbiter-ethereum = { workspace = true, optional = true }
-arbiter-macros   = { workspace = true }
-
-[features]
-ethereum = ["dep:arbiter-ethereum"]
+arbiter-core = { workspace = true }

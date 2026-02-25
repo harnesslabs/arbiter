@@ -1,52 +1,19 @@
 [workspace]
-exclude = ["benches", "docs"]
-members = [
-  "arbiter",
-  "arbiter-core",
-  "arbiter-ethereum",
-  "arbiter-macros",
-  "docs",
-]
+exclude  = ["benches", "docs"]
+members  = ["arbiter", "arbiter-core", "docs"]
 resolver = "2"
-
-[workspace.dependencies]
-# Local
-arbiter-core     = { path = "arbiter-core" }
-arbiter-ethereum = { path = "arbiter-ethereum" }
-arbiter-macros   = { path = "arbiter-macros" }
-
-# Ethereum
-ethers          = { version = "2.0.14" }
-revm            = { version = "8.0.0", features = ["ethersdb", "std", "serde"] }
-revm-primitives = "3.1.1"
-
-# Serialization
-serde      = { version = "1.0", features = ["derive"] }
-serde_json = { version = "1.0" }
-toml       = "0.8"
-
-# Async
-async-stream      = "0.3"
-async-trait       = { version = "0.1" }
-crossbeam-channel = { version = "0.5" }
-futures           = "0.3"
-futures-util      = { version = "0.3" }
-tokio             = { version = "1.45", default-features = false }
-
-# Macros
-proc-macro2 = { version = "1.0" }
-syn         = { version = "2.0", features = ["full"] }
-
-# Errors and logging
-anyhow             = "1.0"
-thiserror          = { version = "2.0" }
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false }
-tracing-test       = "0.2"
-
-# Testing
-tempfile = "3.20"
 
 [profile.release]
 codegen-units = 1
 lto           = true
+
+[workspace.dependencies]
+# Local
+arbiter-core = { path = "arbiter-core" }
+
+# Shared
+tokio = { version = "1.49", default-features = false, features = [
+  "sync",
+  "rt",
+  "macros",
+] }

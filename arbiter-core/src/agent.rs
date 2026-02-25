@@ -129,6 +129,8 @@ pub struct Controller {
 }
 
 impl Controller {
+  // TODO: Add a default and let new take in pareameters for different channel implementations.
+  #[allow(clippy::new_without_default)]
   pub fn new() -> Self {
     let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel(8);
     let (state_sender, state_receiver) = tokio::sync::mpsc::channel(8);
@@ -255,7 +257,7 @@ mod tests {
     assert_eq!(processing_agent.state().await, State::Running);
 
     // Send a message to the agent
-    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() }));
+    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
 
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
@@ -279,8 +281,8 @@ mod tests {
     let mut processing_agent = agent.process();
 
     processing_agent.start().await;
-    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() }));
-    sender.send(Envelope::package(NumberMessage { value: 3 }));
+    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
+    sender.send(Envelope::package(NumberMessage { value: 3 })).unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
     processing_agent.stop().await;
