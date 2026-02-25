@@ -1,7 +1,7 @@
 ---
 date: 2026-02-25
-commit: pending
-status: in_progress
+commit: e9a54eca
+status: completed
 tags:
   - active
   - phase3
@@ -22,6 +22,7 @@ components:
 - Add groups/topics routing support
 - Add request/reply helpers with timeout on top of node/broker runtime
 - Add supervision and timer primitives (initial versions)
+- Add handshake capability negotiation hooks for coordination features
 
 ## Starting Context
 
@@ -31,10 +32,7 @@ components:
 
 ## Next Slice (Immediate Follow-On)
 
-- Extend protocol and broker runtime for group/topic membership and routing
-- Add node helper APIs for registry advertisement / lookup convenience
-- Add request/reply helper with correlation IDs + timeout semantics
-- Instrument new coordination flows using existing `observe` events
+- Phase 4 ecosystem polish: façade exports, docs/tutorial alignment, CI parity check targets, crate extraction review note
 
 ## Risks / Design Notes
 
@@ -42,3 +40,12 @@ components:
 - Prefer explicit broker-mediated coordination messages over hidden side effects.
 - Reuse existing correlation metadata and observability events to make request/reply timeouts debuggable.
 
+## Completed Work
+
+- Added broker/node protocol frames for `GroupJoin`, `GroupLeave`, `GroupAck`, `LookupAgent`, and `LookupAgentResult`.
+- Added broker-side group membership tracking and `Recipient::Group` routing fanout.
+- Added node-side `join_groups`, `leave_groups`, `lookup_agent`, and correlation-based `request_envelope_with_timeout`.
+- Fixed a request/reply buffering starvation bug by scanning pending frames once and reading subsequent frames directly from transport until a matching correlation is found.
+- Added coordination capability constants and handshake helpers plus broker/node capability convenience APIs.
+- Added `runtime::supervision` and `runtime::timers` modules with unit tests.
+- Added integration tests covering group routing, lookup, request/reply success + timeout, and capability propagation.

@@ -72,19 +72,20 @@ Milestones:
 - [x] Tracing/file sink integration
 - [x] Feature-gated `replay` module (recorded-order replay)
 
-## Phase 3: Coordination Primitives
+## Phase 3: Coordination Primitives (Complete)
 
 Goal: add higher-level coordination APIs on top of networked core.
 
 Milestones:
 
-- [ ] Service/agent registry
-- [ ] Group/topic routing
-- [ ] Request/reply helpers with timeout
-- [ ] Supervision policies
-- [ ] Timers/scheduling hooks
+- [x] Service/agent registry (`AgentId` registry lookup helpers on broker/node runtime)
+- [x] Group/topic routing (join/leave + broker fanout for `Recipient::Group`)
+- [x] Request/reply helpers with timeout (correlation-based node helper)
+- [x] Supervision policies (restart/retry policy evaluator)
+- [x] Timers/scheduling hooks (one-shot + interval timer helpers)
+- [x] Coordination capability negotiation hooks (handshake capability constants + broker/node helpers)
 
-## Phase 4: Ecosystem Polish + Crate Extraction Review
+## Phase 4: Ecosystem Polish + Crate Extraction Review (In Progress)
 
 Goal: improve adoption and decide if any modules should split into crates.
 
