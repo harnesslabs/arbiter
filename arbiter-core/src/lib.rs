@@ -38,7 +38,7 @@ pub mod fixtures {
   }
 
   pub struct Logger {
-    pub name:          String,
+    pub name: String,
     pub message_count: i32,
   }
 
