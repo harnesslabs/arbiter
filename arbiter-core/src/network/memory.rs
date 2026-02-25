@@ -7,7 +7,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct InMemory {
-  pub(crate) sender:   tokio::sync::broadcast::Sender<Envelope<Self>>,
+  pub(crate) sender: tokio::sync::broadcast::Sender<Envelope<Self>>,
   pub(crate) receiver: tokio::sync::broadcast::Receiver<Envelope<Self>>,
 }
 
@@ -15,9 +15,13 @@ pub struct InMemory {
 pub struct InMemoryAddress([u8; 32]);
 
 impl InMemoryAddress {
-  pub const fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+  pub const fn from_bytes(bytes: [u8; 32]) -> Self {
+    Self(bytes)
+  }
 
-  pub const fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+  pub const fn as_bytes(&self) -> &[u8; 32] {
+    &self.0
+  }
 }
 
 impl Generateable for InMemoryAddress {
@@ -52,7 +56,11 @@ impl Network for InMemory {
     Self { sender, receiver }
   }
 
-  async fn send(&self, envelope: Envelope<Self>) { self.sender.send(envelope).unwrap(); }
+  async fn send(&self, envelope: Envelope<Self>) {
+    self.sender.send(envelope).unwrap();
+  }
 
-  async fn receive(&mut self) -> Option<Envelope<Self>> { self.receiver.recv().await.ok() }
+  async fn receive(&mut self) -> Option<Envelope<Self>> {
+    self.receiver.recv().await.ok()
+  }
 }

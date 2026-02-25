@@ -11,7 +11,7 @@ struct StopMessage;
 
 struct Ping {
   pub max_count: usize,
-  pub count:     usize,
+  pub count: usize,
 }
 
 impl LifeCycle for Ping {
@@ -23,7 +23,9 @@ impl LifeCycle for Ping {
     PingMessage
   }
 
-  fn on_stop(&mut self) -> Self::StopMessage { StopMessage }
+  fn on_stop(&mut self) -> Self::StopMessage {
+    StopMessage
+  }
 }
 
 impl Handler<PongMessage> for Ping {

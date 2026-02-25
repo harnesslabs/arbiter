@@ -1,12 +1,14 @@
 pub mod agent;
 pub mod handler;
 pub mod network;
+pub mod protocol;
 
 pub mod prelude {
   pub use crate::{
     agent::LifeCycle,
     handler::{HandleResult, Handler, Message},
     network::Network,
+    protocol::{AgentId, EnvelopeMeta, MessageKind, Recipient, SchemaVersion},
   };
 }
 
@@ -38,7 +40,7 @@ pub mod fixtures {
   }
 
   pub struct Logger {
-    pub name:          String,
+    pub name: String,
     pub message_count: i32,
   }
 

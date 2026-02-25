@@ -2,9 +2,11 @@ use std::hash::Hash;
 
 use crate::handler::{Envelope, Message, Package};
 
-#[cfg(feature = "in-memory")] pub mod memory;
+#[cfg(feature = "in-memory")]
+pub mod memory;
 
-#[cfg(feature = "tcp")] pub mod tcp;
+#[cfg(feature = "tcp")]
+pub mod tcp;
 
 pub trait Generateable {
   fn generate() -> Self;

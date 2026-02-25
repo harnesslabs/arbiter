@@ -4,79 +4,101 @@ use tokio::task::JoinHandle;
 
 use crate::{
   handler::{
-    Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package, Unpacackage,
+    Envelope, HandleResult, Handler, HandlerError, Message, MessageHandlerFn, Package, Unpacackage,
     create_handler,
   },
   network::{Connection, Generateable, Network, memory::InMemory},
+  protocol::AgentId,
 };
 
 pub struct Agent<L: LifeCycle, N: Network> {
-  pub name:   Option<String>,
-  state:      State,
-  inner:      L,
+  pub name: Option<String>,
+  state: State,
+  inner: L,
   connection: Connection<N>,
-  handlers:   HashMap<TypeId, MessageHandlerFn<N>>,
+  handlers: HashMap<TypeId, MessageHandlerFn<N>>,
 }
 
 impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
   pub fn new(agent_inner: L) -> Self {
     let address = N::Address::generate();
     Self {
-      name:       None,
-      state:      State::Stopped,
-      inner:      agent_inner,
+      name: None,
+      state: State::Stopped,
+      inner: agent_inner,
       connection: Connection::<N>::new(address),
-      handlers:   HashMap::new(),
+      handlers: HashMap::new(),
     }
   }
 
   pub fn new_join_network(agent_inner: L, network: &N) -> Self {
     Self {
-      name:       None,
-      state:      State::Stopped,
-      inner:      agent_inner,
+      name: None,
+      state: State::Stopped,
+      inner: agent_inner,
       connection: Connection { address: N::Address::generate(), network: network.join() },
-      handlers:   HashMap::new(),
+      handlers: HashMap::new(),
     }
   }
 
-  pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
+  pub fn set_name(&mut self, name: impl Into<String>) {
+    self.name = Some(name.into());
+  }
 
-  pub fn clear_name(&mut self) { self.name = None; }
+  pub fn clear_name(&mut self) {
+    self.name = None;
+  }
 
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
     L: Handler<M>,
-    N::Payload: Unpacackage<M> + Package<L::Reply>, {
+    N::Payload: Unpacackage<M> + Package<L::Reply>,
+  {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
   }
 
-  pub const fn address(&self) -> N::Address { self.connection.address }
+  pub const fn address(&self) -> N::Address {
+    self.connection.address
+  }
 
-  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+  pub fn name(&self) -> Option<&str> {
+    self.name.as_deref()
+  }
 
-  pub const fn network(&self) -> &N { &self.connection.network }
+  pub const fn network(&self) -> &N {
+    &self.connection.network
+  }
 
-  pub const fn inner(&self) -> &L { &self.inner }
+  pub const fn inner(&self) -> &L {
+    &self.inner
+  }
 
-  pub const fn inner_mut(&mut self) -> &mut L { &mut self.inner }
+  pub const fn inner_mut(&mut self) -> &mut L {
+    &mut self.inner
+  }
 
-  pub const fn state(&self) -> State { self.state }
+  pub const fn state(&self) -> State {
+    self.state
+  }
 }
 
 pub struct ProcessingAgent<L: LifeCycle, T: Network + Debug> {
-  pub name:                    Option<String>,
-  pub address:                 T::Address,
-  pub(crate) task:             JoinHandle<Agent<L, T>>,
+  pub name: Option<String>,
+  pub address: T::Address,
+  pub(crate) task: JoinHandle<Agent<L, T>>,
   pub(crate) outer_controller: OuterController,
 }
 
 impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
-  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+  pub fn name(&self) -> Option<&str> {
+    self.name.as_deref()
+  }
 
-  pub const fn address(&self) -> T::Address { self.address }
+  pub const fn address(&self) -> T::Address {
+    self.address
+  }
 
   pub async fn state(&mut self) -> State {
     self.outer_controller.instruction_sender.send(ControlSignal::GetState).await.unwrap();
@@ -95,7 +117,9 @@ impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
     assert_eq!(state, State::Stopped);
   }
 
-  pub async fn join(self) -> Agent<L, T> { self.task.await.unwrap() }
+  pub async fn join(self) -> Agent<L, T> {
+    self.task.await.unwrap()
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -115,12 +139,12 @@ pub enum ControlSignal {
 // controller that can be used with any channel implementation.
 pub struct InnerController {
   pub(crate) instruction_receiver: tokio::sync::mpsc::Receiver<ControlSignal>,
-  pub(crate) state_sender:         tokio::sync::mpsc::Sender<State>,
+  pub(crate) state_sender: tokio::sync::mpsc::Sender<State>,
 }
 
 pub struct OuterController {
   pub(crate) instruction_sender: tokio::sync::mpsc::Sender<ControlSignal>,
-  pub(crate) state_receiver:     tokio::sync::mpsc::Receiver<State>,
+  pub(crate) state_receiver: tokio::sync::mpsc::Receiver<State>,
 }
 
 pub struct Controller {
@@ -152,6 +176,7 @@ impl<L: LifeCycle> Agent<L, InMemory> {
   pub fn process(mut self) -> ProcessingAgent<L, InMemory> {
     let name = self.name.clone();
     let address = self.address();
+    let local_agent_id = AgentId::from(address.to_string());
     let controller = Controller::new();
     let mut inner_controller = controller.inner;
     let outer_controller = controller.outer;
@@ -171,13 +196,21 @@ impl<L: LifeCycle> Agent<L, InMemory> {
                 inner_controller.state_sender.send(State::Running).await.unwrap();
                 let start_message = self.inner.on_start();
                 println!("sending start_message for agent {}", self.name.as_deref().unwrap_or("unknown"));
-                self.connection.network.send(Envelope::package(start_message)).await;
+                self
+                  .connection
+                  .network
+                  .send(Envelope::package(start_message).with_sender(local_agent_id.clone()))
+                  .await;
               },
               Some(ControlSignal::Stop) => {
                 self.state = State::Stopped;
                 inner_controller.state_sender.send(State::Stopped).await.unwrap();
                 let stop_message = self.inner.on_stop();
-                self.connection.network.send(Envelope::package(stop_message)).await;
+                self
+                  .connection
+                  .network
+                  .send(Envelope::package(stop_message).with_sender(local_agent_id.clone()))
+                  .await;
                 break;
               },
               Some(ControlSignal::GetState) => {
@@ -193,17 +226,26 @@ impl<L: LifeCycle> Agent<L, InMemory> {
           // ────────────────────────────────────────────────────────────────
           message = self.connection.network.receive() => {
             if let Some(message) = message {
+              if !message.meta.recipient.matches_agent(&local_agent_id) {
+                continue;
+              }
+
               println!("received message {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
-              if let Some(handler) = self.handlers.get(&message.type_id) {
-                let reply = handler(&mut self.inner, message.payload);
+              let message_type_id = message.type_id;
+              if let Some(handler) = self.handlers.get(&message_type_id) {
+                let reply = handler(&mut self.inner, message);
                 println!("reply for agent {}", self.name.as_deref().unwrap_or("unknown"));
                 match reply {
-                  HandleResult::Message(message) => {
+                  Ok(HandleResult::Message(message)) => {
+                    let message = message.with_sender(local_agent_id.clone());
                     println!("sending reply {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
                     self.connection.network.send(message).await;
                   },
-                  HandleResult::None => {},
-                  HandleResult::Stop => break,
+                  Ok(HandleResult::None) => {},
+                  Ok(HandleResult::Stop) => break,
+                  Err(error) => {
+                    log_handler_error(self.name.as_deref().unwrap_or("unknown"), &error);
+                  },
                 }
               }
             }
@@ -218,6 +260,10 @@ impl<L: LifeCycle> Agent<L, InMemory> {
   }
 }
 
+fn log_handler_error(agent_name: &str, error: &HandlerError) {
+  eprintln!("handler error for agent {agent_name}: {error}");
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -226,10 +272,8 @@ mod tests {
 
   #[tokio::test]
   async fn test_agent_lifecycle() {
-    let agent = Agent::<Logger, InMemory>::new(Logger {
-      name:          "TestLogger".to_string(),
-      message_count: 0,
-    });
+    let agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 });
     assert_eq!(agent.state, State::Stopped);
 
     let mut processing_agent = agent.process();
@@ -243,11 +287,9 @@ mod tests {
 
   #[tokio::test]
   async fn test_single_agent_handler() {
-    let agent = Agent::<Logger, InMemory>::new(Logger {
-      name:          "TestLogger".to_string(),
-      message_count: 0,
-    })
-    .with_handler::<TextMessage>();
+    let agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 })
+        .with_handler::<TextMessage>();
 
     // Grab a sender from the agent
     let sender = agent.connection.network.sender.clone();
@@ -269,10 +311,8 @@ mod tests {
 
   #[tokio::test]
   async fn test_multiple_agent_handlers() {
-    let mut agent = Agent::<Logger, InMemory>::new(Logger {
-      name:          "TestLogger".to_string(),
-      message_count: 0,
-    });
+    let mut agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 });
     agent = agent.with_handler::<TextMessage>().with_handler::<NumberMessage>();
     let sender = agent.connection.network.sender.clone();
 
@@ -289,5 +329,48 @@ mod tests {
     let agent = processing_agent.join().await;
     assert_eq!(agent.state, State::Stopped);
     assert_eq!(agent.inner.message_count, 2);
+  }
+
+  #[tokio::test]
+  async fn test_addressed_delivery_only_hits_target_agent() {
+    let network = InMemory::new();
+    let sender = network.sender.clone();
+
+    let agent_a = Agent::<Logger, InMemory>::new_join_network(
+      Logger { name: "a".to_string(), message_count: 0 },
+      &network,
+    )
+    .with_handler::<TextMessage>();
+
+    let target_address = agent_a.address();
+
+    let agent_b = Agent::<Logger, InMemory>::new_join_network(
+      Logger { name: "b".to_string(), message_count: 0 },
+      &network,
+    )
+    .with_handler::<TextMessage>();
+
+    let mut processing_a = agent_a.process();
+    let mut processing_b = agent_b.process();
+
+    processing_a.start().await;
+    processing_b.start().await;
+
+    sender
+      .send(
+        Envelope::package(TextMessage { content: "only-a".to_string() }).to_address(target_address),
+      )
+      .unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    processing_a.stop().await;
+    processing_b.stop().await;
+
+    let agent_a = processing_a.join().await;
+    let agent_b = processing_b.join().await;
+
+    assert_eq!(agent_a.inner.message_count, 1);
+    assert_eq!(agent_b.inner.message_count, 0);
   }
 }
