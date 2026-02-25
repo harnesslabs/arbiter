@@ -1,19 +1,11 @@
 [package]
-authors = ["Harness Labs"]
+authors     = ["Harness Labs"]
 description = "A Rust-based multi-agent framework."
-edition = "2021"
-keywords = [
-  "ethereum",
-  "evm",
-  "emulator",
-  "testing",
-  "smart-contracts",
-  "multi-agent",
-  "framework",
-]
-license = "AGPL-3.0"
-name = "arbiter"
-version = "0.5.0"
+edition     = "2024"
+keywords    = ["multi-agent", "framework"]
+license     = "AGPL-3.0"
+name        = "arbiter"
+version     = "0.5.0"
 
 [dependencies]
 arbiter-core = { workspace = true }

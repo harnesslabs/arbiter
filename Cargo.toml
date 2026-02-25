@@ -1,5 +1,5 @@
 [workspace]
-exclude  = ["benches", "docs"]
+exclude  = ["docs"]
 members  = ["arbiter", "arbiter-core", "docs"]
 resolver = "2"
 
@@ -16,4 +16,6 @@ tokio = { version = "1.49", default-features = false, features = [
   "sync",
   "rt",
   "macros",
+  # TODO: Only used in tests, should be a dev-dependency
+  "time",
 ] }
