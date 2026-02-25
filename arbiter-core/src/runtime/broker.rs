@@ -140,8 +140,8 @@ pub async fn spawn(config: BrokerConfig) -> Result<BrokerHandle, BrokerError> {
           let state = Arc::clone(&state_for_task);
           let connection_config = config_for_task.clone();
           tokio::spawn(async move {
-            let mut transport = FramedTcpStream::new(stream);
-            if let Err(error) = run_connection(&mut transport, state, connection_config).await {
+            let transport = FramedTcpStream::new(stream);
+            if let Err(error) = run_connection(transport, state, connection_config).await {
               eprintln!("broker connection task error: {error}");
             }
           });
@@ -311,7 +311,7 @@ impl BrokerState {
 }
 
 async fn run_connection(
-  transport: &mut FramedTcpStream,
+  mut transport: FramedTcpStream,
   state: Arc<Mutex<BrokerState>>,
   config: BrokerConfig,
 ) -> Result<(), BrokerError> {
@@ -348,6 +348,48 @@ async fn run_connection(
     observer.emit(ObserveEventKind::BrokerNodeConnected { node_id: node_id.clone() });
   }
 
+  #[derive(Debug)]
+  enum IoEvent {
+    Frame(WireFrame),
+    PeerClosed,
+    ReadError(TcpTransportError),
+    WriteError(TcpTransportError),
+  }
+
+  let (mut reader, mut writer) = transport.into_split();
+  let (io_event_tx, mut io_event_rx) =
+    mpsc::channel::<IoEvent>(config.outbound_queue_capacity.max(4));
+  let io_event_tx_reader = io_event_tx.clone();
+  let reader_task = tokio::spawn(async move {
+    loop {
+      match reader.recv_frame().await {
+        Ok(Some(frame)) => {
+          if io_event_tx_reader.send(IoEvent::Frame(frame)).await.is_err() {
+            break;
+          }
+        },
+        Ok(None) => {
+          let _ = io_event_tx_reader.send(IoEvent::PeerClosed).await;
+          break;
+        },
+        Err(error) => {
+          let _ = io_event_tx_reader.send(IoEvent::ReadError(error)).await;
+          break;
+        },
+      }
+    }
+  });
+  let io_event_tx_writer = io_event_tx.clone();
+  let writer_task = tokio::spawn(async move {
+    while let Some(frame) = outbound_rx.recv().await {
+      if let Err(error) = writer.send_frame(&frame).await {
+        let _ = io_event_tx_writer.send(IoEvent::WriteError(error)).await;
+        break;
+      }
+    }
+  });
+  drop(io_event_tx);
+
   let mut heartbeat_interval = tokio::time::interval(config.heartbeat_check_period);
 
   let disconnect_reason = loop {
@@ -364,17 +406,16 @@ async fn run_connection(
           break "heartbeat_timeout".to_string();
         }
       }
-      outbound = outbound_rx.recv() => {
-        match outbound {
-          Some(frame) => transport.send_frame(&frame).await?,
-          None => {
-            break "outbound_queue_closed".to_string();
-          },
-        }
-      }
-      inbound = transport.recv_frame() => {
-        let Some(frame) = inbound? else {
-          break "peer_closed".to_string();
+      io_event = io_event_rx.recv() => {
+        let Some(io_event) = io_event else {
+          break "io_task_closed".to_string();
+        };
+
+        let frame = match io_event {
+          IoEvent::Frame(frame) => frame,
+          IoEvent::PeerClosed => break "peer_closed".to_string(),
+          IoEvent::ReadError(error) => break format!("read_error:{error}"),
+          IoEvent::WriteError(error) => break format!("write_error:{error}"),
         };
 
         let mut state = state.lock().await;
@@ -386,7 +427,9 @@ async fn run_connection(
             let ack = state.register_agents(&node_id, &advertise);
             let agent_count = advertise.agents.len();
             drop(state);
-            transport.send_frame(&WireFrame::AdvertiseAck(ack)).await?;
+            if outbound_tx.send(WireFrame::AdvertiseAck(ack)).await.is_err() {
+              break "writer_closed".to_string();
+            }
             if let Some(observer) = &observer {
               observer.emit(ObserveEventKind::BrokerAgentsAdvertised {
                 node_id: node_id.clone(),
@@ -397,17 +440,23 @@ async fn run_connection(
           WireFrame::GroupJoin(join) => {
             let ack = state.join_groups(&node_id, &join);
             drop(state);
-            transport.send_frame(&WireFrame::GroupAck(ack)).await?;
+            if outbound_tx.send(WireFrame::GroupAck(ack)).await.is_err() {
+              break "writer_closed".to_string();
+            }
           }
           WireFrame::GroupLeave(leave) => {
             let ack = state.leave_groups(&node_id, &leave);
             drop(state);
-            transport.send_frame(&WireFrame::GroupAck(ack)).await?;
+            if outbound_tx.send(WireFrame::GroupAck(ack)).await.is_err() {
+              break "writer_closed".to_string();
+            }
           }
           WireFrame::LookupAgent(lookup) => {
             let result = state.lookup_agent(&lookup.agent_id);
             drop(state);
-            transport.send_frame(&WireFrame::LookupAgentResult(result)).await?;
+            if outbound_tx.send(WireFrame::LookupAgentResult(result)).await.is_err() {
+              break "writer_closed".to_string();
+            }
           }
           WireFrame::Envelope(envelope) => {
             let summary = EnvelopeSummary::from_wire_envelope(&envelope);
@@ -449,6 +498,11 @@ async fn run_connection(
   let mut state = state.lock().await;
   state.remove_peer(&node_id);
   drop(state);
+  drop(outbound_tx);
+  writer_task.abort();
+  reader_task.abort();
+  let _ = writer_task.await;
+  let _ = reader_task.await;
   if let Some(observer) = &observer {
     observer.emit(ObserveEventKind::BrokerNodeDisconnected { node_id, reason: disconnect_reason });
   }

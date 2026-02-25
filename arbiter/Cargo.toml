@@ -7,5 +7,12 @@ license     = "AGPL-3.0"
 name        = "arbiter"
 version     = "0.5.0"
 
+[features]
+default   = ["in-memory"]
+fixtures  = ["arbiter-core/fixtures"]
+in-memory = ["arbiter-core/in-memory"]
+replay    = ["arbiter-core/replay"]
+tcp       = ["arbiter-core/tcp"]
+
 [dependencies]
-arbiter-core = { workspace = true }
+arbiter-core = { path = "../arbiter-core", default-features = false }

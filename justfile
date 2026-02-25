@@ -92,6 +92,13 @@ test:
     @just header "Running doc tests"
     cargo test --workspace --doc
 
+# Validate examples and integration-oriented entrypoints
+check-examples:
+    @just header "Checking examples (native)"
+    cargo check --manifest-path examples/leader/Cargo.toml
+    @just header "Checking examples (wasm32)"
+    cargo check --manifest-path examples/leader/Cargo.toml --target wasm32-unknown-unknown
+
 # Run clippy for the workspace on your local OS
 lint:
     @just header "Running clippy"
@@ -111,7 +118,7 @@ semver:
 fmt:
     @just header "Formatting code"
     cargo +nightly fmt --all
-    taplo fmt
+    taplo fmt Cargo.toml arbiter/Cargo.toml arbiter-core/Cargo.toml docs/Cargo.toml examples/leader/Cargo.toml
 
 # Check for unused dependencies in the workspace
 udeps:
@@ -155,7 +162,7 @@ ci:
     @printf "{{bold}}Starting CI checks{{reset}}\n\n"
     @ERROR=0; \
     just run-single-check "Rust formatting" "cargo fmt --all -- --check" || ERROR=1; \
-    just run-single-check "TOML formatting" "taplo fmt --check" || ERROR=1; \
+    just run-single-check "TOML formatting" "taplo fmt --check Cargo.toml arbiter/Cargo.toml arbiter-core/Cargo.toml docs/Cargo.toml examples/leader/Cargo.toml" || ERROR=1; \
     just run-single-check "Check" "cargo check --workspace" || ERROR=1; \
     just run-single-check "Clippy" "cargo clippy --workspace --all-targets --all-features -- --deny warnings" || ERROR=1; \
     just run-single-check "Test suite" "cargo test --verbose --workspace" || ERROR=1; \
@@ -167,6 +174,26 @@ ci:
         printf "{{success}}{{bold}}All checks passed successfully!{{reset}}\n"; \
     else \
         printf "{{error}}{{bold}}Some checks failed. See output above for details.{{reset}}\n"; \
+        exit 1; \
+    fi
+
+# CI-parity checks intended for PR iteration (faster than full `just ci`)
+ci-pr:
+    @printf "{{bold}}Starting PR CI-parity checks{{reset}}\n\n"
+    @ERROR=0; \
+    just run-single-check "Rust formatting" "cargo fmt --all -- --check" || ERROR=1; \
+    just run-single-check "TOML formatting" "taplo fmt --check Cargo.toml arbiter/Cargo.toml arbiter-core/Cargo.toml docs/Cargo.toml examples/leader/Cargo.toml" || ERROR=1; \
+    just run-single-check "Workspace check" "cargo check --workspace --all-targets --all-features" || ERROR=1; \
+    just run-single-check "Clippy" "cargo clippy --workspace --all-targets --all-features -- --deny warnings" || ERROR=1; \
+    just run-single-check "Test suite" "cargo test --workspace --all-targets --all-features -- --test-threads=1" || ERROR=1; \
+    just run-single-check "Doc tests" "cargo test --workspace --doc" || ERROR=1; \
+    just run-single-check "Leader example (native)" "cargo check --manifest-path examples/leader/Cargo.toml" || ERROR=1; \
+    just run-single-check "Leader example (wasm32)" "cargo check --manifest-path examples/leader/Cargo.toml --target wasm32-unknown-unknown" || ERROR=1; \
+    printf "\n{{bold}}CI Summary:{{reset}}\n"; \
+    if [ $ERROR -eq 0 ]; then \
+        printf "{{success}}{{bold}}All PR CI-parity checks passed successfully!{{reset}}\n"; \
+    else \
+        printf "{{error}}{{bold}}Some PR CI-parity checks failed. See output above for details.{{reset}}\n"; \
         exit 1; \
     fi
 
@@ -200,5 +227,3 @@ _ci-summary-failure:
     @printf "\n{{bold}}CI Summary:{{reset}}\n"
     @printf "{{error}}{{bold}}Some checks failed. See output above for details.{{reset}}\n"
     @exit 1
-
-

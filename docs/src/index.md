@@ -2,14 +2,22 @@
 
 `arbiter` is a Rust-based multi-agent framework for event-driven simulations and coordinated agent systems.
 
-The project is currently under active refactor and expansion:
+Current project shape (core-first roadmap execution):
 
-- `arbiter-core` contains the core agent, handler, and network abstractions
-- `arbiter` re-exports the public surface while internals evolve
-- current roadmap tracking lives in `notes/roadmap.md` (repo-local engineering memory)
+- `arbiter-core` contains the core runtime, protocol, transport, observability, replay, and coordination primitives
+- `arbiter` is the façade crate with feature passthroughs and re-exports for stable imports
+- roadmap execution and engineering memory live in `notes/roadmap.md` and `notes/`
 
-Near-term priorities:
+Implemented milestones:
 
-- core contract cleanup for distributed-capable messaging
-- LAN-capable brokered runtime support
-- observability and replay tooling
+- distributed-capable core message metadata and routing semantics
+- brokered LAN runtime (TCP framing, handshake, routing, liveness, backpressure)
+- observability + replay support
+- coordination primitives (group routing, registry lookup, request/reply, supervision policies, timers)
+
+Start here:
+
+- `Local Simulation Guide` for in-memory agent simulation
+- `LAN Runtime Guide` for broker/node networking on a trusted LAN
+- `Replay Guide` for structured event capture and recorded-order replay
+- `Compatibility & Features` for protocol versioning, feature flags, and crate-split policy

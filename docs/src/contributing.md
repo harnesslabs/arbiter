@@ -45,9 +45,11 @@ By participating in this project, you agree to abide by our Code of Conduct. Ple
 
 3. Run tests and checks:
    ```bash
-   cargo test
-   cargo fmt --all -- --check
-   cargo clippy --all-targets --all-features -- -D warnings
+   just lint
+   just test
+   just check-examples
+   # Optional PR-parity pass:
+   just ci-pr
    ```
 
 4. Commit your changes following the [Commit Message Format](#commit-message-format)
@@ -70,13 +72,13 @@ The comprehensive book documentation can be viewed using:
 ```bash
 just book
 ```
-This will serve the book documentation locally and open it in your browser. The book includes detailed explanations of mathematical concepts, examples, and usage guides.
+This will serve the book documentation locally and open it in your browser. The book includes runtime/protocol guides, examples, and usage workflows.
 
 When contributing, please:
 1. Keep API documentation up to date with your code changes
 2. Update the book documentation if you add new features or change existing behavior
 3. Add examples to both API docs and the book where appropriate
-4. Ensure mathematical definitions and references are accurate
+4. Ensure guides/examples reflect the current runtime/protocol APIs
 
 ## Issue Guidelines
 

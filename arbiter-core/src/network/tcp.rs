@@ -2,8 +2,11 @@ use std::net::SocketAddr;
 
 use thiserror::Error;
 use tokio::{
-  io::{AsyncReadExt, AsyncWriteExt},
-  net::{TcpListener, TcpStream},
+  io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+  net::{
+    TcpListener, TcpStream,
+    tcp::{OwnedReadHalf, OwnedWriteHalf},
+  },
 };
 
 use crate::protocol::{
@@ -81,6 +84,18 @@ pub struct FramedTcpStream {
   max_frame_len: usize,
 }
 
+/// Read half for framed TCP transport.
+pub struct FramedTcpReadHalf {
+  stream: OwnedReadHalf,
+  max_frame_len: usize,
+}
+
+/// Write half for framed TCP transport.
+pub struct FramedTcpWriteHalf {
+  stream: OwnedWriteHalf,
+  max_frame_len: usize,
+}
+
 impl std::fmt::Debug for FramedTcpStream {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("FramedTcpStream")
@@ -109,14 +124,22 @@ impl FramedTcpStream {
     self.max_frame_len
   }
 
+  pub fn into_split(self) -> (FramedTcpReadHalf, FramedTcpWriteHalf) {
+    let (read_half, write_half) = self.stream.into_split();
+    (
+      FramedTcpReadHalf { stream: read_half, max_frame_len: self.max_frame_len },
+      FramedTcpWriteHalf { stream: write_half, max_frame_len: self.max_frame_len },
+    )
+  }
+
   pub async fn send_frame(&mut self, frame: &WireFrame) -> Result<(), TcpTransportError> {
     let encoded =
       serde_json::to_vec(frame).map_err(|source| TcpTransportError::EncodeFrameJson { source })?;
-    self.send_bytes(&encoded).await
+    send_bytes(&mut self.stream, self.max_frame_len, &encoded).await
   }
 
   pub async fn recv_frame(&mut self) -> Result<Option<WireFrame>, TcpTransportError> {
-    let Some(bytes) = self.recv_bytes().await? else {
+    let Some(bytes) = recv_bytes(&mut self.stream, self.max_frame_len).await? else {
       return Ok(None);
     };
 
@@ -211,33 +234,60 @@ impl FramedTcpStream {
 
     Ok(hello)
   }
+}
 
-  async fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), TcpTransportError> {
-    if bytes.len() > self.max_frame_len || bytes.len() > u32::MAX as usize {
-      return Err(TcpTransportError::FrameTooLarge { len: bytes.len(), max: self.max_frame_len });
-    }
-
-    self.stream.write_u32(bytes.len() as u32).await?;
-    self.stream.write_all(bytes).await?;
-    self.stream.flush().await?;
-    Ok(())
-  }
-
-  async fn recv_bytes(&mut self) -> Result<Option<Vec<u8>>, TcpTransportError> {
-    let frame_len = match self.stream.read_u32().await {
-      Ok(len) => len as usize,
-      Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-      Err(source) => return Err(TcpTransportError::Io { source }),
+impl FramedTcpReadHalf {
+  pub async fn recv_frame(&mut self) -> Result<Option<WireFrame>, TcpTransportError> {
+    let Some(bytes) = recv_bytes(&mut self.stream, self.max_frame_len).await? else {
+      return Ok(None);
     };
 
-    if frame_len > self.max_frame_len {
-      return Err(TcpTransportError::FrameTooLarge { len: frame_len, max: self.max_frame_len });
-    }
-
-    let mut bytes = vec![0; frame_len];
-    self.stream.read_exact(&mut bytes).await?;
-    Ok(Some(bytes))
+    serde_json::from_slice(&bytes)
+      .map(Some)
+      .map_err(|source| TcpTransportError::DecodeFrameJson { source })
   }
+}
+
+impl FramedTcpWriteHalf {
+  pub async fn send_frame(&mut self, frame: &WireFrame) -> Result<(), TcpTransportError> {
+    let encoded =
+      serde_json::to_vec(frame).map_err(|source| TcpTransportError::EncodeFrameJson { source })?;
+    send_bytes(&mut self.stream, self.max_frame_len, &encoded).await
+  }
+}
+
+async fn send_bytes<W: AsyncWrite + Unpin>(
+  stream: &mut W,
+  max_frame_len: usize,
+  bytes: &[u8],
+) -> Result<(), TcpTransportError> {
+  if bytes.len() > max_frame_len || bytes.len() > u32::MAX as usize {
+    return Err(TcpTransportError::FrameTooLarge { len: bytes.len(), max: max_frame_len });
+  }
+
+  stream.write_u32(bytes.len() as u32).await?;
+  stream.write_all(bytes).await?;
+  stream.flush().await?;
+  Ok(())
+}
+
+async fn recv_bytes<R: AsyncRead + Unpin>(
+  stream: &mut R,
+  max_frame_len: usize,
+) -> Result<Option<Vec<u8>>, TcpTransportError> {
+  let frame_len = match stream.read_u32().await {
+    Ok(len) => len as usize,
+    Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+    Err(source) => return Err(TcpTransportError::Io { source }),
+  };
+
+  if frame_len > max_frame_len {
+    return Err(TcpTransportError::FrameTooLarge { len: frame_len, max: max_frame_len });
+  }
+
+  let mut bytes = vec![0; frame_len];
+  stream.read_exact(&mut bytes).await?;
+  Ok(Some(bytes))
 }
 
 pub async fn bind(addr: SocketAddr) -> Result<TcpListener, TcpTransportError> {
