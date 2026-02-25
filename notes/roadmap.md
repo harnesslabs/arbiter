@@ -53,9 +53,9 @@ Goal: run agents across multiple processes on a LAN through a brokered topology.
 
 Milestones:
 
-- [ ] Functional TCP transport in `arbiter-core`
-- [ ] Framing (length-delimited)
-- [ ] Versioned handshake (protocol, node id, capabilities, codec)
+- [x] Functional TCP transport in `arbiter-core`
+- [x] Framing (length-delimited)
+- [x] Versioned handshake (protocol, node id, capabilities, codec)
 - [ ] Broker runtime + node runtime modules
 - [ ] Addressed + broadcast routing across processes
 - [ ] Heartbeats/liveness and disconnect handling

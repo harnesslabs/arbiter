@@ -1,7 +1,7 @@
 ---
 date: 2026-02-25
 commit: ae1f9925
-status: in_progress
+status: completed
 tags:
   - active
   - phase0
@@ -45,8 +45,7 @@ components:
 ## Next Slice (Immediate Follow-On)
 
 - Phase 0 is complete in roadmap tracking
-- Start Phase 1: LAN MVP with a functional TCP transport + framing baseline in `arbiter-core`
-- Continue runtime modularization toward broker/node runtimes (shared dispatch/control utilities)
+- Handoff to Phase 1 active tracker for LAN MVP implementation
 
 ## Risks / Design Notes
 

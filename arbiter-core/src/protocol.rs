@@ -4,7 +4,7 @@ use std::{
   time::{SystemTime, UNIX_EPOCH},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 static NEXT_MESSAGE_ID: AtomicU64 = AtomicU64::new(1);
 static NEXT_CORRELATION_ID: AtomicU64 = AtomicU64::new(1);
@@ -236,5 +236,191 @@ impl EnvelopeMeta {
   pub fn with_correlation_id(mut self, correlation_id: CorrelationId) -> Self {
     self.correlation_id = Some(correlation_id);
     self
+  }
+}
+
+/// Transport-level protocol version used during LAN handshakes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ProtocolVersion {
+  pub major: u16,
+  pub minor: u16,
+}
+
+impl ProtocolVersion {
+  pub const fn new(major: u16, minor: u16) -> Self {
+    Self { major, minor }
+  }
+
+  pub const fn current() -> Self {
+    Self::new(0, 1)
+  }
+
+  pub const fn matches(self, other: Self) -> bool {
+    self.major == other.major && self.minor == other.minor
+  }
+}
+
+impl Default for ProtocolVersion {
+  fn default() -> Self {
+    Self::current()
+  }
+}
+
+impl Display for ProtocolVersion {
+  fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}.{}", self.major, self.minor)
+  }
+}
+
+/// Built-in payload codec identifiers supported during handshake negotiation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CodecKind {
+  Json,
+}
+
+impl Display for CodecKind {
+  fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    match self {
+      Self::Json => f.write_str("json"),
+    }
+  }
+}
+
+/// Generic codec interface for future LAN transports. JSON is the first implementation.
+pub trait Codec {
+  fn kind(&self) -> CodecKind;
+
+  fn encode<T: Serialize>(&self, value: &T) -> Result<Vec<u8>, serde_json::Error>;
+
+  fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, serde_json::Error>;
+}
+
+/// Default JSON codec implementation used in early LAN milestones.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct JsonCodec;
+
+impl Codec for JsonCodec {
+  fn kind(&self) -> CodecKind {
+    CodecKind::Json
+  }
+
+  fn encode<T: Serialize>(&self, value: &T) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(value)
+  }
+
+  fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<T, serde_json::Error> {
+    serde_json::from_slice(bytes)
+  }
+}
+
+/// Serialized message frame for TCP/LAN transport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WireEnvelope {
+  pub meta: EnvelopeMeta,
+  pub payload: Vec<u8>,
+}
+
+impl WireEnvelope {
+  pub fn new(meta: EnvelopeMeta, payload: Vec<u8>) -> Self {
+    Self { meta, payload }
+  }
+}
+
+/// Client->server handshake request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandshakeHello {
+  pub protocol_version: ProtocolVersion,
+  pub node_id: NodeId,
+  pub supported_codecs: Vec<CodecKind>,
+  pub capabilities: Vec<String>,
+  pub instance_name: Option<String>,
+}
+
+impl HandshakeHello {
+  pub fn new(node_id: impl Into<NodeId>) -> Self {
+    Self {
+      protocol_version: ProtocolVersion::current(),
+      node_id: node_id.into(),
+      supported_codecs: vec![CodecKind::Json],
+      capabilities: vec![],
+      instance_name: None,
+    }
+  }
+
+  pub fn with_protocol_version(mut self, version: ProtocolVersion) -> Self {
+    self.protocol_version = version;
+    self
+  }
+
+  pub fn with_supported_codecs(mut self, codecs: impl Into<Vec<CodecKind>>) -> Self {
+    self.supported_codecs = codecs.into();
+    self
+  }
+
+  pub fn with_capabilities(mut self, capabilities: impl Into<Vec<String>>) -> Self {
+    self.capabilities = capabilities.into();
+    self
+  }
+
+  pub fn with_instance_name(mut self, instance_name: impl Into<String>) -> Self {
+    self.instance_name = Some(instance_name.into());
+    self
+  }
+}
+
+/// Server->client handshake success response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandshakeAck {
+  pub protocol_version: ProtocolVersion,
+  pub broker_node_id: NodeId,
+  pub selected_codec: CodecKind,
+  pub capabilities: Vec<String>,
+}
+
+/// Handshake rejection reason for explicit protocol negotiation failures.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HandshakeRejectReason {
+  UnsupportedProtocolVersion { expected: ProtocolVersion, received: ProtocolVersion },
+  NoSharedCodec { server_supported: Vec<CodecKind>, client_supported: Vec<CodecKind> },
+}
+
+/// Server->client handshake rejection response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandshakeReject {
+  pub broker_node_id: Option<NodeId>,
+  pub reason: HandshakeRejectReason,
+}
+
+/// Heartbeat frame used by broker/node connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Heartbeat {
+  pub sent_at_unix_ms: u64,
+}
+
+impl Heartbeat {
+  pub fn now() -> Self {
+    Self { sent_at_unix_ms: now_unix_ms() }
+  }
+}
+
+/// Top-level framed payload exchanged over TCP.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WireFrame {
+  Hello(HandshakeHello),
+  HelloAck(HandshakeAck),
+  HelloReject(HandshakeReject),
+  Envelope(WireEnvelope),
+  Heartbeat(Heartbeat),
+}
+
+impl WireFrame {
+  pub const fn kind_name(&self) -> &'static str {
+    match self {
+      Self::Hello(_) => "hello",
+      Self::HelloAck(_) => "hello_ack",
+      Self::HelloReject(_) => "hello_reject",
+      Self::Envelope(_) => "envelope",
+      Self::Heartbeat(_) => "heartbeat",
+    }
   }
 }
