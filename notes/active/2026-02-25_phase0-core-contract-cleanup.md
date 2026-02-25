@@ -39,12 +39,14 @@ components:
 - Updated `examples/leader` `LifeCycle` impls to current trait shape (`StartMessage`/`StopMessage`)
 - Removed nonexistent `arbiter-core` `wasm` feature from `examples/leader/Cargo.toml`
 - `cargo check --manifest-path examples/leader/Cargo.toml` now passes on host target
+- Added local compatibility `Runtime` shim in `examples/leader` so wasm-target build compiles against current `arbiter-core`
+- `cargo check --manifest-path examples/leader/Cargo.toml --target wasm32-unknown-unknown` now passes
 
 ## Next Slice (Immediate Follow-On)
 
-- Start docs/example API alignment pass (remove stale `runtime::Runtime` references)
+- Phase 0 is complete in roadmap tracking
+- Start Phase 1: LAN MVP with a functional TCP transport + framing baseline in `arbiter-core`
 - Continue runtime modularization toward broker/node runtimes (shared dispatch/control utilities)
-- Audit remaining `examples/leader` API drift for wasm-target build compatibility
 
 ## Risks / Design Notes
 
@@ -62,3 +64,4 @@ components:
 - Latest validation after runtime-module extraction slice: `just lint` + `just test` passed
 - Latest validation after docs/example alignment slice: `just lint` + `just test` passed
 - Extra validation: `cargo check --manifest-path examples/leader/Cargo.toml` passed
+- Extra validation: `cargo check --manifest-path examples/leader/Cargo.toml --target wasm32-unknown-unknown` passed

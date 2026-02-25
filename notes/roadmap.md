@@ -26,7 +26,7 @@ tags:
 
 ## Roadmap Phases
 
-## Phase 0: Core Contract Cleanup (In Progress)
+## Phase 0: Core Contract Cleanup (Complete)
 
 Goal: make core delivery and dispatch semantics distributed-capable without adding crate sprawl.
 
@@ -37,7 +37,7 @@ Milestones:
 - [x] Replace panic-prone handler decode path with structured errors
 - [x] Add remote-capable message registration keyed by stable `MessageKind` + `SchemaVersion`
 - [x] Refactor runtime logic out of `Agent::<_, InMemory>::process` specialization into shared runtime module(s)
-- [ ] Align docs/examples with current public API (remove stale paths like `runtime::Runtime`)
+- [x] Align docs/examples with current public API (remove stale paths like `runtime::Runtime`)
 
 Acceptance targets:
 
@@ -45,7 +45,7 @@ Acceptance targets:
 - [x] In-memory addressed delivery works
 - [x] Decode mismatch returns structured error (no panic)
 - [x] Stable identifier dispatch path exists at wire boundary (not just metadata on envelope)
-- [ ] Docs/examples compile against current APIs
+- [x] Docs/examples compile against current APIs
 
 ## Phase 1: LAN MVP (Brokered Mesh, Library-First)
 

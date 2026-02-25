@@ -57,8 +57,51 @@ impl Position {
 }
 
 /// Message to tick all agents (contains leader positions for followers)
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Tick;
+
+/// Minimal local runtime adapter for the legacy WASM example API.
+///
+/// This preserves the exported JS surface while `arbiter-core` runtime APIs are being refactored.
+/// The LAN/runtime roadmap work will replace this with a real runtime integration.
+#[wasm_bindgen]
+pub struct Runtime {
+  agent_names: Vec<String>,
+  pending_tick: bool,
+}
+
+impl Runtime {
+  pub fn new() -> Self {
+    Self { agent_names: Vec::new(), pending_tick: false }
+  }
+
+  pub fn broadcast_message(&mut self, _tick: Tick) {
+    self.pending_tick = true;
+  }
+
+  pub fn step(&mut self) {
+    // Legacy compatibility shim: current example agents write to shared state directly,
+    // but this adapter does not yet drive `arbiter-core` processing loops on wasm.
+    self.pending_tick = false;
+  }
+
+  pub fn spawn_named_agent<L, N>(
+    &mut self,
+    name: &str,
+    _agent: Agent<L, N>,
+  ) -> Result<(), String>
+  where
+    L: LifeCycle,
+    N: arbiter_core::network::Network + std::fmt::Debug,
+  {
+    if self.agent_names.iter().any(|existing| existing == name) {
+      return Err(format!("agent '{name}' already exists"));
+    }
+
+    self.agent_names.push(name.to_string());
+    Ok(())
+  }
+}
 
 // Global shared state accessible from both Rust and JavaScript
 static SHARED_AGENT_STATE: OnceLock<Arc<Mutex<HashMap<String, (String, Position)>>>> =
@@ -151,6 +194,7 @@ impl LifeCycle for Leader {
 impl Handler<Tick> for Leader {
   type Reply = ();
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &Tick) -> Self::Reply {
     self.move_agent();
 
@@ -229,6 +273,7 @@ impl LifeCycle for Follower {
 impl Handler<Tick> for Follower {
   type Reply = ();
 
+  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &Tick) -> Self::Reply {
     // Read leader positions directly from shared state instead of relying on messages
     if let Ok(shared_agents) = get_shared_agent_state().lock() {
@@ -362,7 +407,8 @@ pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bo
   let success = if is_leader {
     unsafe {
       let leader = Leader::new(agent_id.clone(), CANVAS_WIDTH, CANVAS_HEIGHT, x, y);
-      let leader_agent = Agent::new(leader).with_handler::<Tick>();
+      let leader_agent = Agent::<Leader, arbiter_core::network::memory::InMemory>::new(leader)
+        .with_handler::<Tick>();
 
       match runtime.spawn_named_agent(&agent_id, leader_agent) {
         Ok(_) => {
@@ -377,7 +423,8 @@ pub fn add_simulation_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bo
     }
   } else {
     let follower = Follower::new(agent_id.clone(), x, y);
-    let follower_agent = Agent::new(follower).with_handler::<Tick>();
+    let follower_agent = Agent::<Follower, arbiter_core::network::memory::InMemory>::new(follower)
+      .with_handler::<Tick>();
 
     match runtime.spawn_named_agent(&agent_id, follower_agent) {
       Ok(_) => {
