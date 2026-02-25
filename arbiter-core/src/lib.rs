@@ -2,6 +2,7 @@ pub mod agent;
 pub mod handler;
 pub mod network;
 pub mod protocol;
+pub mod runtime;
 
 pub mod prelude {
   pub use crate::{

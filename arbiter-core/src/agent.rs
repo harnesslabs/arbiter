@@ -4,20 +4,20 @@ use tokio::task::JoinHandle;
 
 use crate::{
   handler::{
-    Envelope, HandleResult, Handler, HandlerError, Message, MessageHandlerFn, Package, Unpacackage,
+    Envelope, Handler, HandlerError, Message, MessageHandlerFn, Package, Unpacackage,
     create_handler,
   },
   network::{Connection, Generateable, Network, memory::InMemory},
-  protocol::{AgentId, MessageKind, SchemaVersion},
+  protocol::{MessageKind, SchemaVersion},
 };
 
 pub struct Agent<L: LifeCycle, N: Network> {
   pub name: Option<String>,
-  state: State,
-  inner: L,
-  connection: Connection<N>,
-  handlers: HashMap<TypeId, MessageHandlerFn<N>>,
-  wire_handlers: HashMap<(MessageKind, SchemaVersion), TypeId>,
+  pub(crate) state: State,
+  pub(crate) inner: L,
+  pub(crate) connection: Connection<N>,
+  pub(crate) handlers: HashMap<TypeId, MessageHandlerFn<N>>,
+  pub(crate) wire_handlers: HashMap<(MessageKind, SchemaVersion), TypeId>,
 }
 
 impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
@@ -111,7 +111,7 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
     self.wire_handlers.insert((message_kind, schema_version), message_type_id);
   }
 
-  fn resolve_handler_type_id(&self, message: &Envelope<N>) -> Option<TypeId> {
+  pub(crate) fn resolve_handler_type_id(&self, message: &Envelope<N>) -> Option<TypeId> {
     if self.handlers.contains_key(&message.type_id) {
       return Some(message.type_id);
     }
@@ -212,94 +212,12 @@ pub trait LifeCycle: Send + Sync + 'static {
 }
 
 impl<L: LifeCycle> Agent<L, InMemory> {
-  pub fn process(mut self) -> ProcessingAgent<L, InMemory> {
-    let name = self.name.clone();
-    let address = self.address();
-    let local_agent_id = AgentId::from(address.to_string());
-    let controller = Controller::new();
-    let mut inner_controller = controller.inner;
-    let outer_controller = controller.outer;
-
-    let task = tokio::spawn(async move {
-      loop {
-        // ────────────────────────────────────────────────────────────────
-        // Control-plane messages (START / STOP / GET_STATE)
-        // ────────────────────────────────────────────────────────────────
-        let prev_state = self.state;
-        tokio::select! {
-          biased;
-          control_signal = inner_controller.instruction_receiver.recv() => {
-            match control_signal {
-              Some(ControlSignal::Start) => {
-                self.state = State::Running;
-                inner_controller.state_sender.send(State::Running).await.unwrap();
-                let start_message = self.inner.on_start();
-                println!("sending start_message for agent {}", self.name.as_deref().unwrap_or("unknown"));
-                self
-                  .connection
-                  .network
-                  .send(Envelope::package(start_message).with_sender(local_agent_id.clone()))
-                  .await;
-              },
-              Some(ControlSignal::Stop) => {
-                self.state = State::Stopped;
-                inner_controller.state_sender.send(State::Stopped).await.unwrap();
-                let stop_message = self.inner.on_stop();
-                self
-                  .connection
-                  .network
-                  .send(Envelope::package(stop_message).with_sender(local_agent_id.clone()))
-                  .await;
-                break;
-              },
-              Some(ControlSignal::GetState) => {
-                inner_controller.state_sender.send(prev_state).await.unwrap();
-              },
-              None => {
-                break;
-              },
-            }
-          }
-          // ────────────────────────────────────────────────────────────────
-          // Application messages coming from the transport
-          // ────────────────────────────────────────────────────────────────
-          message = self.connection.network.receive() => {
-            if let Some(message) = message {
-              if !message.meta.recipient.matches_agent(&local_agent_id) {
-                continue;
-              }
-
-              println!("received message {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
-              if let Some(message_type_id) = self.resolve_handler_type_id(&message) {
-                let handler = self.handlers.get(&message_type_id).expect("handler id registry drift");
-                let reply = handler(&mut self.inner, message);
-                println!("reply for agent {}", self.name.as_deref().unwrap_or("unknown"));
-                match reply {
-                  Ok(HandleResult::Message(message)) => {
-                    let message = message.with_sender(local_agent_id.clone());
-                    println!("sending reply {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
-                    self.connection.network.send(message).await;
-                  },
-                  Ok(HandleResult::None) => {},
-                  Ok(HandleResult::Stop) => break,
-                  Err(error) => {
-                    log_handler_error(self.name.as_deref().unwrap_or("unknown"), &error);
-                  },
-                }
-              }
-            }
-          }
-        }
-      }
-
-      self
-    });
-
-    ProcessingAgent { name, address, task, outer_controller }
+  pub fn process(self) -> ProcessingAgent<L, InMemory> {
+    crate::runtime::in_memory::spawn(self)
   }
 }
 
-fn log_handler_error(agent_name: &str, error: &HandlerError) {
+pub(crate) fn log_handler_error(agent_name: &str, error: &HandlerError) {
   eprintln!("handler error for agent {agent_name}: {error}");
 }
 

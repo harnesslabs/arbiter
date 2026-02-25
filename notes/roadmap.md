@@ -36,7 +36,7 @@ Milestones:
 - [x] Add envelope routing metadata and addressed/broadcast semantics for in-memory delivery
 - [x] Replace panic-prone handler decode path with structured errors
 - [x] Add remote-capable message registration keyed by stable `MessageKind` + `SchemaVersion`
-- [ ] Refactor runtime logic out of `Agent::<_, InMemory>::process` specialization into shared runtime module(s)
+- [x] Refactor runtime logic out of `Agent::<_, InMemory>::process` specialization into shared runtime module(s)
 - [ ] Align docs/examples with current public API (remove stale paths like `runtime::Runtime`)
 
 Acceptance targets:
