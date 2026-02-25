@@ -85,16 +85,28 @@ Milestones:
 - [x] Timers/scheduling hooks (one-shot + interval timer helpers)
 - [x] Coordination capability negotiation hooks (handshake capability constants + broker/node helpers)
 
-## Phase 4: Ecosystem Polish + Crate Extraction Review (In Progress)
+## Phase 4: Ecosystem Polish + Crate Extraction Review (Complete)
 
 Goal: improve adoption and decide if any modules should split into crates.
 
 Milestones:
 
-- [ ] Refresh `arbiter` façade exports
-- [ ] End-to-end docs for local, LAN, replay
-- [ ] CI validation for examples and integration scenarios
-- [ ] Crate extraction review using explicit trigger criteria
+- [x] Refresh `arbiter` façade exports (feature passthroughs + curated module re-exports)
+- [x] End-to-end docs for local, LAN, replay
+- [x] CI validation for examples and integration scenarios (`just check-examples`, `just ci-pr`)
+- [x] Crate extraction review using explicit trigger criteria (documented no-split decision)
+
+## Phase 5: Next-Hardening Wave (Seeded)
+
+Goal: harden distributed behavior and operator workflows without breaking the core-first packaging strategy.
+
+Milestones:
+
+- [ ] Broker transport cancel-safety regression tests + fault-injection coverage (partial fix landed in Phase 4, expand coverage)
+- [ ] Node runtime request/reply router abstraction (multiple concurrent in-flight requests without manual frame polling)
+- [ ] Service-name aliases over `AgentId` registry (named service registry separate from concrete agent IDs)
+- [ ] Broker/node metrics summary APIs (counters + snapshots for operations dashboards)
+- [ ] Optional auth/TLS design doc and feature-flag scaffold (no implementation yet)
 
 ## Crate Extraction Triggers (Do Not Split Before These)
 
