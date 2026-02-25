@@ -4,10 +4,10 @@ use tokio::task::JoinHandle;
 
 use crate::{
   handler::{
-    create_handler, Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package,
-    Unpacackage,
+    Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package, Unpacackage,
+    create_handler,
   },
-  network::{memory::InMemory, Connection, Generateable, Network},
+  network::{Connection, Generateable, Network, memory::InMemory},
 };
 
 pub struct Agent<L: LifeCycle, N: Network> {

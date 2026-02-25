@@ -130,7 +130,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: nightly-2026-02-24
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
