@@ -1,5 +1,5 @@
 use std::{
-  collections::HashMap,
+  collections::{HashMap, HashSet},
   net::SocketAddr,
   sync::Arc,
   time::{Duration, Instant},
@@ -14,7 +14,10 @@ use tokio::{
 use crate::{
   network::tcp::{FramedTcpStream, ServerHandshakeConfig, TcpTransportError, bind},
   observe::{EnvelopeSummary, ObserveEventKind, Observer},
-  protocol::{AdvertiseAck, AdvertiseAgents, AgentId, NodeId, Recipient, WireEnvelope, WireFrame},
+  protocol::{
+    AdvertiseAck, AdvertiseAgents, AgentId, GroupAck, GroupJoin, GroupLeave, LookupAgentResult,
+    NodeId, Recipient, WireEnvelope, WireFrame,
+  },
 };
 
 #[derive(Debug, Error)]
@@ -49,6 +52,11 @@ impl BrokerConfig {
 
   pub fn with_handshake(mut self, handshake: ServerHandshakeConfig) -> Self {
     self.handshake = handshake;
+    self
+  }
+
+  pub fn with_coordination_capabilities(mut self) -> Self {
+    self.handshake.capabilities = crate::protocol::capabilities::coordination_defaults();
     self
   }
 
@@ -162,6 +170,7 @@ struct RouteOutcome {
 struct BrokerState {
   peers: HashMap<NodeId, PeerState>,
   agent_routes: HashMap<AgentId, NodeId>,
+  groups: HashMap<String, HashSet<NodeId>>,
   backpressure_drops: u64,
   unknown_recipient_drops: u64,
   unsupported_group_drops: u64,
@@ -195,7 +204,33 @@ impl BrokerState {
     AdvertiseAck { registered_agents: advertise.agents.len() }
   }
 
-  fn route_envelope(&mut self, source_node_id: &NodeId, envelope: WireEnvelope) -> RouteOutcome {
+  fn join_groups(&mut self, node_id: &NodeId, join: &GroupJoin) -> GroupAck {
+    for group in &join.groups {
+      self.groups.entry(group.clone()).or_default().insert(node_id.clone());
+    }
+    GroupAck { groups: join.groups.clone() }
+  }
+
+  fn leave_groups(&mut self, node_id: &NodeId, leave: &GroupLeave) -> GroupAck {
+    for group in &leave.groups {
+      if let Some(members) = self.groups.get_mut(group) {
+        members.remove(node_id);
+        if members.is_empty() {
+          self.groups.remove(group);
+        }
+      }
+    }
+    GroupAck { groups: leave.groups.clone() }
+  }
+
+  fn lookup_agent(&self, agent_id: &AgentId) -> LookupAgentResult {
+    LookupAgentResult {
+      agent_id: agent_id.clone(),
+      node_id: self.agent_routes.get(agent_id).cloned(),
+    }
+  }
+
+  fn route_envelope(&mut self, _source_node_id: &NodeId, envelope: WireEnvelope) -> RouteOutcome {
     let mut outcome = RouteOutcome::default();
     match &envelope.meta.recipient {
       Recipient::Broadcast => {
@@ -233,9 +268,29 @@ impl BrokerState {
         }
       },
       Recipient::Group(_) => {
-        let _ = source_node_id;
-        self.unsupported_group_drops += 1;
-        outcome.drop_reason = Some("unsupported_group".to_string());
+        let Recipient::Group(group_name) = &envelope.meta.recipient else { unreachable!() };
+        let Some(members) = self.groups.get(group_name).cloned() else {
+          self.unknown_recipient_drops += 1;
+          outcome.drop_reason = Some("unknown_group".to_string());
+          return outcome;
+        };
+
+        let frame = WireFrame::Envelope(envelope);
+        for target_node_id in members {
+          let Some(peer) = self.peers.get(&target_node_id) else {
+            continue;
+          };
+          if peer.outbound_tx.try_send(frame.clone()).is_err() {
+            self.backpressure_drops += 1;
+            outcome.backpressure_drops += 1;
+          } else {
+            outcome.recipients.push(target_node_id);
+          }
+        }
+
+        if outcome.recipients.is_empty() && outcome.backpressure_drops > 0 {
+          outcome.drop_reason = Some("backpressure".to_string());
+        }
       },
     }
     outcome
@@ -244,6 +299,10 @@ impl BrokerState {
   fn remove_peer(&mut self, node_id: &NodeId) {
     self.peers.remove(node_id);
     self.agent_routes.retain(|_, owner| owner != node_id);
+    self.groups.retain(|_, members| {
+      members.remove(node_id);
+      !members.is_empty()
+    });
   }
 
   fn is_peer_timed_out(&self, node_id: &NodeId, timeout: Duration) -> bool {
@@ -335,6 +394,21 @@ async fn run_connection(
               });
             }
           }
+          WireFrame::GroupJoin(join) => {
+            let ack = state.join_groups(&node_id, &join);
+            drop(state);
+            transport.send_frame(&WireFrame::GroupAck(ack)).await?;
+          }
+          WireFrame::GroupLeave(leave) => {
+            let ack = state.leave_groups(&node_id, &leave);
+            drop(state);
+            transport.send_frame(&WireFrame::GroupAck(ack)).await?;
+          }
+          WireFrame::LookupAgent(lookup) => {
+            let result = state.lookup_agent(&lookup.agent_id);
+            drop(state);
+            transport.send_frame(&WireFrame::LookupAgentResult(result)).await?;
+          }
           WireFrame::Envelope(envelope) => {
             let summary = EnvelopeSummary::from_wire_envelope(&envelope);
             let outcome = state.route_envelope(&node_id, envelope);
@@ -364,7 +438,9 @@ async fn run_connection(
           WireFrame::Hello(_)
           | WireFrame::HelloAck(_)
           | WireFrame::HelloReject(_)
-          | WireFrame::AdvertiseAck(_) => {}
+          | WireFrame::AdvertiseAck(_)
+          | WireFrame::GroupAck(_)
+          | WireFrame::LookupAgentResult(_) => {}
         }
       }
     }
@@ -395,8 +471,10 @@ mod tests {
   use super::*;
   use crate::{
     observe::{InMemoryRecorder, ObserveEventKind, Observer},
-    protocol::{AgentId, CorrelationId, EnvelopeMeta, HandshakeHello, WireEnvelope},
-    runtime::node::NodeClient,
+    protocol::{
+      AgentId, CorrelationId, EnvelopeMeta, HandshakeHello, Recipient, WireEnvelope, capabilities,
+    },
+    runtime::node::{NodeClient, NodeRequestError},
   };
 
   async fn spawn_test_broker() -> BrokerHandle {
@@ -600,6 +678,194 @@ mod tests {
 
     drop(node_a);
     drop(node_b);
+    broker.shutdown().await.expect("shutdown broker");
+  }
+
+  #[tokio::test]
+  async fn node_client_exposes_broker_coordination_capabilities_from_handshake() {
+    let broker = spawn(
+      BrokerConfig::new(SocketAddr::from(([127, 0, 0, 1], 0)), "broker-1")
+        .with_coordination_capabilities(),
+    )
+    .await
+    .expect("spawn broker");
+
+    let node = connect_node(&broker, "node-a").await;
+    assert!(node.broker_supports_capability(capabilities::GROUP_ROUTING_V1));
+    assert!(node.broker_supports_capability(capabilities::AGENT_LOOKUP_V1));
+    assert!(node.broker_supports_capability(capabilities::REQUEST_REPLY_V1));
+    assert!(!node.broker_supports_capability("coord.unknown.v1"));
+
+    drop(node);
+    broker.shutdown().await.expect("shutdown broker");
+  }
+
+  #[tokio::test]
+  async fn broker_routes_group_messages_and_honors_group_leave() {
+    let broker = spawn_test_broker().await;
+
+    let mut node_a = connect_node(&broker, "node-a").await;
+    let mut node_b = connect_node(&broker, "node-b").await;
+    let mut node_c = connect_node(&broker, "node-c").await;
+
+    node_b.join_groups(vec!["workers".to_string()]).await.expect("join group b");
+    node_c.join_groups(vec!["workers".to_string()]).await.expect("join group c");
+
+    let group_envelope =
+      WireEnvelope::new(EnvelopeMeta::new("example.group").to_group("workers"), vec![4, 2]);
+    node_a.send_envelope(group_envelope.clone()).await.expect("send group envelope");
+
+    let b_frame = timeout(Duration::from_secs(1), node_b.recv_frame())
+      .await
+      .expect("node b recv timeout")
+      .expect("node b recv result")
+      .expect("node b frame");
+    let c_frame = timeout(Duration::from_secs(1), node_c.recv_frame())
+      .await
+      .expect("node c recv timeout")
+      .expect("node c recv result")
+      .expect("node c frame");
+    for frame in [b_frame, c_frame] {
+      match frame {
+        WireFrame::Envelope(actual) => assert_eq!(actual, group_envelope),
+        other => panic!("unexpected frame: {other:?}"),
+      }
+    }
+    assert!(
+      timeout(Duration::from_millis(100), node_a.recv_frame()).await.is_err(),
+      "sender should not receive group message without membership"
+    );
+
+    node_c.leave_groups(vec!["workers".to_string()]).await.expect("leave group c");
+    let post_leave =
+      WireEnvelope::new(EnvelopeMeta::new("example.group").to_group("workers"), vec![9, 9, 9]);
+    node_a.send_envelope(post_leave.clone()).await.expect("send post-leave group envelope");
+
+    let b_frame = timeout(Duration::from_secs(1), node_b.recv_frame())
+      .await
+      .expect("node b recv timeout (post leave)")
+      .expect("node b recv result (post leave)")
+      .expect("node b frame (post leave)");
+    match b_frame {
+      WireFrame::Envelope(actual) => assert_eq!(actual, post_leave),
+      other => panic!("unexpected frame: {other:?}"),
+    }
+    assert!(
+      timeout(Duration::from_millis(150), node_c.recv_frame()).await.is_err(),
+      "node c should not receive group frames after leaving"
+    );
+
+    drop(node_a);
+    drop(node_b);
+    drop(node_c);
+    broker.shutdown().await.expect("shutdown broker");
+  }
+
+  #[tokio::test]
+  async fn broker_lookup_agent_returns_registered_owner_node() {
+    let broker = spawn_test_broker().await;
+
+    let mut node_a = connect_node(&broker, "node-a").await;
+    let mut node_b = connect_node(&broker, "node-b").await;
+    node_b.advertise_agents(vec![AgentId::from("agent-b")]).await.expect("advertise agents");
+
+    let found = node_a.lookup_agent("agent-b").await.expect("lookup registered");
+    assert_eq!(found.agent_id.as_str(), "agent-b");
+    assert_eq!(found.node_id.as_ref().map(NodeId::as_str), Some("node-b"));
+
+    let missing = node_a.lookup_agent("missing-agent").await.expect("lookup missing");
+    assert_eq!(missing.agent_id.as_str(), "missing-agent");
+    assert_eq!(missing.node_id, None);
+
+    drop(node_a);
+    drop(node_b);
+    broker.shutdown().await.expect("shutdown broker");
+  }
+
+  #[tokio::test]
+  async fn node_request_reply_helper_matches_correlation_and_buffers_unrelated_frames() {
+    let broker = spawn_test_broker().await;
+
+    let mut node_a = connect_node(&broker, "node-a").await;
+    let mut node_b = connect_node(&broker, "node-b").await;
+    node_a.advertise_agents(vec![AgentId::from("agent-a")]).await.expect("advertise agent a");
+    node_b.advertise_agents(vec![AgentId::from("agent-b")]).await.expect("advertise agent b");
+
+    let responder = tokio::spawn(async move {
+      let request = timeout(Duration::from_secs(1), node_b.recv_frame())
+        .await
+        .expect("node b recv timeout")
+        .expect("node b recv result")
+        .expect("node b frame");
+
+      let WireFrame::Envelope(request) = request else {
+        panic!("expected envelope request");
+      };
+      assert_eq!(request.meta.recipient, Recipient::Agent(AgentId::from("agent-b")));
+
+      let stray =
+        WireEnvelope::new(EnvelopeMeta::new("example.stray").to_agent("agent-a"), vec![1]);
+      node_b.send_envelope(stray).await.expect("send stray envelope");
+
+      let reply = WireEnvelope::new(
+        EnvelopeMeta::new("example.reply")
+          .to_agent("agent-a")
+          .with_correlation_id(CorrelationId::from(request.meta.message_id)),
+        vec![2, 3, 4],
+      );
+      node_b.send_envelope(reply).await.expect("send reply envelope");
+
+      node_b
+    });
+
+    let request =
+      WireEnvelope::new(EnvelopeMeta::new("example.request").to_agent("agent-b"), vec![9]);
+    let expected_correlation = CorrelationId::from(request.meta.message_id);
+    let reply = node_a
+      .request_envelope_with_timeout(request, Duration::from_millis(500))
+      .await
+      .expect("request reply success");
+    assert_eq!(reply.payload, vec![2, 3, 4]);
+    assert_eq!(reply.meta.correlation_id, Some(expected_correlation));
+    assert_eq!(reply.meta.recipient, Recipient::Agent(AgentId::from("agent-a")));
+
+    let buffered = timeout(Duration::from_secs(1), node_a.recv_frame())
+      .await
+      .expect("buffered frame timeout")
+      .expect("buffered frame recv result")
+      .expect("buffered frame");
+    match buffered {
+      WireFrame::Envelope(envelope) => {
+        assert_eq!(envelope.meta.message_kind.as_str(), "example.stray");
+        assert_eq!(envelope.payload, vec![1]);
+      },
+      other => panic!("unexpected frame: {other:?}"),
+    }
+
+    let node_b = responder.await.expect("responder task");
+    drop(node_b);
+    drop(node_a);
+    broker.shutdown().await.expect("shutdown broker");
+  }
+
+  #[tokio::test]
+  async fn node_request_reply_helper_times_out_without_matching_reply() {
+    let broker = spawn_test_broker().await;
+
+    let mut node_a = connect_node(&broker, "node-a").await;
+    let request =
+      WireEnvelope::new(EnvelopeMeta::new("example.request").to_agent("missing-agent"), vec![5]);
+    let error = node_a
+      .request_envelope_with_timeout(request, Duration::from_millis(75))
+      .await
+      .expect_err("request should time out");
+
+    match error {
+      NodeRequestError::Timeout { timeout } => assert_eq!(timeout, Duration::from_millis(75)),
+      other => panic!("unexpected request error: {other:?}"),
+    }
+
+    drop(node_a);
     broker.shutdown().await.expect("shutdown broker");
   }
 }

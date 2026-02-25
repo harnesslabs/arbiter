@@ -239,6 +239,31 @@ impl EnvelopeMeta {
   }
 }
 
+/// Built-in coordination capability identifiers advertised during LAN handshake negotiation.
+pub mod capabilities {
+  /// Broker/node support for group/topic membership and `Recipient::Group` fanout.
+  pub const GROUP_ROUTING_V1: &str = "coord.group-routing.v1";
+  /// Broker/node support for broker-backed `AgentId` registry lookup.
+  pub const AGENT_LOOKUP_V1: &str = "coord.agent-lookup.v1";
+  /// Node helper support for correlation-based request/reply workflows.
+  pub const REQUEST_REPLY_V1: &str = "coord.request-reply.v1";
+  /// Node/runtime support for restart/retry supervision policies.
+  pub const SUPERVISION_V1: &str = "coord.supervision.v1";
+  /// Node/runtime support for timer scheduling hooks.
+  pub const TIMERS_V1: &str = "coord.timers.v1";
+
+  /// Default coordination capability set used by current LAN coordination primitives.
+  pub fn coordination_defaults() -> Vec<String> {
+    vec![
+      GROUP_ROUTING_V1.to_string(),
+      AGENT_LOOKUP_V1.to_string(),
+      REQUEST_REPLY_V1.to_string(),
+      SUPERVISION_V1.to_string(),
+      TIMERS_V1.to_string(),
+    ]
+  }
+}
+
 /// Transport-level protocol version used during LAN handshakes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProtocolVersion {
@@ -362,9 +387,18 @@ impl HandshakeHello {
     self
   }
 
+  pub fn with_coordination_capabilities(mut self) -> Self {
+    self.capabilities.extend(capabilities::coordination_defaults());
+    self
+  }
+
   pub fn with_instance_name(mut self, instance_name: impl Into<String>) -> Self {
     self.instance_name = Some(instance_name.into());
     self
+  }
+
+  pub fn supports_capability(&self, capability: &str) -> bool {
+    self.capabilities.iter().any(|candidate| candidate == capability)
   }
 }
 
@@ -375,6 +409,12 @@ pub struct HandshakeAck {
   pub broker_node_id: NodeId,
   pub selected_codec: CodecKind,
   pub capabilities: Vec<String>,
+}
+
+impl HandshakeAck {
+  pub fn supports_capability(&self, capability: &str) -> bool {
+    self.capabilities.iter().any(|candidate| candidate == capability)
+  }
 }
 
 /// Handshake rejection reason for explicit protocol negotiation failures.
@@ -421,6 +461,55 @@ pub struct AdvertiseAck {
   pub registered_agents: usize,
 }
 
+/// Node->broker request to join one or more named groups/topics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupJoin {
+  pub groups: Vec<String>,
+}
+
+impl GroupJoin {
+  pub fn new(groups: impl Into<Vec<String>>) -> Self {
+    Self { groups: groups.into() }
+  }
+}
+
+/// Node->broker request to leave one or more named groups/topics.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupLeave {
+  pub groups: Vec<String>,
+}
+
+impl GroupLeave {
+  pub fn new(groups: impl Into<Vec<String>>) -> Self {
+    Self { groups: groups.into() }
+  }
+}
+
+/// Broker->node acknowledgement of group join/leave operations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupAck {
+  pub groups: Vec<String>,
+}
+
+/// Node->broker lookup request for addressed routing convenience.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LookupAgent {
+  pub agent_id: AgentId,
+}
+
+impl LookupAgent {
+  pub fn new(agent_id: impl Into<AgentId>) -> Self {
+    Self { agent_id: agent_id.into() }
+  }
+}
+
+/// Broker->node response for agent registry lookup.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LookupAgentResult {
+  pub agent_id: AgentId,
+  pub node_id: Option<NodeId>,
+}
+
 /// Top-level framed payload exchanged over TCP.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireFrame {
@@ -429,6 +518,11 @@ pub enum WireFrame {
   HelloReject(HandshakeReject),
   AdvertiseAgents(AdvertiseAgents),
   AdvertiseAck(AdvertiseAck),
+  GroupJoin(GroupJoin),
+  GroupLeave(GroupLeave),
+  GroupAck(GroupAck),
+  LookupAgent(LookupAgent),
+  LookupAgentResult(LookupAgentResult),
   Envelope(WireEnvelope),
   Heartbeat(Heartbeat),
 }
@@ -441,8 +535,35 @@ impl WireFrame {
       Self::HelloReject(_) => "hello_reject",
       Self::AdvertiseAgents(_) => "advertise_agents",
       Self::AdvertiseAck(_) => "advertise_ack",
+      Self::GroupJoin(_) => "group_join",
+      Self::GroupLeave(_) => "group_leave",
+      Self::GroupAck(_) => "group_ack",
+      Self::LookupAgent(_) => "lookup_agent",
+      Self::LookupAgentResult(_) => "lookup_agent_result",
       Self::Envelope(_) => "envelope",
       Self::Heartbeat(_) => "heartbeat",
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{HandshakeAck, HandshakeHello, NodeId, ProtocolVersion, capabilities};
+
+  #[test]
+  fn handshake_helpers_include_and_detect_coordination_capabilities() {
+    let hello = HandshakeHello::new("node-a").with_coordination_capabilities();
+    assert!(hello.supports_capability(capabilities::GROUP_ROUTING_V1));
+    assert!(hello.supports_capability(capabilities::REQUEST_REPLY_V1));
+
+    let ack = HandshakeAck {
+      protocol_version: ProtocolVersion::current(),
+      broker_node_id: NodeId::from("broker-1"),
+      selected_codec: super::CodecKind::Json,
+      capabilities: capabilities::coordination_defaults(),
+    };
+    assert!(ack.supports_capability(capabilities::AGENT_LOOKUP_V1));
+    assert!(ack.supports_capability(capabilities::TIMERS_V1));
+    assert!(!ack.supports_capability("coord.unknown.v1"));
   }
 }

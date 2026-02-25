@@ -14,6 +14,10 @@ pub mod prelude {
     network::Network,
     observe::{ObserveEvent, ObserveEventKind, Observer},
     protocol::{AgentId, EnvelopeMeta, MessageKind, Recipient, SchemaVersion},
+    runtime::{
+      supervision::{RestartPolicy, SupervisionDecision, Supervisor},
+      timers::{TimerHandle, TimerSchedule, spawn_interval, spawn_once, spawn_schedule},
+    },
   };
 }
 
