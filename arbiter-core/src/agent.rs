@@ -1,11 +1,6 @@
-use std::{
-  any::TypeId,
-  collections::HashMap,
-  fmt::Debug,
-  sync::{Arc, Mutex},
-};
+use std::{any::TypeId, collections::HashMap, fmt::Debug, sync::Arc};
 
-use tokio::task::JoinHandle;
+use tokio::{sync::Mutex, task::JoinHandle};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
@@ -28,20 +23,20 @@ pub struct Agent<L: LifeCycle, N: Network, E: Environment = ()> {
   handlers: HashMap<TypeId, MessageHandlerFn<N, E>>,
 }
 
-impl<L: LifeCycle, N: Network + Debug, E: Environment> Agent<L, N, E> {
-  pub fn new(agent_inner: L, environment: Arc<Mutex<E>>) -> Self {
-    let address = N::Address::generate();
-    Self {
-      name: None,
-      state: State::Stopped,
-      inner: agent_inner,
-      connection: Connection::<N>::new(address),
-      environment,
-      handlers: HashMap::new(),
-    }
-  }
+impl<L: LifeCycle, N: Network, E: Environment> Agent<L, N, E> {
+  // pub fn new(agent_inner: L, environment: Arc<Mutex<E>>) -> Self {
+  //   let address = N::Address::generate();
+  //   Self {
+  //     name: None,
+  //     state: State::Stopped,
+  //     inner: agent_inner,
+  //     connection: Connection::<N>::new(address),
+  //     environment,
+  //     handlers: HashMap::new(),
+  //   }
+  // }
 
-  pub fn new_join_network(agent_inner: L, network: &N, environment: Arc<Mutex<E>>) -> Self {
+  pub(crate) fn join(agent_inner: L, network: &N, environment: Arc<Mutex<E>>) -> Self {
     Self {
       name: None,
       state: State::Stopped,
@@ -135,7 +130,7 @@ impl<L: LifeCycle, N: Network + Debug, E: Environment> ProcessingAgent<L, N, E> 
 
   // TODO: Calling stream twice would break things, so this needs fixed.
   pub async fn stream(&mut self) -> UnboundedReceiverStream<L::Snapshot> {
-    let mut recv = self.outer_controller.snapshot_receiver.take().unwrap();
+    let recv = self.outer_controller.snapshot_receiver.take().unwrap();
     tokio_stream::wrappers::UnboundedReceiverStream::new(recv)
   }
 }
@@ -268,7 +263,7 @@ impl<L: LifeCycle, E: Environment> Agent<L, InMemory, E> {
                   },
                   HandleResult::Update(update) => {
                     // Update the environment with the update from the handler
-                    let mut environment = self.environment.lock().unwrap();
+                    let mut environment = self.environment.lock().await;
                     environment.update_state(update);
 
                     // Update Observers with snapshots of the current state
@@ -304,8 +299,10 @@ mod tests {
 
   #[tokio::test]
   async fn test_agent_lifecycle() {
-    let agent = Agent::<Logger, InMemory>::new(
+    let network = InMemory::new();
+    let agent = Agent::<Logger, InMemory>::join(
       Logger { name: "TestLogger".to_string(), message_count: 0 },
+      &network,
       Arc::new(Mutex::new(())),
     );
     assert_eq!(agent.state, State::Stopped);
@@ -321,8 +318,10 @@ mod tests {
 
   #[tokio::test]
   async fn test_single_agent_handler() {
-    let agent = Agent::<Logger, InMemory>::new(
+    let network = InMemory::new();
+    let agent = Agent::<Logger, InMemory>::join(
       Logger { name: "TestLogger".to_string(), message_count: 0 },
+      &network,
       Arc::new(Mutex::new(())),
     )
     .with_handler::<TextMessage>();
@@ -347,8 +346,10 @@ mod tests {
 
   #[tokio::test]
   async fn test_multiple_agent_handlers() {
-    let mut agent = Agent::<Logger, InMemory>::new(
+    let network = InMemory::new();
+    let mut agent = Agent::<Logger, InMemory>::join(
       Logger { name: "TestLogger".to_string(), message_count: 0 },
+      &network,
       Arc::new(Mutex::new(())),
     );
     agent = agent.with_handler::<TextMessage>().with_handler::<NumberMessage>();

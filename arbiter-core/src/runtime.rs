@@ -1,20 +1,26 @@
-use crate::{agent::Agent, environment::Environment, network::Network};
+use std::sync::Arc;
 
-pub struct Runtime<N: Network, E: Environment> {
+use tokio::sync::Mutex;
+
+use crate::{
+  agent::{Agent, LifeCycle},
+  environment::Environment,
+  network::Network,
+};
+
+pub struct Runtime<N: Network, E: Environment = ()> {
   pub network: N,
-  pub environment: E,
+  pub environment: Arc<Mutex<E>>,
 }
 
 impl<N: Network, E: Environment> Runtime<N, E> {
   pub fn new() -> Self {
     let network = N::new();
-    let environment = E::new();
+    let environment = Arc::new(Mutex::new(E::new()));
     Self { network, environment }
   }
 
-  //   pub fn add_agent<A: Agent<>(&mut self, agent: A) -> String {
-  //     let agent_id = self.network.add_agent(agent);
-
-  //     agent_id
-  //   }
+  pub fn spawn<L: LifeCycle>(&self, agent: L) -> Agent<L, N, E> {
+    Agent::join(agent, &self.network, self.environment.clone())
+  }
 }

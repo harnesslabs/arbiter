@@ -1,6 +1,4 @@
-use std::sync::{Arc, Mutex};
-
-use arbiter_core::{agent::Agent, network::memory::InMemory, prelude::*};
+use arbiter_core::{network::memory::InMemory, prelude::*, runtime::Runtime};
 use tokio_stream::StreamExt;
 
 #[derive(Debug)]
@@ -79,19 +77,12 @@ impl Handler<PingMessage> for Pong {
 
 #[tokio::test]
 async fn test_multi_agent() {
-  let network = InMemory::new();
+  let runtime = Runtime::<InMemory>::new();
 
-  let mut ping = Agent::<Ping, InMemory>::new_join_network(
-    Ping { max_count: 10, count: 0 },
-    &network,
-    Arc::new(Mutex::new(())),
-  )
-  .with_handler::<PongMessage>();
+  let mut ping = runtime.spawn(Ping { max_count: 10, count: 0 }).with_handler::<PongMessage>();
   ping.set_name("ping");
 
-  let mut pong =
-    Agent::<Pong, InMemory>::new_join_network(Pong, &network, Arc::new(Mutex::new(())))
-      .with_handler::<PingMessage>();
+  let mut pong = runtime.spawn(Pong).with_handler::<PingMessage>();
   pong.set_name("pong");
   pong.address();
 
