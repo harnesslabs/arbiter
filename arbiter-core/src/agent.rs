@@ -173,7 +173,7 @@ impl<L: LifeCycle> Controller<L> {
   }
 }
 
-pub trait LifeCycle: Send + Sync + Clone + 'static {
+pub trait LifeCycle: Send + Sync + 'static {
   type StartMessage: Message + Debug;
   type StopMessage: Message + Debug;
   type Snapshot: Send + Sync + Clone + Debug + 'static;
@@ -289,7 +289,7 @@ mod tests {
   async fn test_agent_lifecycle() {
     let network = InMemory::new();
     let agent = Agent::<Logger, InMemory>::join(
-      Logger { name: "TestLogger".to_string(), message_count: 0 },
+      Logger { message_count: 0 },
       &network,
       Arc::new(Mutex::new(())),
     );
@@ -308,7 +308,7 @@ mod tests {
   async fn test_single_agent_handler() {
     let network = InMemory::new();
     let agent = Agent::<Logger, InMemory>::join(
-      Logger { name: "TestLogger".to_string(), message_count: 0 },
+      Logger { message_count: 0 },
       &network,
       Arc::new(Mutex::new(())),
     )
@@ -336,7 +336,7 @@ mod tests {
   async fn test_multiple_agent_handlers() {
     let network = InMemory::new();
     let mut agent = Agent::<Logger, InMemory>::join(
-      Logger { name: "TestLogger".to_string(), message_count: 0 },
+      Logger { message_count: 0 },
       &network,
       Arc::new(Mutex::new(())),
     );

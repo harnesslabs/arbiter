@@ -14,7 +14,7 @@ pub mod prelude {
 
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures {
-  use crate::prelude::*;
+  use crate::{environment::Environment, prelude::*};
 
   #[derive(Debug, Clone)]
   pub struct NumberMessage {
@@ -47,7 +47,6 @@ pub mod fixtures {
 
   #[derive(Debug, Clone)]
   pub struct Logger {
-    pub name: String,
     pub message_count: i32,
   }
 
@@ -65,7 +64,7 @@ pub mod fixtures {
     }
   }
 
-  impl Handler<NumberMessage> for Counter {
+  impl Handler<NumberMessage, ()> for Counter {
     type Reply = ();
 
     #[allow(refining_impl_trait)]
@@ -75,29 +74,23 @@ pub mod fixtures {
     }
   }
 
-  impl Handler<TextMessage> for Logger {
+  impl Handler<TextMessage, ()> for Logger {
     type Reply = ();
 
     #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &TextMessage) {
       self.message_count += 1;
-      println!(
-        "LogAgent '{}' received: '{}' (count: {})",
-        self.name, message.content, self.message_count
-      );
+      println!("LogAgent received: '{}' (count: {})", message.content, self.message_count);
     }
   }
 
-  impl Handler<NumberMessage> for Logger {
+  impl Handler<NumberMessage, ()> for Logger {
     type Reply = ();
 
     #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &NumberMessage) {
       self.message_count += 1;
-      println!(
-        "LoggerAgent '{}' received: '{}' (count: {})",
-        self.name, message.value, self.message_count
-      );
+      println!("LoggerAgent received: '{}' (count: {})", message.value, self.message_count);
     }
   }
 }
