@@ -14,7 +14,7 @@ pub mod prelude {
 
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures {
-  use crate::{environment::Environment, prelude::*};
+  use crate::prelude::*;
 
   #[derive(Debug, Clone)]
   pub struct NumberMessage {

@@ -1,5 +1,7 @@
+use crate::handler::Message;
+
 pub trait Environment: Send + Sync + 'static {
-  type State;
+  type State: Message;
   type Update: Send + Sync + 'static;
 
   fn new() -> Self;

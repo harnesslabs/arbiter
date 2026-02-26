@@ -21,7 +21,7 @@ impl Environment for Canvas {
     self.agent_positions.clone()
   }
 
-  fn update_state(&self, update: Self::Update) {
+  fn update_state(&mut self, update: Self::Update) {
     let (agent_id, position) = update;
     self.agent_positions.insert(agent_id, position);
   }

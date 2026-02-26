@@ -49,7 +49,7 @@ impl<N: Network> Envelope<N> {
 
   pub fn unpackage<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>
   where
-    N::Payload: Unpacackage<M>,
+    N::Payload: Unpackage<M>,
   {
     self.payload.unpackage()
   }
@@ -74,17 +74,17 @@ where
   }
 }
 
-pub trait Unpacackage<M: Message> {
+pub trait Unpackage<M: Message> {
   fn unpackage(&self) -> Option<impl Deref<Target = M>>;
 }
 
-impl<M: Message> Unpacackage<M> for Arc<dyn Message> {
+impl<M: Message> Unpackage<M> for Arc<dyn Message> {
   fn unpackage(&self) -> Option<impl Deref<Target = M>> {
     (self.as_ref() as &dyn Any).downcast_ref::<M>()
   }
 }
 
-impl<M> Unpacackage<M> for Vec<u8>
+impl<M> Unpackage<M> for Vec<u8>
 where
   M: Message + for<'de> Deserialize<'de>,
 {
@@ -130,7 +130,7 @@ where
   L: Handler<M, E> + 'static,
   M: Message,
   N: Network,
-  N::Payload: Unpacackage<M> + Package<L::Reply>,
+  N::Payload: Unpackage<M> + Package<L::Reply>,
 {
   Box::new(move |agent: &mut dyn Any, message_payload: N::Payload| {
     agent.downcast_mut::<L>().map_or_else(

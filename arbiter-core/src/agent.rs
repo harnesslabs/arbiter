@@ -6,8 +6,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate::{
   environment::Environment,
   handler::{
-    Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package, Unpacackage,
-    create_handler,
+    Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package, Unpackage, create_handler,
   },
   network::{Connection, Generateable, Network, memory::InMemory},
 };
@@ -47,7 +46,7 @@ impl<L: LifeCycle, N: Network, E: Environment> Agent<L, N, E> {
   where
     M: Message,
     L: Handler<M, E>,
-    N::Payload: Unpacackage<M> + Package<L::Reply>,
+    N::Payload: Unpackage<M> + Package<L::Reply>,
   {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N, E>());
     self
@@ -67,6 +66,10 @@ impl<L: LifeCycle, N: Network, E: Environment> Agent<L, N, E> {
 
   pub const fn inner(&self) -> &L {
     &self.inner
+  }
+
+  pub fn into_inner(self) -> L {
+    self.inner
   }
 
   pub const fn inner_mut(&mut self) -> &mut L {
