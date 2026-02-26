@@ -24,18 +24,6 @@ pub struct Agent<L: LifeCycle, N: Network, E: Environment = ()> {
 }
 
 impl<L: LifeCycle, N: Network, E: Environment> Agent<L, N, E> {
-  // pub fn new(agent_inner: L, environment: Arc<Mutex<E>>) -> Self {
-  //   let address = N::Address::generate();
-  //   Self {
-  //     name: None,
-  //     state: State::Stopped,
-  //     inner: agent_inner,
-  //     connection: Connection::<N>::new(address),
-  //     environment,
-  //     handlers: HashMap::new(),
-  //   }
-  // }
-
   pub(crate) fn join(agent_inner: L, network: &N, environment: Arc<Mutex<E>>) -> Self {
     Self {
       name: None,
