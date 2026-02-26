@@ -94,40 +94,39 @@ where
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum HandleResult<M: Message, E: Environment = ()> {
+pub enum HandleResult<M: Message> {
   Message(M),
-  Update(E::Update),
   None,
   Stop,
 }
 
-impl<M: Message, E: Environment> From<M> for HandleResult<M, E> {
+impl<M: Message> From<M> for HandleResult<M> {
   fn from(message: M) -> Self {
     Self::Message(message)
   }
 }
 
-impl<M: Message, E: Environment> From<Option<M>> for HandleResult<M, E> {
+impl<M: Message> From<Option<M>> for HandleResult<M> {
   fn from(message: Option<M>) -> Self {
     message.map_or(Self::None, Self::Message)
   }
 }
 
-pub trait Handler<M, E: Environment = ()> {
+pub trait Handler<M> {
   type Reply: Message;
 
   #[allow(refining_impl_trait)]
-  fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply, E>>;
+  fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply>>;
 }
 
 #[allow(type_alias_bounds)]
-pub type MessageHandlerFn<N: Network, E: Environment> =
-  Box<dyn Fn(&mut dyn Any, N::Payload) -> HandleResult<Envelope<N>, E> + Send + Sync>;
+pub type MessageHandlerFn<N: Network> =
+  Box<dyn Fn(&mut dyn Any, N::Payload) -> HandleResult<Envelope<N>> + Send + Sync>;
 
 // TODO: This panic is bad.
-pub fn create_handler<M, L, N, E: Environment>() -> MessageHandlerFn<N, E>
+pub fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
-  L: Handler<M, E> + 'static,
+  L: Handler<M> + 'static,
   M: Message,
   N: Network,
   N::Payload: Unpackage<M> + Package<L::Reply>,
@@ -147,7 +146,6 @@ where
             let reply = typed_agent.handle(&*unpacked_message).into();
             match reply {
               HandleResult::Message(message) => HandleResult::Message(Envelope::package(message)),
-              HandleResult::Update(update) => HandleResult::Update(update),
               HandleResult::None => HandleResult::None,
               HandleResult::Stop => HandleResult::Stop,
             }

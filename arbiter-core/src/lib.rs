@@ -2,6 +2,7 @@ pub mod agent;
 pub mod environment;
 pub mod handler;
 pub mod network;
+pub mod processor;
 pub mod runtime;
 
 pub mod prelude {
@@ -64,7 +65,7 @@ pub mod fixtures {
     }
   }
 
-  impl Handler<NumberMessage, ()> for Counter {
+  impl Handler<NumberMessage> for Counter {
     type Reply = ();
 
     #[allow(refining_impl_trait)]
@@ -74,7 +75,7 @@ pub mod fixtures {
     }
   }
 
-  impl Handler<TextMessage, ()> for Logger {
+  impl Handler<TextMessage> for Logger {
     type Reply = ();
 
     #[allow(refining_impl_trait)]
@@ -84,7 +85,7 @@ pub mod fixtures {
     }
   }
 
-  impl Handler<NumberMessage, ()> for Logger {
+  impl Handler<NumberMessage> for Logger {
     type Reply = ();
 
     #[allow(refining_impl_trait)]

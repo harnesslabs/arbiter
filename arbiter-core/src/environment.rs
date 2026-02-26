@@ -1,23 +1,31 @@
-use crate::handler::Message;
+use crate::{
+  agent::LifeCycle,
+  handler::{Handler, Message},
+};
 
-pub trait Environment: Send + Sync + 'static {
-  type State: Message;
-  type Update: Send + Sync + 'static;
+pub trait Environment: LifeCycle + Handler<Self::Instruction> {
+  type Instruction: Message;
 
   fn new() -> Self;
+}
 
-  fn get_state(&self) -> Self::State;
+impl LifeCycle for () {
+  type Snapshot = ();
+  type StartMessage = ();
+  type StopMessage = ();
+  fn on_start(&mut self) -> Self::StartMessage {}
+  fn on_stop(&mut self) -> Self::StopMessage {}
+  fn snapshot(&self) -> Self::Snapshot {}
+}
 
-  fn update_state(&mut self, update: Self::Update);
+impl Handler<()> for () {
+  type Reply = ();
+
+  fn handle(&mut self, _message: &()) {}
 }
 
 impl Environment for () {
-  type State = ();
-  type Update = ();
+  type Instruction = ();
 
   fn new() -> Self {}
-
-  fn get_state(&self) -> Self::State {}
-
-  fn update_state(&mut self, _update: Self::Update) {}
 }
