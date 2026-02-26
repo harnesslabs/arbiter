@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use arbiter_core::{agent::Agent, network::memory::InMemory, prelude::*};
 use tokio_stream::StreamExt;
 
@@ -13,7 +15,7 @@ struct StopMessage;
 #[derive(Debug, Clone)]
 struct Ping {
   pub max_count: usize,
-  pub count:     usize,
+  pub count: usize,
 }
 
 impl LifeCycle for Ping {
@@ -26,9 +28,13 @@ impl LifeCycle for Ping {
     PingMessage
   }
 
-  fn on_stop(&mut self) -> Self::StopMessage { StopMessage }
+  fn on_stop(&mut self) -> Self::StopMessage {
+    StopMessage
+  }
 
-  fn snapshot(&self) -> Self::Snapshot { self.count }
+  fn snapshot(&self) -> Self::Snapshot {
+    self.count
+  }
 }
 
 impl Handler<PongMessage> for Ping {
@@ -75,13 +81,17 @@ impl Handler<PingMessage> for Pong {
 async fn test_multi_agent() {
   let network = InMemory::new();
 
-  let mut ping =
-    Agent::<Ping, InMemory>::new_join_network(Ping { max_count: 10, count: 0 }, &network)
-      .with_handler::<PongMessage>();
+  let mut ping = Agent::<Ping, InMemory>::new_join_network(
+    Ping { max_count: 10, count: 0 },
+    &network,
+    Arc::new(Mutex::new(())),
+  )
+  .with_handler::<PongMessage>();
   ping.set_name("ping");
 
   let mut pong =
-    Agent::<Pong, InMemory>::new_join_network(Pong, &network).with_handler::<PingMessage>();
+    Agent::<Pong, InMemory>::new_join_network(Pong, &network, Arc::new(Mutex::new(())))
+      .with_handler::<PingMessage>();
   pong.set_name("pong");
   pong.address();
 

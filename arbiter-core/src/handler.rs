@@ -94,7 +94,7 @@ where
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub enum HandleResult<M: Message, E: Environment> {
+pub enum HandleResult<M: Message, E: Environment = ()> {
   Message(M),
   Update(E::Update),
   None,
