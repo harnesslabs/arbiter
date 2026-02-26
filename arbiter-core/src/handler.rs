@@ -121,8 +121,8 @@ pub trait Handler<M, E: Environment = ()> {
 }
 
 #[allow(type_alias_bounds)]
-pub type MessageHandlerFn<C: Network, E: Environment> =
-  Box<dyn Fn(&mut dyn Any, C::Payload) -> HandleResult<Envelope<C>, E> + Send + Sync>;
+pub type MessageHandlerFn<N: Network, E: Environment> =
+  Box<dyn Fn(&mut dyn Any, N::Payload) -> HandleResult<Envelope<N>, E> + Send + Sync>;
 
 // TODO: This panic is bad.
 pub fn create_handler<M, L, N, E: Environment>() -> MessageHandlerFn<N, E>
