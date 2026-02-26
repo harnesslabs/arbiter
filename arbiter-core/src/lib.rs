@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod environment;
 pub mod handler;
 pub mod network;
 
@@ -38,12 +39,14 @@ pub mod fixtures {
 
     fn on_stop(&mut self) -> Self::StopMessage {}
 
-    fn snapshot(&self) -> Self::Snapshot { self.total }
+    fn snapshot(&self) -> Self::Snapshot {
+      self.total
+    }
   }
 
   #[derive(Debug, Clone)]
   pub struct Logger {
-    pub name:          String,
+    pub name: String,
     pub message_count: i32,
   }
 
@@ -56,7 +59,9 @@ pub mod fixtures {
 
     fn on_stop(&mut self) -> Self::StopMessage {}
 
-    fn snapshot(&self) -> Self::Snapshot { self.message_count }
+    fn snapshot(&self) -> Self::Snapshot {
+      self.message_count
+    }
   }
 
   impl Handler<NumberMessage> for Counter {
