@@ -2,6 +2,7 @@ pub mod agent;
 pub mod environment;
 pub mod handler;
 pub mod network;
+pub mod runtime;
 
 pub mod prelude {
   pub use crate::{
@@ -13,7 +14,7 @@ pub mod prelude {
 
 #[cfg(any(test, feature = "fixtures"))]
 pub mod fixtures {
-  use crate::prelude::*;
+  use crate::{environment::Environment, prelude::*};
 
   #[derive(Debug, Clone)]
   pub struct NumberMessage {

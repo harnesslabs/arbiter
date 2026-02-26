@@ -1,9 +1,15 @@
-use std::{any::TypeId, collections::HashMap, fmt::Debug};
+use std::{
+  any::TypeId,
+  collections::HashMap,
+  fmt::Debug,
+  sync::{Arc, Mutex},
+};
 
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
+  environment::Environment,
   handler::{
     Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package, Unpacackage,
     create_handler,
@@ -13,32 +19,35 @@ use crate::{
 
 // TODO: Observing snapshots should be an optional gate. We don't have to always snapshot.
 
-pub struct Agent<L: LifeCycle, N: Network> {
+pub struct Agent<L: LifeCycle, N: Network, E: Environment = ()> {
   pub name: Option<String>,
   state: State,
   inner: L,
   connection: Connection<N>,
-  handlers: HashMap<TypeId, MessageHandlerFn<N>>,
+  environment: Arc<Mutex<E>>,
+  handlers: HashMap<TypeId, MessageHandlerFn<N, E>>,
 }
 
-impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
-  pub fn new(agent_inner: L) -> Self {
+impl<L: LifeCycle, N: Network + Debug, E: Environment> Agent<L, N, E> {
+  pub fn new(agent_inner: L, environment: Arc<Mutex<E>>) -> Self {
     let address = N::Address::generate();
     Self {
       name: None,
       state: State::Stopped,
       inner: agent_inner,
       connection: Connection::<N>::new(address),
+      environment,
       handlers: HashMap::new(),
     }
   }
 
-  pub fn new_join_network(agent_inner: L, network: &N) -> Self {
+  pub fn new_join_network(agent_inner: L, network: &N, environment: Arc<Mutex<E>>) -> Self {
     Self {
       name: None,
       state: State::Stopped,
       inner: agent_inner,
       connection: Connection { address: N::Address::generate(), network: network.join() },
+      environment,
       handlers: HashMap::new(),
     }
   }
@@ -54,10 +63,10 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
-    L: Handler<M>,
+    L: Handler<M, E>,
     N::Payload: Unpacackage<M> + Package<L::Reply>,
   {
-    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
+    self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N, E>());
     self
   }
 
@@ -86,20 +95,20 @@ impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
   }
 }
 
-pub struct ProcessingAgent<L: LifeCycle, T: Network + Debug> {
+pub struct ProcessingAgent<L: LifeCycle, N: Network + Debug, E: Environment> {
   pub name: Option<String>,
-  pub address: T::Address,
-  pub(crate) task: JoinHandle<Agent<L, T>>,
+  pub address: N::Address,
+  pub(crate) task: JoinHandle<Agent<L, N, E>>,
   pub(crate) outer_controller: OuterController<L>,
 }
 
 // TODO: Handle errors properly in here as it's possible to send instructions with the channel down.
-impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
+impl<L: LifeCycle, N: Network + Debug, E: Environment> ProcessingAgent<L, N, E> {
   pub fn name(&self) -> Option<&str> {
     self.name.as_deref()
   }
 
-  pub const fn address(&self) -> T::Address {
+  pub const fn address(&self) -> N::Address {
     self.address
   }
 
@@ -120,7 +129,7 @@ impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
     assert_eq!(state, State::Stopped);
   }
 
-  pub async fn join(self) -> Agent<L, T> {
+  pub async fn join(self) -> Agent<L, N, E> {
     self.task.await.unwrap()
   }
 
@@ -190,8 +199,8 @@ pub trait LifeCycle: Send + Sync + Clone + 'static {
   fn snapshot(&self) -> Self::Snapshot;
 }
 
-impl<L: LifeCycle> Agent<L, InMemory> {
-  pub fn process(mut self) -> ProcessingAgent<L, InMemory> {
+impl<L: LifeCycle, E: Environment> Agent<L, InMemory, E> {
+  pub fn process(mut self) -> ProcessingAgent<L, InMemory, E> {
     let name = self.name.clone();
     let address = self.address();
     let controller = Controller::new();
@@ -257,6 +266,15 @@ impl<L: LifeCycle> Agent<L, InMemory> {
                     let snapshot = self.inner.snapshot();
                     inner_controller.snapshot_sender.send(snapshot).unwrap();
                   },
+                  HandleResult::Update(update) => {
+                    // Update the environment with the update from the handler
+                    let mut environment = self.environment.lock().unwrap();
+                    environment.update_state(update);
+
+                    // Update Observers with snapshots of the current state
+                    let snapshot = self.inner.snapshot();
+                    inner_controller.snapshot_sender.send(snapshot).unwrap();
+                  },
                   HandleResult::None => {
                     // Update Observers with snapshots of the current state
                     let snapshot = self.inner.snapshot();
@@ -286,8 +304,10 @@ mod tests {
 
   #[tokio::test]
   async fn test_agent_lifecycle() {
-    let agent =
-      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 });
+    let agent = Agent::<Logger, InMemory>::new(
+      Logger { name: "TestLogger".to_string(), message_count: 0 },
+      Arc::new(Mutex::new(())),
+    );
     assert_eq!(agent.state, State::Stopped);
 
     let mut processing_agent = agent.process();
@@ -301,9 +321,11 @@ mod tests {
 
   #[tokio::test]
   async fn test_single_agent_handler() {
-    let agent =
-      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 })
-        .with_handler::<TextMessage>();
+    let agent = Agent::<Logger, InMemory>::new(
+      Logger { name: "TestLogger".to_string(), message_count: 0 },
+      Arc::new(Mutex::new(())),
+    )
+    .with_handler::<TextMessage>();
 
     // Grab a sender from the agent
     let sender = agent.connection.network.sender.clone();
@@ -325,8 +347,10 @@ mod tests {
 
   #[tokio::test]
   async fn test_multiple_agent_handlers() {
-    let mut agent =
-      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 });
+    let mut agent = Agent::<Logger, InMemory>::new(
+      Logger { name: "TestLogger".to_string(), message_count: 0 },
+      Arc::new(Mutex::new(())),
+    );
     agent = agent.with_handler::<TextMessage>().with_handler::<NumberMessage>();
     let sender = agent.connection.network.sender.clone();
 
