@@ -1,4 +1,5 @@
 use arbiter_core::{agent::Agent, network::memory::InMemory, prelude::*};
+use tokio_stream::StreamExt;
 
 #[derive(Debug)]
 struct PingMessage;
@@ -16,6 +17,7 @@ struct Ping {
 }
 
 impl LifeCycle for Ping {
+  type Snapshot = usize;
   type StartMessage = PingMessage;
   type StopMessage = StopMessage;
 
@@ -25,6 +27,8 @@ impl LifeCycle for Ping {
   }
 
   fn on_stop(&mut self) -> Self::StopMessage { StopMessage }
+
+  fn snapshot(&self) -> Self::Snapshot { self.count }
 }
 
 impl Handler<PongMessage> for Ping {
@@ -46,12 +50,15 @@ impl Handler<PongMessage> for Ping {
 struct Pong;
 
 impl LifeCycle for Pong {
+  type Snapshot = ();
   type StartMessage = ();
   type StopMessage = ();
 
   fn on_start(&mut self) -> Self::StartMessage {}
 
   fn on_stop(&mut self) -> Self::StopMessage {}
+
+  fn snapshot(&self) -> Self::Snapshot {}
 }
 
 impl Handler<PingMessage> for Pong {
@@ -79,14 +86,21 @@ async fn test_multi_agent() {
   pong.address();
 
   let mut ping = ping.process();
+  let mut ping_stream = ping.stream().await;
   ping.start().await;
-
-  let snapshot = ping.snapshot().await;
-  println!("Snapshot of Ping: {:?}", snapshot);
 
   let mut pong = pong.process();
   pong.start().await;
 
   let agent = ping.join().await;
   assert_eq!(agent.inner().count, 10);
+
+  for i in 0..=10 {
+    let snapshot = ping_stream.next().await.unwrap();
+    println!("`ping` snapshot: {}", snapshot);
+
+    assert_eq!(snapshot, i);
+  }
+
+  assert_eq!(ping_stream.next().await, None);
 }

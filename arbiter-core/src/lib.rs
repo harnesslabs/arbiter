@@ -30,12 +30,15 @@ pub mod fixtures {
   }
 
   impl LifeCycle for Counter {
+    type Snapshot = i32;
     type StartMessage = ();
     type StopMessage = ();
 
     fn on_start(&mut self) -> Self::StartMessage {}
 
     fn on_stop(&mut self) -> Self::StopMessage {}
+
+    fn snapshot(&self) -> Self::Snapshot { self.total }
   }
 
   #[derive(Debug, Clone)]
@@ -45,12 +48,15 @@ pub mod fixtures {
   }
 
   impl LifeCycle for Logger {
+    type Snapshot = i32;
     type StartMessage = ();
     type StopMessage = ();
 
     fn on_start(&mut self) -> Self::StartMessage {}
 
     fn on_stop(&mut self) -> Self::StopMessage {}
+
+    fn snapshot(&self) -> Self::Snapshot { self.message_count }
   }
 
   impl Handler<NumberMessage> for Counter {

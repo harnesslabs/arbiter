@@ -1,6 +1,7 @@
 use std::{any::TypeId, collections::HashMap, fmt::Debug};
 
 use tokio::task::JoinHandle;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 
 use crate::{
   handler::{
@@ -10,74 +11,97 @@ use crate::{
   network::{Connection, Generateable, Network, memory::InMemory},
 };
 
+// TODO: Observing snapshots should be an optional gate. We don't have to always snapshot.
+
 pub struct Agent<L: LifeCycle, N: Network> {
-  pub name:   Option<String>,
-  state:      State,
-  inner:      L,
+  pub name: Option<String>,
+  state: State,
+  inner: L,
   connection: Connection<N>,
-  handlers:   HashMap<TypeId, MessageHandlerFn<N>>,
+  handlers: HashMap<TypeId, MessageHandlerFn<N>>,
 }
 
 impl<L: LifeCycle, N: Network + Debug> Agent<L, N> {
   pub fn new(agent_inner: L) -> Self {
     let address = N::Address::generate();
     Self {
-      name:       None,
-      state:      State::Stopped,
-      inner:      agent_inner,
+      name: None,
+      state: State::Stopped,
+      inner: agent_inner,
       connection: Connection::<N>::new(address),
-      handlers:   HashMap::new(),
+      handlers: HashMap::new(),
     }
   }
 
   pub fn new_join_network(agent_inner: L, network: &N) -> Self {
     Self {
-      name:       None,
-      state:      State::Stopped,
-      inner:      agent_inner,
+      name: None,
+      state: State::Stopped,
+      inner: agent_inner,
       connection: Connection { address: N::Address::generate(), network: network.join() },
-      handlers:   HashMap::new(),
+      handlers: HashMap::new(),
     }
   }
 
-  pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
+  pub fn set_name(&mut self, name: impl Into<String>) {
+    self.name = Some(name.into());
+  }
 
-  pub fn clear_name(&mut self) { self.name = None; }
+  pub fn clear_name(&mut self) {
+    self.name = None;
+  }
 
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
     L: Handler<M>,
-    N::Payload: Unpacackage<M> + Package<L::Reply>, {
+    N::Payload: Unpacackage<M> + Package<L::Reply>,
+  {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
   }
 
-  pub const fn address(&self) -> N::Address { self.connection.address }
+  pub const fn address(&self) -> N::Address {
+    self.connection.address
+  }
 
-  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+  pub fn name(&self) -> Option<&str> {
+    self.name.as_deref()
+  }
 
-  pub const fn network(&self) -> &N { &self.connection.network }
+  pub const fn network(&self) -> &N {
+    &self.connection.network
+  }
 
-  pub const fn inner(&self) -> &L { &self.inner }
+  pub const fn inner(&self) -> &L {
+    &self.inner
+  }
 
-  pub const fn inner_mut(&mut self) -> &mut L { &mut self.inner }
+  pub const fn inner_mut(&mut self) -> &mut L {
+    &mut self.inner
+  }
 
-  pub const fn state(&self) -> State { self.state }
+  pub const fn state(&self) -> State {
+    self.state
+  }
 }
 
 pub struct ProcessingAgent<L: LifeCycle, T: Network + Debug> {
-  pub name:                    Option<String>,
-  pub address:                 T::Address,
-  pub(crate) task:             JoinHandle<Agent<L, T>>,
+  pub name: Option<String>,
+  pub address: T::Address,
+  pub(crate) task: JoinHandle<Agent<L, T>>,
   pub(crate) outer_controller: OuterController<L>,
 }
 
 // TODO: Handle errors properly in here as it's possible to send instructions with the channel down.
 impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
-  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
+  pub fn name(&self) -> Option<&str> {
+    self.name.as_deref()
+  }
 
-  pub const fn address(&self) -> T::Address { self.address }
+  pub const fn address(&self) -> T::Address {
+    self.address
+  }
 
   pub async fn state(&mut self) -> State {
     self.outer_controller.instruction_sender.send(ControlSignal::GetState).await.unwrap();
@@ -96,11 +120,14 @@ impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
     assert_eq!(state, State::Stopped);
   }
 
-  pub async fn join(self) -> Agent<L, T> { self.task.await.unwrap() }
+  pub async fn join(self) -> Agent<L, T> {
+    self.task.await.unwrap()
+  }
 
-  pub async fn snapshot(&mut self) -> L {
-    self.outer_controller.instruction_sender.send(ControlSignal::Snapshot).await.unwrap();
-    self.outer_controller.snapshot_receiver.recv().await.unwrap()
+  // TODO: Calling stream twice would break things, so this needs fixed.
+  pub async fn stream(&mut self) -> UnboundedReceiverStream<L::Snapshot> {
+    let mut recv = self.outer_controller.snapshot_receiver.take().unwrap();
+    tokio_stream::wrappers::UnboundedReceiverStream::new(recv)
   }
 }
 
@@ -115,21 +142,20 @@ pub enum ControlSignal {
   Start,
   Stop,
   GetState,
-  Snapshot,
 }
 
 // TODO (autoparallel): These controllers are hard-coded to use flume, we should use a more generic
 // controller that can be used with any channel implementation.
 pub struct InnerController<L: LifeCycle> {
   pub(crate) instruction_receiver: tokio::sync::mpsc::Receiver<ControlSignal>,
-  pub(crate) state_sender:         tokio::sync::mpsc::Sender<State>,
-  pub(crate) snapshot_sender:      tokio::sync::mpsc::Sender<L>,
+  pub(crate) state_sender: tokio::sync::mpsc::Sender<State>,
+  pub(crate) snapshot_sender: tokio::sync::mpsc::UnboundedSender<L::Snapshot>,
 }
 
 pub struct OuterController<L: LifeCycle> {
   pub(crate) instruction_sender: tokio::sync::mpsc::Sender<ControlSignal>,
-  pub(crate) state_receiver:     tokio::sync::mpsc::Receiver<State>,
-  pub(crate) snapshot_receiver:  tokio::sync::mpsc::Receiver<L>,
+  pub(crate) state_receiver: tokio::sync::mpsc::Receiver<State>,
+  pub(crate) snapshot_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<L::Snapshot>>,
 }
 
 pub struct Controller<L: LifeCycle> {
@@ -143,10 +169,14 @@ impl<L: LifeCycle> Controller<L> {
   pub fn new() -> Self {
     let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel(8);
     let (state_sender, state_receiver) = tokio::sync::mpsc::channel(8);
-    let (snapshot_sender, snapshot_receiver) = tokio::sync::mpsc::channel(8);
+    let (snapshot_sender, snapshot_receiver) = tokio::sync::mpsc::unbounded_channel();
     Self {
       inner: InnerController { instruction_receiver, state_sender, snapshot_sender },
-      outer: OuterController { instruction_sender, state_receiver, snapshot_receiver },
+      outer: OuterController {
+        instruction_sender,
+        state_receiver,
+        snapshot_receiver: Some(snapshot_receiver),
+      },
     }
   }
 }
@@ -154,9 +184,10 @@ impl<L: LifeCycle> Controller<L> {
 pub trait LifeCycle: Send + Sync + Clone + 'static {
   type StartMessage: Message + Debug;
   type StopMessage: Message + Debug;
+  type Snapshot: Send + Sync + Clone + Debug + 'static;
   fn on_start(&mut self) -> Self::StartMessage;
   fn on_stop(&mut self) -> Self::StopMessage;
-  fn snapshot(&self) -> Self { self.clone() }
+  fn snapshot(&self) -> Self::Snapshot;
 }
 
 impl<L: LifeCycle> Agent<L, InMemory> {
@@ -166,6 +197,12 @@ impl<L: LifeCycle> Agent<L, InMemory> {
     let controller = Controller::new();
     let mut inner_controller = controller.inner;
     let outer_controller = controller.outer;
+
+    // ────────────────────────────────────────────────────────────────
+    // Update Observers with snapshots of the current state
+    // ────────────────────────────────────────────────────────────────
+    let snapshot = self.inner.snapshot();
+    inner_controller.snapshot_sender.send(snapshot).unwrap();
 
     let task = tokio::spawn(async move {
       loop {
@@ -194,10 +231,6 @@ impl<L: LifeCycle> Agent<L, InMemory> {
               Some(ControlSignal::GetState) => {
                 inner_controller.state_sender.send(prev_state).await.unwrap();
               },
-              Some(ControlSignal::Snapshot) => {
-                let snapshot = self.inner.snapshot();
-                inner_controller.snapshot_sender.send(snapshot).await.unwrap();
-              },
               None => {
                 break;
               },
@@ -212,17 +245,29 @@ impl<L: LifeCycle> Agent<L, InMemory> {
               if let Some(handler) = self.handlers.get(&message.type_id) {
                 let reply = handler(&mut self.inner, message.payload);
                 println!("reply for agent {}", self.name.as_deref().unwrap_or("unknown"));
+                // ────────────────────────────────────────────────────────────────
+                // Handle the reply from the message handler and send it back over the network if needed
+                // ────────────────────────────────────────────────────────────────
                 match reply {
                   HandleResult::Message(message) => {
                     println!("sending reply {:?} for agent {}", message, self.name.as_deref().unwrap_or("unknown"));
                     self.connection.network.send(message).await;
+
+                    // Update Observers with snapshots of the current state
+                    let snapshot = self.inner.snapshot();
+                    inner_controller.snapshot_sender.send(snapshot).unwrap();
                   },
-                  HandleResult::None => {},
+                  HandleResult::None => {
+                    // Update Observers with snapshots of the current state
+                    let snapshot = self.inner.snapshot();
+                    inner_controller.snapshot_sender.send(snapshot).unwrap();
+                  },
                   HandleResult::Stop => break,
                 }
               }
             }
           }
+
         }
       }
 
@@ -241,10 +286,8 @@ mod tests {
 
   #[tokio::test]
   async fn test_agent_lifecycle() {
-    let agent = Agent::<Logger, InMemory>::new(Logger {
-      name:          "TestLogger".to_string(),
-      message_count: 0,
-    });
+    let agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 });
     assert_eq!(agent.state, State::Stopped);
 
     let mut processing_agent = agent.process();
@@ -258,11 +301,9 @@ mod tests {
 
   #[tokio::test]
   async fn test_single_agent_handler() {
-    let agent = Agent::<Logger, InMemory>::new(Logger {
-      name:          "TestLogger".to_string(),
-      message_count: 0,
-    })
-    .with_handler::<TextMessage>();
+    let agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 })
+        .with_handler::<TextMessage>();
 
     // Grab a sender from the agent
     let sender = agent.connection.network.sender.clone();
@@ -284,10 +325,8 @@ mod tests {
 
   #[tokio::test]
   async fn test_multiple_agent_handlers() {
-    let mut agent = Agent::<Logger, InMemory>::new(Logger {
-      name:          "TestLogger".to_string(),
-      message_count: 0,
-    });
+    let mut agent =
+      Agent::<Logger, InMemory>::new(Logger { name: "TestLogger".to_string(), message_count: 0 });
     agent = agent.with_handler::<TextMessage>().with_handler::<NumberMessage>();
     let sender = agent.connection.network.sender.clone();
 

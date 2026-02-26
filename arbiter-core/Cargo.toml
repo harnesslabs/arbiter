@@ -5,8 +5,9 @@ name    = "arbiter-core"
 version = "0.1.0"
 
 [dependencies]
-serde = { version = "1.0", features = ["derive"] }
-tokio = { workspace = true }
+serde        = { version = "1.0", features = ["derive"] }
+tokio        = { workspace = true }
+tokio-stream = { version = "0.1" }
 # TODO: we should have a generic serialization strategy trait
 serde_json = { version = "1.0" }
 
