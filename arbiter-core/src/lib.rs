@@ -24,6 +24,7 @@ pub mod fixtures {
     pub content: String,
   }
 
+  #[derive(Debug, Clone)]
   pub struct Counter {
     pub total: i32,
   }
@@ -37,6 +38,7 @@ pub mod fixtures {
     fn on_stop(&mut self) -> Self::StopMessage {}
   }
 
+  #[derive(Debug, Clone)]
   pub struct Logger {
     pub name:          String,
     pub message_count: i32,

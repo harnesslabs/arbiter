@@ -9,6 +9,7 @@ struct PongMessage;
 #[derive(Debug)]
 struct StopMessage;
 
+#[derive(Debug, Clone)]
 struct Ping {
   pub max_count: usize,
   pub count:     usize,
@@ -41,6 +42,7 @@ impl Handler<PongMessage> for Ping {
   }
 }
 
+#[derive(Debug, Clone)]
 struct Pong;
 
 impl LifeCycle for Pong {
@@ -78,6 +80,9 @@ async fn test_multi_agent() {
 
   let mut ping = ping.process();
   ping.start().await;
+
+  let snapshot = ping.snapshot().await;
+  println!("Snapshot of Ping: {:?}", snapshot);
 
   let mut pong = pong.process();
   pong.start().await;

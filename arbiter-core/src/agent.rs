@@ -70,9 +70,10 @@ pub struct ProcessingAgent<L: LifeCycle, T: Network + Debug> {
   pub name:                    Option<String>,
   pub address:                 T::Address,
   pub(crate) task:             JoinHandle<Agent<L, T>>,
-  pub(crate) outer_controller: OuterController,
+  pub(crate) outer_controller: OuterController<L>,
 }
 
+// TODO: Handle errors properly in here as it's possible to send instructions with the channel down.
 impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
   pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
@@ -96,6 +97,11 @@ impl<L: LifeCycle, T: Network + Debug> ProcessingAgent<L, T> {
   }
 
   pub async fn join(self) -> Agent<L, T> { self.task.await.unwrap() }
+
+  pub async fn snapshot(&mut self) -> L {
+    self.outer_controller.instruction_sender.send(ControlSignal::Snapshot).await.unwrap();
+    self.outer_controller.snapshot_receiver.recv().await.unwrap()
+  }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,43 +115,48 @@ pub enum ControlSignal {
   Start,
   Stop,
   GetState,
+  Snapshot,
 }
 
 // TODO (autoparallel): These controllers are hard-coded to use flume, we should use a more generic
 // controller that can be used with any channel implementation.
-pub struct InnerController {
+pub struct InnerController<L: LifeCycle> {
   pub(crate) instruction_receiver: tokio::sync::mpsc::Receiver<ControlSignal>,
   pub(crate) state_sender:         tokio::sync::mpsc::Sender<State>,
+  pub(crate) snapshot_sender:      tokio::sync::mpsc::Sender<L>,
 }
 
-pub struct OuterController {
+pub struct OuterController<L: LifeCycle> {
   pub(crate) instruction_sender: tokio::sync::mpsc::Sender<ControlSignal>,
   pub(crate) state_receiver:     tokio::sync::mpsc::Receiver<State>,
+  pub(crate) snapshot_receiver:  tokio::sync::mpsc::Receiver<L>,
 }
 
-pub struct Controller {
-  pub(crate) inner: InnerController,
-  pub(crate) outer: OuterController,
+pub struct Controller<L: LifeCycle> {
+  pub(crate) inner: InnerController<L>,
+  pub(crate) outer: OuterController<L>,
 }
 
-impl Controller {
+impl<L: LifeCycle> Controller<L> {
   // TODO: Add a default and let new take in pareameters for different channel implementations.
   #[allow(clippy::new_without_default)]
   pub fn new() -> Self {
     let (instruction_sender, instruction_receiver) = tokio::sync::mpsc::channel(8);
     let (state_sender, state_receiver) = tokio::sync::mpsc::channel(8);
+    let (snapshot_sender, snapshot_receiver) = tokio::sync::mpsc::channel(8);
     Self {
-      inner: InnerController { instruction_receiver, state_sender },
-      outer: OuterController { instruction_sender, state_receiver },
+      inner: InnerController { instruction_receiver, state_sender, snapshot_sender },
+      outer: OuterController { instruction_sender, state_receiver, snapshot_receiver },
     }
   }
 }
 
-pub trait LifeCycle: Send + Sync + 'static {
+pub trait LifeCycle: Send + Sync + Clone + 'static {
   type StartMessage: Message + Debug;
   type StopMessage: Message + Debug;
   fn on_start(&mut self) -> Self::StartMessage;
   fn on_stop(&mut self) -> Self::StopMessage;
+  fn snapshot(&self) -> Self { self.clone() }
 }
 
 impl<L: LifeCycle> Agent<L, InMemory> {
@@ -182,6 +193,10 @@ impl<L: LifeCycle> Agent<L, InMemory> {
               },
               Some(ControlSignal::GetState) => {
                 inner_controller.state_sender.send(prev_state).await.unwrap();
+              },
+              Some(ControlSignal::Snapshot) => {
+                let snapshot = self.inner.snapshot();
+                inner_controller.snapshot_sender.send(snapshot).await.unwrap();
               },
               None => {
                 break;
