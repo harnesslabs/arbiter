@@ -1,12 +1,10 @@
 [package]
 authors     = ["Harness Labs"]
 description = "Leader-Follower Simulation Demo using arbiter"
-edition     = "2021"
+edition     = "2024"
 license     = "AGPL-3.0"
 name        = "leader"
 publish     = false
-readme      = "README.md"
-repository  = "https://github.com/harnesslabs/arbiter"
 version     = "0.1.0"
 
 [package.metadata.wasm-pack.profile.release]
