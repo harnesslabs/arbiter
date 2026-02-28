@@ -129,21 +129,18 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
                 let reply = handler(&mut inner as &mut dyn std::any::Any, message.payload);
 
                 match reply {
-                  HandleResult::Message(reply_envelope) => {
-                    connection.network.send(reply_envelope).await;
-                    let snapshot = inner.snapshot();
-                    let _ = inner_controller.snapshot_sender.send(snapshot);
-                  },
-                  HandleResult::None => {
-                    let snapshot = inner.snapshot();
-                    let _ = inner_controller.snapshot_sender.send(snapshot);
-                  },
                   HandleResult::Stop => {
                     state = State::Stopped;
                     inner_controller.state_sender.send(State::Stopped).await.unwrap();
                     let stop_message = inner.on_stop();
                     connection.network.send(Envelope::package(stop_message)).await;
                     break;
+                  },
+                  other => {
+                    if let HandleResult::Message(envelope) = other {
+                      connection.network.send(envelope).await;
+                    }
+                    let _ = inner_controller.snapshot_sender.send(inner.snapshot());
                   },
                 }
               }
