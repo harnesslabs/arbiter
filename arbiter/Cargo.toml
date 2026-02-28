@@ -1,13 +1,14 @@
 [package]
 name = "arbiter"
 
-authors    = ["Harness Labs"]
-edition    = "2024"
-keywords   = ["actor", "agent", "framework", "distributed", "network"]
-license    = "AGPL-3.0"
-readme     = "README.md"
-repository = "https://github.com/harnesslabs/arbiter"
-version    = "0.5.0"
+authors     = ["Harness Labs"]
+description = "A framework for building distributed systems with actors."
+edition     = "2024"
+keywords    = ["actor", "agent", "framework", "distributed", "network"]
+license     = "AGPL-3.0"
+readme      = "README.md"
+repository  = "https://github.com/harnesslabs/arbiter"
+version     = "0.5.0"
 
 [dependencies]
 tokio-stream = { version = "0.1" }
