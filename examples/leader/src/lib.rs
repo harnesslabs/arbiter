@@ -32,6 +32,8 @@ use std::rc::Rc;
 pub enum AgentProcessing {
   Leader(Option<Processing<Actor<Leader, InMemory>, Leader, InMemory>>),
   Follower(Option<Processing<Actor<Follower, InMemory>, Follower, InMemory>>),
+  UnprocessedLeader(Option<Actor<Leader, InMemory>>),
+  UnprocessedFollower(Option<Actor<Follower, InMemory>>),
 }
 
 // Enable better error messages in debug mode
@@ -194,6 +196,7 @@ impl Simulation {
               let _ = p.stop().await;
             }
           },
+          AgentProcessing::UnprocessedLeader(_) | AgentProcessing::UnprocessedFollower(_) => {},
         }
       });
     }
@@ -227,6 +230,7 @@ impl Simulation {
               let _ = p.stop().await;
             }
           },
+          AgentProcessing::UnprocessedLeader(_) | AgentProcessing::UnprocessedFollower(_) => {},
         }
       });
     }
@@ -365,25 +369,71 @@ impl Simulation {
 
   #[wasm_bindgen(js_name = stopAgent)]
   pub fn stop_agent(&mut self, agent_id: &str) -> bool {
-    if let Some(agent) = self.agents.remove(agent_id) {
+    // Instead of remove(), we simply get() and update to Unprocessed
+    if let Some(agent_rc) = self.agents.get(agent_id) {
+      let agent = Rc::clone(agent_rc);
       let states = Rc::clone(&self.agent_states);
       let id = agent_id.to_string();
       wasm_bindgen_futures::spawn_local(async move {
+        let mut unprocessed = None;
         match &mut *agent.borrow_mut() {
           AgentProcessing::Leader(p) => {
             if let Some(p) = p.take() {
-              let _ = p.stop().await;
+              if let Ok(actor) = p.stop().await {
+                unprocessed = Some(AgentProcessing::UnprocessedLeader(Some(actor)));
+              }
             }
           },
           AgentProcessing::Follower(p) => {
             if let Some(p) = p.take() {
-              let _ = p.stop().await;
+              if let Ok(actor) = p.stop().await {
+                unprocessed = Some(AgentProcessing::UnprocessedFollower(Some(actor)));
+              }
             }
           },
+          _ => {},
         }
-        states.borrow_mut().insert(id, "Stopped".to_string());
+
+        if let Some(u) = unprocessed {
+          *agent.borrow_mut() = u;
+          states.borrow_mut().insert(id, "Unprocessed".to_string());
+        }
       });
       true
+    } else {
+      false
+    }
+  }
+
+  #[wasm_bindgen(js_name = processAgent)]
+  pub fn process_agent(&mut self, agent_id: &str) -> bool {
+    if let Some(agent_rc) = self.agents.get(agent_id) {
+      let mut to_process_leader = None;
+      let mut to_process_follower = None;
+
+      match &mut *agent_rc.borrow_mut() {
+        AgentProcessing::UnprocessedLeader(actor_opt) => {
+          if let Some(actor) = actor_opt.take() {
+            to_process_leader = Some(actor);
+          }
+        },
+        AgentProcessing::UnprocessedFollower(actor_opt) => {
+          if let Some(actor) = actor_opt.take() {
+            to_process_follower = Some(actor);
+          }
+        },
+        _ => return false,
+      }
+
+      if let Some(actor) = to_process_leader {
+        let processing = self.runtime.process(actor);
+        *agent_rc.borrow_mut() = AgentProcessing::Leader(Some(processing));
+      } else if let Some(actor) = to_process_follower {
+        let processing = self.runtime.process(actor);
+        *agent_rc.borrow_mut() = AgentProcessing::Follower(Some(processing));
+      }
+
+      self.start_agent(agent_id)
     } else {
       false
     }

@@ -16,11 +16,11 @@ const HTML_CONTENT: &str = include_str!("../index.html");
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() {
-  println!("🦀 Starting Leader-Follower Demo Server...");
+  println!("Starting Leader-Follower Demo Server...");
 
   // Build the WASM module automatically
   let manifest_dir = env!("CARGO_MANIFEST_DIR");
-  println!("📦 Building WebAssembly module...");
+  println!("Building WebAssembly module...");
   let status = std::process::Command::new("wasm-pack")
     .arg("build")
     .arg("--target")
@@ -30,10 +30,10 @@ async fn main() {
     .expect("Failed to execute wasm-pack. Is it installed?");
 
   if !status.success() {
-    eprintln!("❌ Failed to build WebAssembly module.");
+    eprintln!("Failed to build WebAssembly module.");
     std::process::exit(1);
   }
-  println!("✅ WebAssembly build complete.");
+  println!("WebAssembly build complete.");
 
   // Serve the main HTML page
   let index = warp::path::end()
@@ -49,9 +49,8 @@ async fn main() {
   // Combine routes with CORS and logging
   let routes = index.or(wasm_files).with(warp::cors().allow_any_origin()).with(warp::log("leader"));
 
-  println!("🌐 Demo available at: http://localhost:3030");
-  println!("📖 Click to add points, right-click to remove, adjust epsilon slider!");
-  println!("🛑 Press Ctrl+C to stop the server");
+  println!("Demo available at: http://localhost:3030");
+  println!("Press Ctrl+C to stop the server");
 
   warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
 }
