@@ -116,7 +116,7 @@ jobs:
           key: rust/test
 
       - name: Run tests
-        run: cargo test --verbose --workspace
+        run: cargo test --verbose --workspace --all-features
 
   semver:
     name: semver
