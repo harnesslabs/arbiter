@@ -167,7 +167,7 @@ jobs:
           tool: cargo-udeps
 
       - name: Run cargo-udeps
-        run: cargo udeps --workspace
+        run: cargo udeps --workspace --all-features --all-targets
 
   doc:
     name: doc
