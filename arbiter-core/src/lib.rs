@@ -11,7 +11,7 @@ pub mod prelude {
   pub use crate::{
     actor::LifeCycle,
     handler::{Handler, Message},
-    network::Network,
+    network::{Network, Socket},
   };
 }
 

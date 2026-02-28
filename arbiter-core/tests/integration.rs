@@ -10,18 +10,19 @@ use tokio_stream::StreamExt;
 /// expected sequence and closes when the actor self-stops.
 #[tokio::test]
 async fn ping_pong_self_stop() {
-  let runtime = Runtime::<InMemory>::new();
+  let mut runtime = Runtime::<InMemory>::new();
 
   let ping =
     runtime.spawn(PingPlayer { count: 0, max_count: 10 }).with_handler::<Pong>().with_name("ping");
 
   let pong = runtime.spawn(PongPlayer).with_handler::<Ping>().with_name("pong");
 
-  let mut ping = ping.process();
-  let mut snapshots = ping.stream().unwrap();
-  ping.start().await.unwrap();
+  let mut ping = runtime.process(ping);
+  let mut pong = runtime.process(pong);
 
-  let mut pong = pong.process();
+  let mut snapshots = ping.stream().unwrap();
+
+  ping.start().await.unwrap();
   pong.start().await.unwrap();
 
   // PingPlayer: initial=0, increments on each Pong, stops at max_count
@@ -33,12 +34,12 @@ async fn ping_pong_self_stop() {
   assert_eq!(snapshots.next().await, None);
 }
 
-/// A `Counter` observes all broadcast messages on the network during a
+/// A `Counter` observes all routed messages on the network during a
 /// ping-pong exchange. It should count every `Ping` and `Pong` that
-/// passes through the broadcast channel.
+/// it has explicitly subscribed to via `with_handler`.
 #[tokio::test]
-async fn observer_counts_broadcast_messages() {
-  let runtime = Runtime::<InMemory>::new();
+async fn observer_counts_routed_messages() {
+  let mut runtime = Runtime::<InMemory>::new();
 
   let ping =
     runtime.spawn(PingPlayer { count: 0, max_count: 5 }).with_handler::<Pong>().with_name("ping");
@@ -51,9 +52,9 @@ async fn observer_counts_broadcast_messages() {
     .with_handler::<Pong>()
     .with_name("observer");
 
-  let mut ping = ping.process();
-  let mut pong = pong.process();
-  let mut observer = observer.process();
+  let mut ping = runtime.process(ping);
+  let mut pong = runtime.process(pong);
+  let mut observer = runtime.process(observer);
   let mut observer_snapshots = observer.stream().unwrap();
 
   ping.start().await.unwrap();
@@ -79,7 +80,7 @@ async fn observer_counts_broadcast_messages() {
 /// its own independent count snapshots.
 #[tokio::test]
 async fn dual_snapshot_streams() {
-  let runtime = Runtime::<InMemory>::new();
+  let mut runtime = Runtime::<InMemory>::new();
 
   let ping =
     runtime.spawn(PingPlayer { count: 0, max_count: 5 }).with_handler::<Pong>().with_name("ping");
@@ -92,9 +93,9 @@ async fn dual_snapshot_streams() {
     .with_handler::<Pong>()
     .with_name("observer");
 
-  let mut ping = ping.process();
-  let mut pong = pong.process();
-  let mut observer = observer.process();
+  let mut ping = runtime.process(ping);
+  let mut pong = runtime.process(pong);
+  let mut observer = runtime.process(observer);
 
   let mut ping_snapshots = ping.stream().unwrap();
   let mut observer_snapshots = observer.stream().unwrap();
@@ -114,7 +115,7 @@ async fn dual_snapshot_streams() {
   assert_eq!(observer_snapshots.next().await.unwrap(), 0);
 
   // Drain observer snapshots — final count should be 12
-  // (6 Pings + 6 Pongs on the broadcast network)
+  // (6 Pings + 6 Pongs on the network)
   let mut last = 0;
   while last < 12 {
     last = observer_snapshots.next().await.unwrap();

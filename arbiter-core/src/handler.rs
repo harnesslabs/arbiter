@@ -4,7 +4,7 @@ use std::{
   ops::Deref,
 };
 
-use crate::network::Network;
+use crate::network::{Network, Socket};
 
 // The type that agents actually work with.
 pub trait Message: Any + Send + Sync + Debug + 'static {}
@@ -13,7 +13,7 @@ pub trait Message: Any + Send + Sync + Debug + 'static {}
 impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
 
 /// The envelope trait — each [`Network`] defines its own concrete envelope type.
-pub trait Envelope: Clone + Send + Sync + Debug + 'static {
+pub trait Envelope: Send + Sync + Debug + 'static {
   fn type_id(&self) -> TypeId;
   fn wrap<M: Message>(message: M) -> Self;
   fn downcast<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>;
@@ -26,8 +26,11 @@ pub trait Handler<M> {
 }
 
 #[allow(type_alias_bounds)]
-pub type MessageHandlerFn<N: Network> =
-  Box<dyn Fn(&mut dyn Any, &N::Envelope) -> Option<N::Envelope> + Send + Sync>;
+pub type MessageHandlerFn<N: Network> = Box<
+  dyn Fn(&mut dyn Any, &<N::Socket as Socket>::Envelope) -> Option<<N::Socket as Socket>::Envelope>
+    + Send
+    + Sync,
+>;
 
 pub fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
@@ -35,7 +38,7 @@ where
   M: Message,
   N: Network,
 {
-  Box::new(move |agent: &mut dyn Any, envelope: &N::Envelope| {
+  Box::new(move |agent: &mut dyn Any, envelope: &<N::Socket as Socket>::Envelope| {
     let Some(typed_agent) = agent.downcast_mut::<L>() else {
       unreachable!("type mismatch: agent is not the expected Handler type");
     };
@@ -45,6 +48,6 @@ where
       return None;
     };
 
-    typed_agent.handle(&*message).map(N::Envelope::wrap)
+    typed_agent.handle(&*message).map(<N::Socket as Socket>::Envelope::wrap)
   })
 }

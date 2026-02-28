@@ -1,13 +1,52 @@
 use std::{
   any::{Any, TypeId},
+  collections::HashMap,
   fmt::Debug,
   sync::Arc,
 };
 
+use tokio::sync::mpsc;
+
 use crate::{
   handler::{Envelope, Message},
-  network::{Generateable, Network},
+  network::{Network, Socket},
 };
+
+// ── Router message ─────────────────────────────────────────────────
+
+enum RouterMessage {
+  Register(InMemoryAddress, mpsc::UnboundedSender<InMemoryEnvelope>),
+  Subscribe(InMemoryAddress, TypeId),
+  Dispatch(InMemoryEnvelope),
+}
+
+// ── Router background task ─────────────────────────────────────────
+
+async fn router(mut rx: mpsc::UnboundedReceiver<RouterMessage>) {
+  let mut inboxes: HashMap<InMemoryAddress, mpsc::UnboundedSender<InMemoryEnvelope>> =
+    HashMap::new();
+  let mut routes: HashMap<TypeId, Vec<InMemoryAddress>> = HashMap::new();
+
+  while let Some(msg) = rx.recv().await {
+    match msg {
+      RouterMessage::Register(addr, tx) => {
+        inboxes.insert(addr, tx);
+      },
+      RouterMessage::Subscribe(addr, tid) => {
+        routes.entry(tid).or_default().push(addr);
+      },
+      RouterMessage::Dispatch(envelope) => {
+        if let Some(addrs) = routes.get(&Envelope::type_id(&envelope)) {
+          for addr in addrs {
+            if let Some(tx) = inboxes.get(addr) {
+              let _ = tx.send(envelope.clone());
+            }
+          }
+        }
+      },
+    }
+  }
+}
 
 // ── InMemoryEnvelope ───────────────────────────────────────────────
 
@@ -37,13 +76,7 @@ impl Envelope for InMemoryEnvelope {
   }
 }
 
-// ── InMemory network ───────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct InMemory {
-  pub(crate) sender: tokio::sync::broadcast::Sender<InMemoryEnvelope>,
-  pub(crate) receiver: tokio::sync::broadcast::Receiver<InMemoryEnvelope>,
-}
+// ── InMemoryAddress ────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InMemoryAddress(u64);
@@ -54,7 +87,7 @@ impl std::fmt::Display for InMemoryAddress {
   }
 }
 
-impl Generateable for InMemoryAddress {
+impl InMemoryAddress {
   fn generate() -> Self {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -62,25 +95,73 @@ impl Generateable for InMemoryAddress {
   }
 }
 
+// ── InMemory network ───────────────────────────────────────────────
+
+pub struct InMemory {
+  router_tx: mpsc::UnboundedSender<RouterMessage>,
+}
+
+impl Debug for InMemory {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "InMemory")
+  }
+}
+
+impl InMemory {
+  /// Send a message into the network (for test injection via `runtime.network()`).
+  pub fn send(&self, envelope: InMemoryEnvelope) {
+    let _ = self.router_tx.send(RouterMessage::Dispatch(envelope));
+  }
+}
+
 impl Network for InMemory {
-  type Address = InMemoryAddress;
-  type Envelope = InMemoryEnvelope;
+  type Socket = InMemorySocket;
 
   fn new() -> Self {
-    let (sender, receiver) = tokio::sync::broadcast::channel(1024);
-    Self { sender, receiver }
+    let (router_tx, router_rx) = mpsc::unbounded_channel();
+    tokio::spawn(router(router_rx));
+    Self { router_tx }
   }
 
-  fn join(&self) -> Self {
-    let (sender, receiver) = (self.sender.clone(), self.sender.subscribe());
-    Self { sender, receiver }
+  fn connect(&mut self) -> InMemorySocket {
+    let address = InMemoryAddress::generate();
+    let (inbox_tx, inbox_rx) = mpsc::unbounded_channel();
+    let _ = self.router_tx.send(RouterMessage::Register(address, inbox_tx));
+    InMemorySocket { address, router_tx: self.router_tx.clone(), inbox_rx }
+  }
+
+  fn subscribe(&self, address: InMemoryAddress, type_id: TypeId) {
+    let _ = self.router_tx.send(RouterMessage::Subscribe(address, type_id));
+  }
+}
+
+// ── InMemorySocket ─────────────────────────────────────────────────
+
+pub struct InMemorySocket {
+  address: InMemoryAddress,
+  router_tx: mpsc::UnboundedSender<RouterMessage>,
+  inbox_rx: mpsc::UnboundedReceiver<InMemoryEnvelope>,
+}
+
+impl Debug for InMemorySocket {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "InMemorySocket {{ address: {} }}", self.address)
+  }
+}
+
+impl Socket for InMemorySocket {
+  type Envelope = InMemoryEnvelope;
+  type Address = InMemoryAddress;
+
+  fn address(&self) -> InMemoryAddress {
+    self.address
   }
 
   async fn send(&self, envelope: InMemoryEnvelope) {
-    self.sender.send(envelope).unwrap();
+    let _ = self.router_tx.send(RouterMessage::Dispatch(envelope));
   }
 
   async fn receive(&mut self) -> Option<InMemoryEnvelope> {
-    self.receiver.recv().await.ok()
+    self.inbox_rx.recv().await
   }
 }

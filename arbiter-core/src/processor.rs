@@ -4,12 +4,12 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use crate::{
   actor::LifeCycle,
   error::{ArbiterError, Result},
-  network::Network,
+  network::{Network, Socket},
 };
 
 pub struct Processing<T, L: LifeCycle, N: Network> {
   pub name: Option<String>,
-  pub address: N::Address,
+  pub address: <N::Socket as Socket>::Address,
   pub(crate) task: JoinHandle<T>,
   pub(crate) outer_controller: OuterController<L>,
 }
@@ -19,7 +19,7 @@ impl<T, N: Network, L: LifeCycle> Processing<T, L, N> {
     self.name.as_deref()
   }
 
-  pub const fn address(&self) -> N::Address {
+  pub const fn address(&self) -> <N::Socket as Socket>::Address {
     self.address
   }
 
