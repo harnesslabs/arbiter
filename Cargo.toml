@@ -9,13 +9,10 @@ lto           = true
 
 [workspace.dependencies]
 # Local
-arbiter-core = { path = "arbiter-core" }
+arbiter-core = { path = "arbiter-core", version = "=0.1.0" }
 
 # Shared
 tokio = { version = "1.49", default-features = false, features = [
-  "sync",
   "rt",
   "macros",
-  # TODO: Only used in tests, should be a dev-dependency
-  "time",
 ] }
