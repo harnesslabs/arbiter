@@ -14,10 +14,6 @@ pub enum ArbiterError {
   /// The snapshot stream for the actor was already taken and cannot be taken again.
   #[error("snapshot stream already taken")]
   StreamAlreadyTaken,
-
-  /// Serialization or deserialization of an envelope or payload failed.
-  #[error("serialization failed: {0}")]
-  Serialization(#[from] serde_json::Error),
 }
 
 /// A specialized [`Result`] type for Arbiter operations.

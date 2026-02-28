@@ -2,7 +2,7 @@
 //! multi-actor communication, and snapshot streaming — all using the shared
 //! fixtures (`PingPlayer`, `PongPlayer`, `Counter`, `Ping`, `Pong`).
 
-use arbiter_core::{fixtures::*, network::memory::InMemory, runtime::Runtime};
+use arbiter::{fixtures::*, network::memory::InMemory, runtime::Runtime};
 use tokio_stream::StreamExt;
 
 /// Two actors exchange Ping/Pong messages. `PingPlayer` drives the exchange

@@ -1,18 +1,7 @@
 [workspace]
-exclude  = ["docs"]
-members  = ["arbiter", "arbiter-core", "docs"]
+members  = ["arbiter"]
 resolver = "2"
 
 [profile.release]
 codegen-units = 1
 lto           = true
-
-[workspace.dependencies]
-# Local
-arbiter-core = { path = "arbiter-core", version = "=0.1.0" }
-
-# Shared
-tokio = { version = "1.49", default-features = false, features = [
-  "rt",
-  "macros",
-] }

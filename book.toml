@@ -2,7 +2,7 @@
 authors      = ["Arbiter Contributors"]
 language     = "en"
 multilingual = false
-src          = "docs/src"
+src          = "docs"
 title        = "Arbiter Documentation"
 
 

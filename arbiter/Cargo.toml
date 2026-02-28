@@ -1,11 +1,25 @@
 [package]
-authors     = ["Harness Labs"]
-description = "A Rust-based multi-agent framework."
-edition     = "2024"
-keywords    = ["multi-agent", "framework"]
-license     = "AGPL-3.0"
-name        = "arbiter"
-version     = "0.5.0"
+name = "arbiter"
+
+authors = ["Harness Labs"]
+edition = "2024"
+version = "0.5.0"
 
 [dependencies]
-arbiter-core = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = { version = "2.0" }
+tokio = { version = "1.49", default-features = false, features = [
+    "rt",
+    "macros",
+] }
+tokio-stream = { version = "0.1" }
+tracing = { version = "0.1" }
+
+[dev-dependencies]
+tracing-test = { version = "0.2" }
+
+[features]
+default   = ["in-memory"]
+fixtures  = []
+in-memory = []
+tcp       = []
