@@ -161,66 +161,120 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 
 #[cfg(test)]
 mod tests {
-  use super::*;
-  use crate::{fixtures::*, handler::Envelope, network::memory::InMemory, processor::State};
+  use crate::{
+    fixtures::*, handler::Envelope, network::memory::InMemory, processor::State, runtime::Runtime,
+  };
+  use tokio_stream::StreamExt;
 
   #[tokio::test]
-  async fn test_actor_lifecycle() {
-    let network = InMemory::new();
-    let actor = Actor::<Logger, InMemory>::new(Logger { message_count: 0 }, &network);
-    assert_eq!(actor.state, State::Stopped);
+  async fn lifecycle_start_stop_join() {
+    let runtime = Runtime::<InMemory>::new();
+    let actor = runtime.spawn(Counter { count: 0 });
 
     let mut processing = actor.process();
+    let mut snapshots = processing.stream().unwrap();
+
     processing.start().await.unwrap();
     assert_eq!(processing.state().await.unwrap(), State::Running);
 
+    // Initial snapshot emitted at process() time
+    assert_eq!(snapshots.next().await.unwrap(), 0);
+
     processing.stop().await.unwrap();
-    let joined = processing.join().await.unwrap();
-    assert_eq!(joined.state, State::Stopped);
+
+    // join() succeeds — actor exited cleanly
+    let _actor = processing.join().await.unwrap();
+
+    // Stream closes after the actor exits
+    assert_eq!(snapshots.next().await, None);
   }
 
   #[tokio::test]
-  async fn test_single_handler() {
-    let network = InMemory::new();
-    let actor = Actor::<Logger, InMemory>::new(Logger { message_count: 0 }, &network)
-      .with_handler::<TextMessage>();
-
+  async fn single_handler_increments_snapshot() {
+    let runtime = Runtime::<InMemory>::new();
+    let actor = runtime.spawn(Counter { count: 0 }).with_handler::<Ping>();
     let sender = actor.connection.network.sender.clone();
 
     let mut processing = actor.process();
+    let mut snapshots = processing.stream().unwrap();
     processing.start().await.unwrap();
-    assert_eq!(processing.state().await.unwrap(), State::Running);
 
-    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
+    // Initial snapshot is 0
+    assert_eq!(snapshots.next().await.unwrap(), 0);
 
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // Send a Ping, snapshot should become 1
+    sender.send(Envelope::package(Ping)).unwrap();
+    assert_eq!(snapshots.next().await.unwrap(), 1);
 
     processing.stop().await.unwrap();
-    let actor = processing.join().await.unwrap();
-    assert_eq!(actor.state, State::Stopped);
-    assert_eq!(actor.inner.message_count, 1);
   }
 
   #[tokio::test]
-  async fn test_multiple_handlers() {
-    let network = InMemory::new();
-    let actor = Actor::<Logger, InMemory>::new(Logger { message_count: 0 }, &network)
-      .with_handler::<TextMessage>()
-      .with_handler::<NumberMessage>();
+  async fn multiple_handlers_route_correctly() {
+    let runtime = Runtime::<InMemory>::new();
+    let actor = runtime.spawn(Counter { count: 0 }).with_handler::<Ping>().with_handler::<Pong>();
     let sender = actor.connection.network.sender.clone();
 
-    assert_eq!(actor.state, State::Stopped);
-
     let mut processing = actor.process();
-
+    let mut snapshots = processing.stream().unwrap();
     processing.start().await.unwrap();
-    sender.send(Envelope::package(TextMessage { content: "Hello".to_string() })).unwrap();
-    sender.send(Envelope::package(NumberMessage { value: 3 })).unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+
+    // Initial is 0
+    assert_eq!(snapshots.next().await.unwrap(), 0);
+
+    // Both Ping and Pong should increment the counter
+    sender.send(Envelope::package(Ping)).unwrap();
+    assert_eq!(snapshots.next().await.unwrap(), 1);
+
+    sender.send(Envelope::package(Pong)).unwrap();
+    assert_eq!(snapshots.next().await.unwrap(), 2);
 
     processing.stop().await.unwrap();
-    let actor = processing.join().await.unwrap();
-    assert_eq!(actor.state, State::Stopped);
-    assert_eq!(actor.inner.message_count, 2);
+  }
+
+  #[tokio::test]
+  async fn ping_pong_exchange_via_snapshots() {
+    let runtime = Runtime::<InMemory>::new();
+
+    let ping =
+      runtime.spawn(PingPlayer { count: 0, max_count: 5 }).with_handler::<Pong>().with_name("ping");
+
+    let pong = runtime.spawn(PongPlayer).with_handler::<Ping>().with_name("pong");
+
+    let mut ping = ping.process();
+    let mut snapshots = ping.stream().unwrap();
+    ping.start().await.unwrap();
+
+    let mut pong = pong.process();
+    pong.start().await.unwrap();
+
+    // PingPlayer starts at 0, increments each time it receives a Pong,
+    // stops at max_count. We should see snapshots 0, 1, 2, 3, 4, 5
+    // then the stream should end (actor stopped itself).
+    for expected in 0..=5 {
+      let snapshot = snapshots.next().await.unwrap();
+      assert_eq!(snapshot, expected);
+    }
+
+    // Stream ends after self-stop
+    assert_eq!(snapshots.next().await, None);
+  }
+
+  #[tokio::test]
+  async fn actor_name_builder() {
+    let runtime = Runtime::<InMemory>::new();
+    let actor = runtime.spawn(Counter { count: 0 }).with_name("my-counter");
+    assert_eq!(actor.name.as_deref(), Some("my-counter"));
+  }
+
+  #[tokio::test]
+  async fn stream_taken_twice_errors() {
+    let runtime = Runtime::<InMemory>::new();
+    let actor = runtime.spawn(Counter { count: 0 });
+    let mut processing = actor.process();
+
+    let _stream = processing.stream().unwrap();
+    let err = processing.stream().unwrap_err();
+    assert!(matches!(err, crate::error::ArbiterError::StreamAlreadyTaken));
   }
 }

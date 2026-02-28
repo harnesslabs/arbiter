@@ -19,78 +19,118 @@ pub mod prelude {
 pub mod fixtures {
   use crate::prelude::*;
 
-  #[derive(Debug, Clone)]
-  pub struct NumberMessage {
-    pub value: i32,
-  }
+  // ── Messages ─────────────────────────────────────────────────────
 
   #[derive(Debug, Clone)]
-  pub struct TextMessage {
-    pub content: String,
-  }
+  pub struct Ping;
+
+  #[derive(Debug, Clone)]
+  pub struct Pong;
+
+  // ── Counter ──────────────────────────────────────────────────────
+  //
+  // A simple actor that counts every message it receives.
+  // Handles both Ping and Pong, incrementing `count` for each.
+  // Snapshot is the current count.
 
   #[derive(Debug, Clone)]
   pub struct Counter {
-    pub total: i32,
+    pub count: usize,
   }
 
   impl LifeCycle for Counter {
-    type Snapshot = i32;
+    type Snapshot = usize;
     type StartMessage = ();
     type StopMessage = ();
 
     fn on_start(&mut self) -> Self::StartMessage {}
-
     fn on_stop(&mut self) -> Self::StopMessage {}
-
     fn snapshot(&self) -> Self::Snapshot {
-      self.total
+      self.count
     }
   }
+
+  impl Handler<Ping> for Counter {
+    type Reply = ();
+
+    fn handle(&mut self, _message: &Ping) {
+      self.count += 1;
+      tracing::debug!(count = self.count, "Counter received Ping");
+    }
+  }
+
+  impl Handler<Pong> for Counter {
+    type Reply = ();
+
+    fn handle(&mut self, _message: &Pong) {
+      self.count += 1;
+      tracing::debug!(count = self.count, "Counter received Pong");
+    }
+  }
+
+  // ── PingPlayer ───────────────────────────────────────────────────
+  //
+  // Initiates a ping-pong exchange. Sends a Ping on start, then for
+  // each Pong received, increments count and replies with Ping.
+  // Stops itself when count reaches max_count.
+  // Snapshot is the current count — ideal for stream-based testing.
 
   #[derive(Debug, Clone)]
-  pub struct Logger {
-    pub message_count: i32,
+  pub struct PingPlayer {
+    pub count: usize,
+    pub max_count: usize,
   }
 
-  impl LifeCycle for Logger {
-    type Snapshot = i32;
+  impl LifeCycle for PingPlayer {
+    type Snapshot = usize;
+    type StartMessage = Ping;
+    type StopMessage = ();
+
+    fn on_start(&mut self) -> Self::StartMessage {
+      Ping
+    }
+    fn on_stop(&mut self) -> Self::StopMessage {}
+    fn snapshot(&self) -> Self::Snapshot {
+      self.count
+    }
+  }
+
+  impl Handler<Pong> for PingPlayer {
+    type Reply = Ping;
+
+    fn handle(&mut self, _message: &Pong) -> HandleResult<Self::Reply> {
+      if self.count == self.max_count {
+        HandleResult::Stop
+      } else {
+        self.count += 1;
+        HandleResult::Message(Ping)
+      }
+    }
+  }
+
+  // ── PongPlayer ───────────────────────────────────────────────────
+  //
+  // Simple responder: replies Pong to every Ping.
+  // No meaningful state — just an echo partner.
+
+  #[derive(Debug, Clone)]
+  pub struct PongPlayer;
+
+  impl LifeCycle for PongPlayer {
+    type Snapshot = ();
     type StartMessage = ();
     type StopMessage = ();
 
     fn on_start(&mut self) -> Self::StartMessage {}
-
     fn on_stop(&mut self) -> Self::StopMessage {}
-
-    fn snapshot(&self) -> Self::Snapshot {
-      self.message_count
-    }
+    fn snapshot(&self) -> Self::Snapshot {}
   }
 
-  impl Handler<NumberMessage> for Counter {
-    type Reply = ();
+  impl Handler<Ping> for PongPlayer {
+    type Reply = Pong;
 
-    fn handle(&mut self, message: &NumberMessage) {
-      self.total += message.value;
-      tracing::debug!(total = self.total, "CounterAgent updated");
-    }
-  }
-
-  impl Handler<TextMessage> for Logger {
-    type Reply = ();
-
-    fn handle(&mut self, message: &TextMessage) {
-      self.message_count += 1;
-      tracing::debug!(content = %message.content, count = self.message_count, "LogAgent received");
-    }
-  }
-
-  impl Handler<NumberMessage> for Logger {
-    type Reply = ();
-
-    fn handle(&mut self, message: &NumberMessage) {
-      self.message_count += 1;
-      tracing::debug!(value = message.value, count = self.message_count, "LoggerAgent received");
+    fn handle(&mut self, _message: &Ping) -> Self::Reply {
+      Pong
     }
   }
 }

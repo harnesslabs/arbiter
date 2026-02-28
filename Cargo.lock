@@ -22,6 +22,7 @@ dependencies = [
 name = "arbiter-core"
 version = "0.1.0"
 dependencies = [
+ "arbiter-core",
  "serde",
  "serde_json",
  "thiserror",
