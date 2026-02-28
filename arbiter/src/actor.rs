@@ -89,9 +89,9 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 
     let Self { name, mut state, mut inner, mut socket, handlers } = self;
 
-    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    #[cfg(target_arch = "wasm32")]
     let spawn = tokio_with_wasm::spawn;
-    #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+    #[cfg(not(target_arch = "wasm32"))]
     let spawn = tokio::spawn;
 
     let task = spawn(async move {

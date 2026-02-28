@@ -116,7 +116,7 @@ fmt:
 # Check for unused dependencies in the workspace
 udeps:
     @just header "Checking unused dependencies"
-    cargo +nightly udeps --workspace
+    cargo +nightly udeps --workspace --all-features --all-targets
 
 # Run cargo clean to remove build artifacts
 clean:

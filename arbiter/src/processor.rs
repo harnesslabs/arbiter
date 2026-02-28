@@ -3,10 +3,10 @@
 //! This module provides the [`Processing`] handle, which allows interacting
 //! with a spawned actor's lifecycle (starting, stopping) and observing its state.
 
-#[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
-#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 use tokio_with_wasm::task::JoinHandle;
 
 use crate::{

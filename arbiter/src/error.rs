@@ -1,7 +1,7 @@
 use thiserror::Error;
-#[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+#[cfg(not(target_arch = "wasm32"))]
 use tokio::task::JoinError as TaskJoinError;
-#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+#[cfg(target_arch = "wasm32")]
 use tokio_with_wasm::task::JoinError as TaskJoinError;
 
 /// The primary error type used throughout `arbiter-core`.

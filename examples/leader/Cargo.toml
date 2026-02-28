@@ -15,8 +15,9 @@ wasm-opt = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-arbiter = { workspace = true, features = ["wasm"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+arbiter                  = { workspace = true }
 console_error_panic_hook = { version = "0.1" }
 wasm-bindgen             = { version = "0.2" }
 wasm-bindgen-futures     = { version = "0.4" }
