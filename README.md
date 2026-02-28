@@ -18,4 +18,4 @@ Arbiter is under active development to enter into a new phase.
 
 ## Contributing
 
-See our [Contributing Guidelines](https://github.com/anthias-labs/arbiter/blob/main/.github/CONTRIBUTING.md)
+See our [Contributing Guidelines](https://github.com/harnesslabs/arbiter/blob/main/.github/CONTRIBUTING.md)
