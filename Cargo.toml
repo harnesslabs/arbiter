@@ -2,6 +2,9 @@
 members  = ["arbiter", "examples/leader"]
 resolver = "2"
 
+[workspace.dependencies]
+arbiter = { path = "./arbiter" }
+
 [profile.release]
 codegen-units = 1
 lto           = true

@@ -12,19 +12,16 @@ wasm-opt = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-arbiter = { path = "../../arbiter", features = ["wasm"] }
+arbiter = { workspace = true, features = ["wasm"] }
 
-console_error_panic_hook = "0.1"
-wasm-bindgen             = "0.2"
-wasm-bindgen-futures     = "0.4"
-
-[dependencies.web-sys]
-features = ["console"]
-version  = "0.3"
+console_error_panic_hook = { version = "0.1" }
+wasm-bindgen             = { version = "0.2" }
+wasm-bindgen-futures     = { version = "0.4" }
+web-sys                  = { version = "0.3", features = ["console"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.49", features = ["macros", "rt-multi-thread"] }
-warp  = "0.3"
+warp  = { version = "0.3" }
 
 [[example]]
 name = "leader"
