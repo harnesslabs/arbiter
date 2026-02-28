@@ -69,28 +69,39 @@ impl<T, N: Network, L: LifeCycle> Processing<T, L, N> {
     Ok(())
   }
 
-  /// Commands the actor to transition to the `Stopped` state.
+  /// Commands the actor to transition to the `Paused` state.
   ///
   /// # Errors
   /// Returns `ArbiterError::ChannelClosed` if the actor task is no longer running.
-  pub async fn stop(&mut self) -> Result<()> {
+  pub async fn pause(&mut self) -> Result<()> {
+    self
+      .outer_controller
+      .instruction_sender
+      .send(ControlSignal::Pause)
+      .await
+      .map_err(|_| ArbiterError::ChannelClosed)?;
+    let state =
+      self.outer_controller.state_receiver.recv().await.ok_or(ArbiterError::ChannelClosed)?;
+    debug_assert_eq!(state, State::Paused);
+    Ok(())
+  }
+
+  /// Commands the actor to transition to the `Stopped` state and waits for it to finish.
+  ///
+  /// # Errors
+  /// Returns `ArbiterError::ChannelClosed` if the actor task is no longer running.
+  /// Returns `ArbiterError::TaskPanicked` if the background task panicked.
+  pub async fn stop(self) -> Result<T> {
     self
       .outer_controller
       .instruction_sender
       .send(ControlSignal::Stop)
       .await
       .map_err(|_| ArbiterError::ChannelClosed)?;
-    let state =
-      self.outer_controller.state_receiver.recv().await.ok_or(ArbiterError::ChannelClosed)?;
-    debug_assert_eq!(state, State::Stopped);
-    Ok(())
-  }
 
-  /// Awaits the completion of the actor's background task and returns its result.
-  ///
-  /// # Errors
-  /// Returns `ArbiterError::TaskPanicked` if the background task panicked.
-  pub async fn join(self) -> Result<T> {
+    // Drop the outer controller to close the channel on our end
+    drop(self.outer_controller);
+
     self.task.await.map_err(ArbiterError::TaskPanicked)
   }
 
@@ -110,6 +121,8 @@ impl<T, N: Network, L: LifeCycle> Processing<T, L, N> {
 pub enum State {
   /// The actor is paused or stopped and will not process messages.
   Stopped,
+  /// The actor is paused and will not process messages but is not shutting down.
+  Paused,
   /// The actor is actively routing and processing messages.
   Running,
 }
@@ -118,6 +131,7 @@ pub enum State {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlSignal {
   Start,
+  Pause,
   Stop,
   GetState,
 }

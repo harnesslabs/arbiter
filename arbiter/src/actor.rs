@@ -111,20 +111,25 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
             match control_signal {
               Some(crate::processor::ControlSignal::Start) => {
                 state = State::Running;
-                inner_controller.state_sender.send(State::Running).await.unwrap();
+                let _ = inner_controller.state_sender.send(State::Running).await;
                 let start_message = inner.on_start();
                 tracing::debug!(agent = ?name, "sending start_message");
                 socket.send(<<N as Network>::Socket as Socket>::Envelope::wrap(start_message)).await;
               },
+              Some(crate::processor::ControlSignal::Pause) => {
+                state = State::Paused;
+                let _ = inner_controller.state_sender.send(State::Paused).await;
+              },
               Some(crate::processor::ControlSignal::Stop) => {
                 state = State::Stopped;
-                inner_controller.state_sender.send(State::Stopped).await.unwrap();
+                let _ = inner_controller.state_sender.send(State::Stopped).await;
                 let stop_message = inner.on_stop();
+                tracing::debug!(agent = ?name, "sending stop_message");
                 socket.send(<<N as Network>::Socket as Socket>::Envelope::wrap(stop_message)).await;
                 break;
               },
               Some(crate::processor::ControlSignal::GetState) => {
-                inner_controller.state_sender.send(prev_state).await.unwrap();
+                let _ = inner_controller.state_sender.send(prev_state).await;
               },
               None => {
                 break;
@@ -132,7 +137,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
             }
           }
 
-          message = socket.receive() => {
+          message = socket.receive(), if state == State::Running => {
             if let Some(message) = message
               && let Some(handler) = handlers.get(&message.type_id()) {
                 let reply = handler(&mut inner as &mut dyn std::any::Any, &message);
@@ -145,7 +150,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 
                 if inner.should_stop() {
                   state = State::Stopped;
-                  inner_controller.state_sender.send(State::Stopped).await.unwrap();
+                  let _ = inner_controller.state_sender.send(State::Stopped).await;
                   let stop_message = inner.on_stop();
                   socket.send(<<N as Network>::Socket as Socket>::Envelope::wrap(stop_message)).await;
                   break;
@@ -155,7 +160,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
         }
       }
 
-      Self { name, state, inner, socket, handlers }
+      Actor { name, state, inner, socket, handlers }
     });
 
     Processing { name: processing_name, address, task, outer_controller }
@@ -188,10 +193,8 @@ mod tests {
     // Initial snapshot emitted at process() time
     assert_eq!(snapshots.next().await.unwrap(), 0);
 
-    processing.stop().await.unwrap();
-
-    // join() succeeds — actor exited cleanly
-    let _actor = processing.join().await.unwrap();
+    // stop() succeeds — actor exited cleanly and is returned
+    let _actor = processing.stop().await.unwrap();
 
     // Stream closes after the actor exits
     assert_eq!(snapshots.next().await, None);

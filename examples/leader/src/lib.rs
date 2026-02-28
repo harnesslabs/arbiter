@@ -24,6 +24,15 @@ use wasm_bindgen::prelude::*;
 use web_sys::console;
 
 use crate::{follower::Follower, leader::Leader};
+use arbiter::actor::Actor;
+use arbiter::processor::Processing;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+pub enum AgentProcessing {
+  Leader(Option<Processing<Actor<Leader, InMemory>, Leader, InMemory>>),
+  Follower(Option<Processing<Actor<Follower, InMemory>, Follower, InMemory>>),
+}
 
 // Enable better error messages in debug mode
 extern crate console_error_panic_hook;
@@ -122,6 +131,10 @@ static mut CANVAS_WIDTH: f64 = 0.0;
 #[wasm_bindgen]
 pub struct Simulation {
   runtime: Runtime<InMemory>,
+  #[wasm_bindgen(skip)]
+  pub agents: HashMap<String, Rc<RefCell<AgentProcessing>>>,
+  #[wasm_bindgen(skip)]
+  pub agent_states: Rc<RefCell<HashMap<String, String>>>,
 }
 
 #[wasm_bindgen]
@@ -156,7 +169,7 @@ impl Simulation {
 
     console::log_1(&"🎨 Shared agent state initialized".into());
 
-    Self { runtime }
+    Self { runtime, agents: HashMap::new(), agent_states: Rc::new(RefCell::new(HashMap::new())) }
   }
 
   /// Step the simulation forward by one tick
@@ -168,6 +181,23 @@ impl Simulation {
   /// Remove a single agent from shared state
   #[wasm_bindgen]
   pub fn remove_single_agent(&mut self, agent_id: &str) {
+    if let Some(agent) = self.agents.remove(agent_id) {
+      wasm_bindgen_futures::spawn_local(async move {
+        match &mut *agent.borrow_mut() {
+          AgentProcessing::Leader(p) => {
+            if let Some(p) = p.take() {
+              let _ = p.stop().await;
+            }
+          },
+          AgentProcessing::Follower(p) => {
+            if let Some(p) = p.take() {
+              let _ = p.stop().await;
+            }
+          },
+        }
+      });
+    }
+
     self
       .runtime
       .network()
@@ -181,6 +211,24 @@ impl Simulation {
     if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
       shared_agents.clear();
       console::log_1(&"🧹 Cleared all agents from shared state".into());
+    }
+
+    // Stop all agents and remove locally
+    for (_, agent) in self.agents.drain() {
+      wasm_bindgen_futures::spawn_local(async move {
+        match &mut *agent.borrow_mut() {
+          AgentProcessing::Leader(p) => {
+            if let Some(p) = p.take() {
+              let _ = p.stop().await;
+            }
+          },
+          AgentProcessing::Follower(p) => {
+            if let Some(p) = p.take() {
+              let _ = p.stop().await;
+            }
+          },
+        }
+      });
     }
 
     // Reset counters
@@ -211,25 +259,142 @@ impl Simulation {
       unsafe {
         let leader = Leader::new(agent_id.clone(), CANVAS_WIDTH, CANVAS_HEIGHT, x, y);
         let leader_agent = self.runtime.spawn(leader).with_handler::<Tick>();
-        let mut processing = self.runtime.process(leader_agent);
+        let processing =
+          Rc::new(RefCell::new(AgentProcessing::Leader(Some(self.runtime.process(leader_agent)))));
+
+        let p_clone = Rc::clone(&processing);
         wasm_bindgen_futures::spawn_local(async move {
-          let _ = processing.start().await;
-          Box::leak(Box::new(processing));
+          if let AgentProcessing::Leader(Some(p)) = &mut *p_clone.borrow_mut() {
+            let _ = p.start().await;
+          }
         });
+
+        self.agents.insert(agent_id.clone(), processing);
+        self.agent_states.borrow_mut().insert(agent_id.clone(), "Running".to_string());
         console::log_1(&format!("🔴 {agent_id} created and started").into());
       }
     } else {
       let follower = Follower::new(agent_id.clone(), x, y);
       let follower_agent = self.runtime.spawn(follower).with_handler::<Tick>();
-      let mut processing = self.runtime.process(follower_agent);
+      let processing = Rc::new(RefCell::new(AgentProcessing::Follower(Some(
+        self.runtime.process(follower_agent),
+      ))));
+
+      let p_clone = Rc::clone(&processing);
       wasm_bindgen_futures::spawn_local(async move {
-        let _ = processing.start().await;
-        Box::leak(Box::new(processing));
+        if let AgentProcessing::Follower(Some(p)) = &mut *p_clone.borrow_mut() {
+          let _ = p.start().await;
+        }
       });
+
+      self.agents.insert(agent_id.clone(), processing);
+      self.agent_states.borrow_mut().insert(agent_id.clone(), "Running".to_string());
       console::log_1(&format!("🔵 {agent_id} created and started").into());
     }
 
     id_clone
+  }
+
+  #[wasm_bindgen(js_name = agentNames)]
+  pub fn agent_names(&self) -> String {
+    let names: Vec<String> = self.agents.keys().cloned().collect();
+    // Serialize manually or use serde_json if available. We can do it manually to avoid adding deps if we want.
+    let mut json = String::from("[");
+    for (i, name) in names.iter().enumerate() {
+      if i > 0 {
+        json.push(',');
+      }
+      json.push_str(&format!("\"{name}\""));
+    }
+    json.push(']');
+    json
+  }
+
+  #[wasm_bindgen(js_name = agentState)]
+  pub fn agent_state(&self, agent_id: &str) -> String {
+    self.agent_states.borrow().get(agent_id).cloned().unwrap_or_else(|| "Unknown".to_string())
+  }
+
+  #[wasm_bindgen(js_name = startAgent)]
+  pub fn start_agent(&mut self, agent_id: &str) -> bool {
+    if let Some(agent) = self.agents.get(agent_id) {
+      let agent = Rc::clone(agent);
+      let states = Rc::clone(&self.agent_states);
+      let id = agent_id.to_string();
+      wasm_bindgen_futures::spawn_local(async move {
+        match &mut *agent.borrow_mut() {
+          AgentProcessing::Leader(Some(p)) => {
+            let _ = p.start().await;
+          },
+          AgentProcessing::Follower(Some(p)) => {
+            let _ = p.start().await;
+          },
+          _ => {},
+        }
+        states.borrow_mut().insert(id, "Running".to_string());
+      });
+      true
+    } else {
+      false
+    }
+  }
+
+  #[wasm_bindgen(js_name = pauseAgent)]
+  pub fn pause_agent(&mut self, agent_id: &str) -> bool {
+    if let Some(agent) = self.agents.get(agent_id) {
+      let agent = Rc::clone(agent);
+      let states = Rc::clone(&self.agent_states);
+      let id = agent_id.to_string();
+      wasm_bindgen_futures::spawn_local(async move {
+        match &mut *agent.borrow_mut() {
+          AgentProcessing::Leader(Some(p)) => {
+            let _ = p.pause().await;
+          },
+          AgentProcessing::Follower(Some(p)) => {
+            let _ = p.pause().await;
+          },
+          _ => {},
+        }
+        states.borrow_mut().insert(id, "Paused".to_string());
+      });
+      true
+    } else {
+      false
+    }
+  }
+
+  #[wasm_bindgen(js_name = stopAgent)]
+  pub fn stop_agent(&mut self, agent_id: &str) -> bool {
+    if let Some(agent) = self.agents.remove(agent_id) {
+      let states = Rc::clone(&self.agent_states);
+      let id = agent_id.to_string();
+      wasm_bindgen_futures::spawn_local(async move {
+        match &mut *agent.borrow_mut() {
+          AgentProcessing::Leader(p) => {
+            if let Some(p) = p.take() {
+              let _ = p.stop().await;
+            }
+          },
+          AgentProcessing::Follower(p) => {
+            if let Some(p) = p.take() {
+              let _ = p.stop().await;
+            }
+          },
+        }
+        states.borrow_mut().insert(id, "Stopped".to_string());
+      });
+      true
+    } else {
+      false
+    }
+  }
+
+  #[wasm_bindgen(js_name = removeAgent)]
+  pub fn remove_agent(&mut self, agent_id: &str) -> bool {
+    let existed = self.agents.contains_key(agent_id);
+    self.remove_single_agent(agent_id);
+    self.agent_states.borrow_mut().remove(agent_id);
+    existed
   }
 }
 
