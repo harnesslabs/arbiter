@@ -1,4 +1,5 @@
 use super::*;
+use crate::canvas::PositionUpdate;
 
 /// Simple leader agent that moves randomly
 #[derive(Clone)]
@@ -69,13 +70,13 @@ impl LifeCycle for Leader {
   type StartMessage = ();
   type StopMessage = ();
 
-  fn on_start(&mut self) {
+  fn on_start(&mut self) -> Self::StartMessage {
     console::log_1(
       &format!("🔴 {} started at ({:.2}, {:.2})", self.id, self.position.x, self.position.y).into(),
     );
   }
 
-  fn on_stop(&mut self) {
+  fn on_stop(&mut self) -> Self::StopMessage {
     console::log_1(&format!("🛑 {} stopped", self.id).into());
   }
 
@@ -85,14 +86,15 @@ impl LifeCycle for Leader {
 }
 
 impl Handler<Tick> for Leader {
-  type Reply = ();
+  type Reply = PositionUpdate;
 
-  fn handle(&mut self, _message: &Tick) -> Self::Reply {
+  fn handle(&mut self, _message: &Tick) -> Option<Self::Reply> {
     self.move_agent();
 
-    // Write directly to shared state
-    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
-      shared_agents.insert(self.id.clone(), ("leader".to_string(), self.position.clone()));
-    }
+    Some(PositionUpdate {
+      id: self.id.clone(),
+      agent_type: "leader".to_string(),
+      position: self.position.clone(),
+    })
   }
 }

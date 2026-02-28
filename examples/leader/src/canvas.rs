@@ -1,28 +1,64 @@
-use std::collections::HashMap;
+use arbiter::{actor::LifeCycle, handler::Handler};
+use web_sys::console;
 
-use arbiter_core::environment::Environment;
+use crate::{get_shared_agent_state, Position};
 
-pub struct Canvas {
-  width: f64,
-  height: f64,
-  pub agent_positions: HashMap<String, (f64, f64)>,
+/// Message to update an agent's position in the shared canvas state
+#[derive(Clone, Debug)]
+pub struct PositionUpdate {
+  pub id: String,
+  pub agent_type: String,
+  pub position: Position,
 }
 
-impl Environment for Canvas {
-  // return an owned copy rather than a borrow tied to an unrelated `'a`
-  type State = HashMap<String, (f64, f64)>;
-  type Update = (String, (f64, f64)); // (agent_id, new_position)
+/// Message to remove an agent from the shared canvas state
+#[derive(Clone, Debug)]
+pub struct RemoveAgent {
+  pub id: String,
+}
 
-  fn new() -> Self {
-    Self { width: 800.0, height: 600.0, agent_positions: HashMap::new() }
+/// The Canvas actor acts as the bridge between the Simulation and the JS frontend.
+/// It receives position updates and stores them in the shared state.
+pub struct Canvas;
+
+impl Canvas {
+  pub fn new() -> Self {
+    Self
   }
+}
 
-  fn get_state(&self) -> Self::State {
-    self.agent_positions.clone()
+impl LifeCycle for Canvas {
+  type Snapshot = ();
+  type StartMessage = ();
+  type StopMessage = ();
+
+  fn on_start(&mut self) -> Self::StartMessage {}
+
+  fn on_stop(&mut self) -> Self::StopMessage {}
+
+  fn snapshot(&self) -> Self::Snapshot {}
+}
+
+impl Handler<PositionUpdate> for Canvas {
+  type Reply = ();
+
+  fn handle(&mut self, message: &PositionUpdate) -> Option<Self::Reply> {
+    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+      shared_agents
+        .insert(message.id.clone(), (message.agent_type.clone(), message.position.clone()));
+    }
+    None
   }
+}
 
-  fn update_state(&mut self, update: Self::Update) {
-    let (agent_id, position) = update;
-    self.agent_positions.insert(agent_id, position);
+impl Handler<RemoveAgent> for Canvas {
+  type Reply = ();
+
+  fn handle(&mut self, message: &RemoveAgent) -> Option<Self::Reply> {
+    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+      shared_agents.remove(&message.id);
+      console::log_1(&format!("🎨 Canvas removed {} from shared state", message.id).into());
+    }
+    None
   }
 }

@@ -67,7 +67,9 @@ impl Debug for InMemoryEnvelope {
 }
 
 impl Envelope for InMemoryEnvelope {
-  fn type_id(&self) -> TypeId { self.type_id }
+  fn type_id(&self) -> TypeId {
+    self.type_id
+  }
 
   fn wrap<M: Message>(message: M) -> Self {
     Self { type_id: TypeId::of::<M>(), payload: Arc::new(message) }
@@ -102,7 +104,9 @@ pub struct InMemory {
 }
 
 impl Debug for InMemory {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "InMemory") }
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "InMemory")
+  }
 }
 
 impl InMemory {
@@ -135,9 +139,9 @@ impl Network for InMemory {
 
 /// The socket endpoint assigned to an actor on the `InMemory` network.
 pub struct InMemorySocket {
-  address:   InMemoryAddress,
+  address: InMemoryAddress,
   router_tx: mpsc::UnboundedSender<RouterMessage>,
-  inbox_rx:  mpsc::UnboundedReceiver<InMemoryEnvelope>,
+  inbox_rx: mpsc::UnboundedReceiver<InMemoryEnvelope>,
 }
 
 impl Debug for InMemorySocket {
@@ -150,11 +154,15 @@ impl Socket for InMemorySocket {
   type Address = InMemoryAddress;
   type Envelope = InMemoryEnvelope;
 
-  fn address(&self) -> InMemoryAddress { self.address }
+  fn address(&self) -> InMemoryAddress {
+    self.address
+  }
 
   async fn send(&self, envelope: InMemoryEnvelope) {
     let _ = self.router_tx.send(RouterMessage::Dispatch(envelope));
   }
 
-  async fn receive(&mut self) -> Option<InMemoryEnvelope> { self.inbox_rx.recv().await }
+  async fn receive(&mut self) -> Option<InMemoryEnvelope> {
+    self.inbox_rx.recv().await
+  }
 }

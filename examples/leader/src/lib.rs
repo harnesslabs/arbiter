@@ -14,9 +14,11 @@ use std::{
   sync::{Arc, Mutex, OnceLock},
 };
 
-use arbiter_core::{
-  agent::{Agent, LifeCycle},
-  handler::Handler,
+use arbiter::{
+  actor::LifeCycle,
+  handler::{Envelope, Handler},
+  network::memory::{InMemory, InMemoryEnvelope},
+  runtime::Runtime,
 };
 use wasm_bindgen::prelude::*;
 use web_sys::console;
@@ -117,115 +119,120 @@ pub fn get_agent_positions() -> String {
 static mut CANVAS_HEIGHT: f64 = 0.0;
 static mut CANVAS_WIDTH: f64 = 0.0;
 
-/// Initialize the leader-follower simulation with shared state
 #[wasm_bindgen]
-pub fn create_leader_follower_simulation(canvas_width: f64, canvas_height: f64) -> Runtime {
-  console_error_panic_hook::set_once();
+pub struct Simulation {
+  runtime: Runtime<InMemory>,
+}
 
-  let runtime = Runtime::new();
+#[wasm_bindgen]
+impl Simulation {
+  /// Initialize the leader-follower simulation with shared state
+  #[wasm_bindgen(constructor)]
+  pub fn new(canvas_width: f64, canvas_height: f64) -> Self {
+    console_error_panic_hook::set_once();
 
-  unsafe {
-    CANVAS_WIDTH = canvas_width;
-    CANVAS_HEIGHT = canvas_height;
+    let mut runtime = Runtime::<InMemory>::new();
+
+    unsafe {
+      CANVAS_WIDTH = canvas_width;
+      CANVAS_HEIGHT = canvas_height;
+    }
+
+    // Initialize shared state
+    let _shared_state = get_shared_agent_state();
+
+    let canvas = crate::canvas::Canvas::new();
+    let canvas_agent = runtime
+      .spawn(canvas)
+      .with_handler::<crate::canvas::PositionUpdate>()
+      .with_handler::<crate::canvas::RemoveAgent>();
+
+    let mut canvas_processing = runtime.process(canvas_agent);
+
+    wasm_bindgen_futures::spawn_local(async move {
+      let _ = canvas_processing.start().await;
+      Box::leak(Box::new(canvas_processing));
+    });
+
+    console::log_1(&"🎨 Shared agent state initialized".into());
+
+    Self { runtime }
   }
 
-  // Initialize shared state
-  let _shared_state = get_shared_agent_state();
-  console::log_1(&"🎨 Shared agent state initialized".into());
+  /// Step the simulation forward by one tick
+  #[wasm_bindgen]
+  pub fn simulation_tick(&mut self) {
+    self.runtime.network().send(InMemoryEnvelope::wrap(Tick));
+  }
 
-  runtime
-}
+  /// Remove a single agent from shared state
+  #[wasm_bindgen]
+  pub fn remove_single_agent(&mut self, agent_id: &str) {
+    self
+      .runtime
+      .network()
+      .send(InMemoryEnvelope::wrap(crate::canvas::RemoveAgent { id: agent_id.to_string() }));
+  }
 
-/// Step the simulation forward by one tick
-#[wasm_bindgen]
-pub fn simulation_tick(runtime: &mut Runtime) {
-  // Broadcast Tick to all agents
-  runtime.broadcast_message(Tick);
+  /// Clear all agents from shared state and reset counters
+  #[wasm_bindgen]
+  pub fn clear_all_agents(&mut self) {
+    // Clear shared state directly
+    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
+      shared_agents.clear();
+      console::log_1(&"🧹 Cleared all agents from shared state".into());
+    }
 
-  // Process tick messages and any resulting updates
-  runtime.step();
-}
-
-/// Remove a single agent from shared state
-#[wasm_bindgen]
-pub fn remove_single_agent(agent_id: &str) {
-  if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
-    if shared_agents.remove(agent_id).is_some() {
-      console::log_1(&format!("🗑️ Removed {} from shared state", agent_id).into());
+    // Reset counters
+    unsafe {
+      LEADER_COUNT = 0;
+      FOLLOWER_COUNT = 0;
     }
   }
-}
 
-/// Clear all agents from shared state and reset counters
-#[wasm_bindgen]
-pub fn clear_all_agents() {
-  // Clear shared state
-  if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
-    shared_agents.clear();
-    console::log_1(&"🧹 Cleared all agents from shared state".into());
-  }
+  /// Add an agent at the specified position  
+  #[wasm_bindgen]
+  pub fn add_agent(&mut self, x: f64, y: f64, is_leader: bool) -> String {
+    let agent_id = if is_leader {
+      unsafe {
+        LEADER_COUNT += 1;
+        format!("Leader {LEADER_COUNT}")
+      }
+    } else {
+      unsafe {
+        FOLLOWER_COUNT += 1;
+        format!("Follower {FOLLOWER_COUNT}")
+      }
+    };
 
-  // Reset counters
-  unsafe {
-    LEADER_COUNT = 0;
-    FOLLOWER_COUNT = 0;
+    let id_clone = agent_id.clone();
+
+    if is_leader {
+      unsafe {
+        let leader = Leader::new(agent_id.clone(), CANVAS_WIDTH, CANVAS_HEIGHT, x, y);
+        let leader_agent = self.runtime.spawn(leader).with_handler::<Tick>();
+        let mut processing = self.runtime.process(leader_agent);
+        wasm_bindgen_futures::spawn_local(async move {
+          let _ = processing.start().await;
+          Box::leak(Box::new(processing));
+        });
+        console::log_1(&format!("🔴 {agent_id} created and started").into());
+      }
+    } else {
+      let follower = Follower::new(agent_id.clone(), x, y);
+      let follower_agent = self.runtime.spawn(follower).with_handler::<Tick>();
+      let mut processing = self.runtime.process(follower_agent);
+      wasm_bindgen_futures::spawn_local(async move {
+        let _ = processing.start().await;
+        Box::leak(Box::new(processing));
+      });
+      console::log_1(&format!("🔵 {agent_id} created and started").into());
+    }
+
+    id_clone
   }
 }
 
 // Global counters for agent IDs
 static mut LEADER_COUNT: u32 = 0;
 static mut FOLLOWER_COUNT: u32 = 0;
-
-/// Add an agent at the specified position  
-#[wasm_bindgen]
-pub fn add_agent(runtime: &mut Runtime, x: f64, y: f64, is_leader: bool) -> String {
-  let agent_id = if is_leader {
-    unsafe {
-      LEADER_COUNT += 1;
-      format!("Leader {LEADER_COUNT}")
-    }
-  } else {
-    unsafe {
-      FOLLOWER_COUNT += 1;
-      format!("Follower {FOLLOWER_COUNT}")
-    }
-  };
-
-  let success = if is_leader {
-    unsafe {
-      let leader = Leader::new(agent_id.clone(), CANVAS_WIDTH, CANVAS_HEIGHT, x, y);
-      let leader_agent = Agent::new(leader).with_handler::<Tick>();
-
-      match runtime.spawn_named_agent(&agent_id, leader_agent) {
-        Ok(_) => {
-          console::log_1(&format!("🔴 {agent_id} created and started").into());
-          true
-        },
-        Err(e) => {
-          console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-          false
-        },
-      }
-    }
-  } else {
-    let follower = Follower::new(agent_id.clone(), x, y);
-    let follower_agent = Agent::new(follower).with_handler::<Tick>();
-
-    match runtime.spawn_named_agent(&agent_id, follower_agent) {
-      Ok(_) => {
-        console::log_1(&format!("🔵 {agent_id} created and started").into());
-        true
-      },
-      Err(e) => {
-        console::log_1(&format!("❌ Failed to register {agent_id}: {e}").into());
-        false
-      },
-    }
-  };
-
-  if success {
-    agent_id
-  } else {
-    String::new()
-  }
-}

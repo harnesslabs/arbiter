@@ -1,14 +1,15 @@
-//! # Vietoris-Rips Demo Server
+//! # Leader-Follower Demo Server
 //!
-//! A simple web server that serves the interactive Vietoris-Rips complex demo.
+//! A simple web server that serves the interactive Leader-Follower demo.
 //!
 //! ## Usage
 //! ```bash
-//! cargo run --bin server
+//! cargo run --bin leader
 //! ```
-//! Then open http://localhost:3030
+//! Then open <http://localhost:3030>
 
-#[cfg(not(target_arch = "wasm32"))] use warp::Filter;
+#[cfg(not(target_arch = "wasm32"))]
+use warp::Filter;
 
 const HTML_CONTENT: &str = include_str!("../index.html");
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::canvas::PositionUpdate;
 
 /// Simple follower agent that follows the closest leader
 #[derive(Clone)]
@@ -61,13 +62,13 @@ impl LifeCycle for Follower {
   type StartMessage = ();
   type StopMessage = ();
 
-  fn on_start(&mut self) {
+  fn on_start(&mut self) -> Self::StartMessage {
     console::log_1(
       &format!("🔵 {} started at ({:.2}, {:.2})", self.id, self.position.x, self.position.y).into(),
     );
   }
 
-  fn on_stop(&mut self) {
+  fn on_stop(&mut self) -> Self::StopMessage {
     console::log_1(&format!("🛑 {} stopped", self.id).into());
   }
 
@@ -77,9 +78,9 @@ impl LifeCycle for Follower {
 }
 
 impl Handler<Tick> for Follower {
-  type Reply = ();
+  type Reply = PositionUpdate;
 
-  fn handle(&mut self, _message: &Tick) -> Self::Reply {
+  fn handle(&mut self, _message: &Tick) -> Option<Self::Reply> {
     // Read leader positions directly from shared state instead of relying on messages
     if let Ok(shared_agents) = get_shared_agent_state().lock() {
       self.leader_positions.clear();
@@ -94,9 +95,10 @@ impl Handler<Tick> for Follower {
     self.find_closest_leader();
     self.follow_target();
 
-    // Write directly to shared state
-    if let Ok(mut shared_agents) = get_shared_agent_state().lock() {
-      shared_agents.insert(self.id.clone(), ("follower".to_string(), self.position.clone()));
-    }
+    Some(PositionUpdate {
+      id: self.id.clone(),
+      agent_type: "follower".to_string(),
+      position: self.position.clone(),
+    })
   }
 }

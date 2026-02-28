@@ -50,7 +50,8 @@ pub(crate) fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
   L: Handler<M> + 'static,
   M: Message,
-  N: Network, {
+  N: Network,
+{
   Box::new(move |agent: &mut dyn Any, envelope: &<N::Socket as Socket>::Envelope| {
     let Some(typed_agent) = agent.downcast_mut::<L>() else {
       unreachable!("type mismatch: agent is not the expected Handler type");
