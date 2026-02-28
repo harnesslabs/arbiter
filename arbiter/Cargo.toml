@@ -8,8 +8,8 @@ version = "0.5.0"
 [dependencies]
 # Runtime
 tokio = { version = "1.49", default-features = false, features = [
-    "rt",
-    "macros",
+  "rt",
+  "macros",
 ] }
 tokio-stream = { version = "0.1" }
 
