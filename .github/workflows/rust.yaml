@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: nightly-2026-02-25
           components: rustfmt
 
       - name: Rust Cache
@@ -42,7 +42,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Install taplo
         uses: taiki-e/install-action@cargo-binstall
@@ -66,7 +66,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -85,7 +85,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
           components: clippy
 
       - name: Rust Cache
@@ -108,7 +108,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -154,7 +154,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -178,7 +178,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
