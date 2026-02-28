@@ -2,10 +2,7 @@ use std::{
   any::{Any, TypeId},
   fmt::Debug,
   ops::Deref,
-  sync::Arc,
 };
-
-use serde::{Deserialize, Serialize};
 
 use crate::network::Network;
 
@@ -15,75 +12,17 @@ pub trait Message: Any + Send + Sync + Debug + 'static {}
 // Blanket implementation for all types that meet the requirements
 impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
 
-pub struct Envelope<N: Network> {
-  pub payload: N::Payload,
-  pub type_id: TypeId,
-}
-
-impl<N: Network> Debug for Envelope<N> {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "Envelope {{ payload: {:?}, type_id: {:?} }}", self.payload, self.type_id)
-  }
-}
-
-impl<N: Network> Clone for Envelope<N> {
-  fn clone(&self) -> Self {
-    Self { payload: self.payload.clone(), type_id: self.type_id }
-  }
-}
-
-impl<N: Network> Envelope<N> {
-  pub fn package<M: Message>(message: M) -> Self
-  where
-    N::Payload: Package<M>,
-  {
-    Self { payload: N::Payload::package(message), type_id: TypeId::of::<M>() }
-  }
-
-  pub fn unpackage<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>
-  where
-    N::Payload: Unpackage<M>,
-  {
-    self.payload.unpackage()
-  }
+/// The envelope trait — each [`Network`] defines its own concrete envelope type.
+pub trait Envelope: Clone + Send + Sync + Debug + 'static {
+  fn type_id(&self) -> TypeId;
 }
 
 pub trait Package<M: Message> {
   fn package(message: M) -> Self;
 }
 
-impl<M: Message> Package<M> for Arc<dyn Message> {
-  fn package(message: M) -> Self {
-    Arc::new(message)
-  }
-}
-
-impl<M> Package<M> for Vec<u8>
-where
-  M: Message + Serialize,
-{
-  fn package(message: M) -> Self {
-    serde_json::to_vec(&message).unwrap()
-  }
-}
-
 pub trait Unpackage<M: Message> {
   fn unpackage(&self) -> Option<impl Deref<Target = M>>;
-}
-
-impl<M: Message> Unpackage<M> for Arc<dyn Message> {
-  fn unpackage(&self) -> Option<impl Deref<Target = M>> {
-    (self.as_ref() as &dyn Any).downcast_ref::<M>()
-  }
-}
-
-impl<M> Unpackage<M> for Vec<u8>
-where
-  M: Message + for<'de> Deserialize<'de>,
-{
-  fn unpackage(&self) -> Option<impl Deref<Target = M>> {
-    serde_json::from_slice(self).ok().map(Box::new)
-  }
 }
 
 #[derive(Debug)]
@@ -123,25 +62,25 @@ pub trait Handler<M> {
 
 #[allow(type_alias_bounds)]
 pub type MessageHandlerFn<N: Network> =
-  Box<dyn Fn(&mut dyn Any, N::Payload) -> HandleResult<Envelope<N>> + Send + Sync>;
+  Box<dyn Fn(&mut dyn Any, &N::Envelope) -> HandleResult<N::Envelope> + Send + Sync>;
 
 pub fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
   L: Handler<M> + 'static,
   M: Message,
   N: Network,
-  N::Payload: Unpackage<M> + Package<L::Reply>,
+  N::Envelope: Unpackage<M> + Package<L::Reply>,
 {
-  Box::new(move |agent: &mut dyn Any, payload: N::Payload| {
+  Box::new(move |agent: &mut dyn Any, envelope: &N::Envelope| {
     let Some(typed_agent) = agent.downcast_mut::<L>() else {
       unreachable!("type mismatch: agent is not the expected Handler type");
     };
 
-    let Some(message) = payload.unpackage() else {
+    let Some(message) = envelope.unpackage() else {
       tracing::error!(type_id = ?TypeId::of::<M>(), "failed to unpackage message");
       return HandleResult::None;
     };
 
-    typed_agent.handle(&*message).into().map(Envelope::package)
+    typed_agent.handle(&*message).into().map(Package::package)
   })
 }

@@ -1,10 +1,12 @@
 use std::hash::Hash;
 
-use crate::handler::{Envelope, Message, Package};
+use crate::handler::Envelope;
 
-#[cfg(feature = "in-memory")] pub mod memory;
+#[cfg(feature = "in-memory")]
+pub mod memory;
 
-#[cfg(feature = "tcp")] pub mod tcp;
+#[cfg(feature = "tcp")]
+pub mod tcp;
 
 pub trait Generateable {
   fn generate() -> Self;
@@ -26,10 +28,10 @@ pub trait Network: Send + Sync + Sized + 'static {
     + Hash
     + std::fmt::Debug
     + std::fmt::Display;
-  type Payload: Message + Clone + std::fmt::Debug + Package<Self::Payload>;
+  type Envelope: Envelope;
 
   fn new() -> Self;
   fn join(&self) -> Self;
-  fn send(&self, envelope: Envelope<Self>) -> impl std::future::Future<Output = ()> + Send;
-  fn receive(&mut self) -> impl std::future::Future<Output = Option<Envelope<Self>>> + Send;
+  fn send(&self, envelope: Self::Envelope) -> impl std::future::Future<Output = ()> + Send;
+  fn receive(&mut self) -> impl std::future::Future<Output = Option<Self::Envelope>> + Send;
 }

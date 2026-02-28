@@ -58,7 +58,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
   where
     M: Message,
     L: Handler<M>,
-    N::Payload: Unpackage<M> + Package<L::Reply>,
+    N::Envelope: Unpackage<M> + Package<L::Reply>,
   {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
@@ -66,7 +66,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 
   pub fn process(self) -> Processing<Self, L, N>
   where
-    N::Payload: Package<L::StartMessage> + Package<L::StopMessage>,
+    N::Envelope: Package<L::StartMessage> + Package<L::StopMessage>,
   {
     let processing_name = self.name.clone();
     let address = self.connection.address;
@@ -101,13 +101,13 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
                 inner_controller.state_sender.send(State::Running).await.unwrap();
                 let start_message = inner.on_start();
                 tracing::debug!(agent = ?name, "sending start_message");
-                connection.network.send(Envelope::package(start_message)).await;
+                connection.network.send(Package::package(start_message)).await;
               },
               Some(crate::processor::ControlSignal::Stop) => {
                 state = State::Stopped;
                 inner_controller.state_sender.send(State::Stopped).await.unwrap();
                 let stop_message = inner.on_stop();
-                connection.network.send(Envelope::package(stop_message)).await;
+                connection.network.send(Package::package(stop_message)).await;
                 break;
               },
               Some(crate::processor::ControlSignal::GetState) => {
@@ -124,16 +124,16 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
           // ────────────────────────────────────────────────────────────────
           message = connection.network.receive() => {
             if let Some(message) = message
-              && let Some(handler) = handlers.get(&message.type_id) {
+              && let Some(handler) = handlers.get(&message.type_id()) {
                 // Safe: `inner` and `handlers` are separate locals, no aliasing.
-                let reply = handler(&mut inner as &mut dyn std::any::Any, message.payload);
+                let reply = handler(&mut inner as &mut dyn std::any::Any, &message);
 
                 match reply {
                   HandleResult::Stop => {
                     state = State::Stopped;
                     inner_controller.state_sender.send(State::Stopped).await.unwrap();
                     let stop_message = inner.on_stop();
-                    connection.network.send(Envelope::package(stop_message)).await;
+                    connection.network.send(Package::package(stop_message)).await;
                     break;
                   },
                   other => {
@@ -159,7 +159,11 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 #[cfg(test)]
 mod tests {
   use crate::{
-    fixtures::*, handler::Envelope, network::memory::InMemory, processor::State, runtime::Runtime,
+    fixtures::*,
+    handler::Package,
+    network::memory::{InMemory, InMemoryEnvelope},
+    processor::State,
+    runtime::Runtime,
   };
   use tokio_stream::StreamExt;
 
@@ -200,7 +204,7 @@ mod tests {
     assert_eq!(snapshots.next().await.unwrap(), 0);
 
     // Send a Ping, snapshot should become 1
-    sender.send(Envelope::package(Ping)).unwrap();
+    sender.send(<InMemoryEnvelope as Package<Ping>>::package(Ping)).unwrap();
     assert_eq!(snapshots.next().await.unwrap(), 1);
 
     processing.stop().await.unwrap();
@@ -220,10 +224,10 @@ mod tests {
     assert_eq!(snapshots.next().await.unwrap(), 0);
 
     // Both Ping and Pong should increment the counter
-    sender.send(Envelope::package(Ping)).unwrap();
+    sender.send(<InMemoryEnvelope as Package<Ping>>::package(Ping)).unwrap();
     assert_eq!(snapshots.next().await.unwrap(), 1);
 
-    sender.send(Envelope::package(Pong)).unwrap();
+    sender.send(<InMemoryEnvelope as Package<Pong>>::package(Pong)).unwrap();
     assert_eq!(snapshots.next().await.unwrap(), 2);
 
     processing.stop().await.unwrap();
