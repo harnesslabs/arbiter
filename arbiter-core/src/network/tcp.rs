@@ -2,15 +2,11 @@
 
 use std::{
   any::TypeId,
-  fmt::Debug,
   net::{SocketAddr, TcpStream},
-  ops::Deref,
 };
 
-use serde::{Deserialize, Serialize};
-
 use crate::{
-  handler::{Envelope, Message, Package, Unpackage},
+  handler::{Envelope, Message},
   network::{Generateable, Network},
 };
 
@@ -26,23 +22,15 @@ impl Envelope for TcpEnvelope {
   fn type_id(&self) -> TypeId {
     self.type_id
   }
-}
 
-impl<M> Package<M> for TcpEnvelope
-where
-  M: Message + Serialize,
-{
-  fn package(message: M) -> Self {
-    Self { type_id: TypeId::of::<M>(), payload: serde_json::to_vec(&message).unwrap() }
+  fn wrap<M: Message>(_message: M) -> Self {
+    todo!("TCP serialization not yet implemented")
   }
-}
 
-impl<M> Unpackage<M> for TcpEnvelope
-where
-  M: Message + for<'de> Deserialize<'de>,
-{
-  fn unpackage(&self) -> Option<impl Deref<Target = M>> {
-    serde_json::from_slice(&self.payload).ok().map(Box::new)
+  fn downcast<M: Message>(&self) -> Option<impl std::ops::Deref<Target = M> + '_> {
+    todo!("TCP deserialization not yet implemented");
+    #[allow(unreachable_code)]
+    None::<&M>
   }
 }
 

@@ -1,12 +1,11 @@
 use std::{
   any::{Any, TypeId},
   fmt::Debug,
-  ops::Deref,
   sync::Arc,
 };
 
 use crate::{
-  handler::{Envelope, Message, Package, Unpackage},
+  handler::{Envelope, Message},
   network::{Generateable, Network},
 };
 
@@ -28,16 +27,12 @@ impl Envelope for InMemoryEnvelope {
   fn type_id(&self) -> TypeId {
     self.type_id
   }
-}
 
-impl<M: Message> Package<M> for InMemoryEnvelope {
-  fn package(message: M) -> Self {
+  fn wrap<M: Message>(message: M) -> Self {
     Self { type_id: TypeId::of::<M>(), payload: Arc::new(message) }
   }
-}
 
-impl<M: Message> Unpackage<M> for InMemoryEnvelope {
-  fn unpackage(&self) -> Option<impl Deref<Target = M>> {
+  fn downcast<M: Message>(&self) -> Option<impl std::ops::Deref<Target = M> + '_> {
     (self.payload.as_ref() as &dyn Any).downcast_ref::<M>()
   }
 }
@@ -65,7 +60,7 @@ impl InMemoryAddress {
 
 impl Generateable for InMemoryAddress {
   fn generate() -> Self {
-    use std::sync::atomic::{AtomicU64, Ordering}; // Keep this for unique ID generation
+    use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);
     let mut bytes = [0u8; 32];
     let id = COUNTER.fetch_add(1, Ordering::Relaxed);

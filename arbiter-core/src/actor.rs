@@ -1,9 +1,7 @@
 use std::{any::TypeId, collections::HashMap, fmt::Debug};
 
 use crate::{
-  handler::{
-    Envelope, HandleResult, Handler, Message, MessageHandlerFn, Package, Unpackage, create_handler,
-  },
+  handler::{Envelope, HandleResult, Handler, Message, MessageHandlerFn, create_handler},
   network::{Connection, Generateable, Network},
   processor::{Controller, Processing, State},
 };
@@ -58,16 +56,12 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
   where
     M: Message,
     L: Handler<M>,
-    N::Envelope: Unpackage<M> + Package<L::Reply>,
   {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
   }
 
-  pub fn process(self) -> Processing<Self, L, N>
-  where
-    N::Envelope: Package<L::StartMessage> + Package<L::StopMessage>,
-  {
+  pub fn process(self) -> Processing<Self, L, N> {
     let processing_name = self.name.clone();
     let address = self.connection.address;
 
@@ -101,13 +95,13 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
                 inner_controller.state_sender.send(State::Running).await.unwrap();
                 let start_message = inner.on_start();
                 tracing::debug!(agent = ?name, "sending start_message");
-                connection.network.send(Package::package(start_message)).await;
+                connection.network.send(N::Envelope::wrap(start_message)).await;
               },
               Some(crate::processor::ControlSignal::Stop) => {
                 state = State::Stopped;
                 inner_controller.state_sender.send(State::Stopped).await.unwrap();
                 let stop_message = inner.on_stop();
-                connection.network.send(Package::package(stop_message)).await;
+                connection.network.send(N::Envelope::wrap(stop_message)).await;
                 break;
               },
               Some(crate::processor::ControlSignal::GetState) => {
@@ -133,7 +127,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
                     state = State::Stopped;
                     inner_controller.state_sender.send(State::Stopped).await.unwrap();
                     let stop_message = inner.on_stop();
-                    connection.network.send(Package::package(stop_message)).await;
+                    connection.network.send(N::Envelope::wrap(stop_message)).await;
                     break;
                   },
                   other => {
@@ -160,7 +154,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 mod tests {
   use crate::{
     fixtures::*,
-    handler::Package,
+    handler::Envelope as _,
     network::memory::{InMemory, InMemoryEnvelope},
     processor::State,
     runtime::Runtime,
@@ -204,7 +198,7 @@ mod tests {
     assert_eq!(snapshots.next().await.unwrap(), 0);
 
     // Send a Ping, snapshot should become 1
-    sender.send(<InMemoryEnvelope as Package<Ping>>::package(Ping)).unwrap();
+    sender.send(InMemoryEnvelope::wrap(Ping)).unwrap();
     assert_eq!(snapshots.next().await.unwrap(), 1);
 
     processing.stop().await.unwrap();
@@ -224,10 +218,10 @@ mod tests {
     assert_eq!(snapshots.next().await.unwrap(), 0);
 
     // Both Ping and Pong should increment the counter
-    sender.send(<InMemoryEnvelope as Package<Ping>>::package(Ping)).unwrap();
+    sender.send(InMemoryEnvelope::wrap(Ping)).unwrap();
     assert_eq!(snapshots.next().await.unwrap(), 1);
 
-    sender.send(<InMemoryEnvelope as Package<Pong>>::package(Pong)).unwrap();
+    sender.send(InMemoryEnvelope::wrap(Pong)).unwrap();
     assert_eq!(snapshots.next().await.unwrap(), 2);
 
     processing.stop().await.unwrap();

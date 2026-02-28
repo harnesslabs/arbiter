@@ -15,14 +15,8 @@ impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
 /// The envelope trait — each [`Network`] defines its own concrete envelope type.
 pub trait Envelope: Clone + Send + Sync + Debug + 'static {
   fn type_id(&self) -> TypeId;
-}
-
-pub trait Package<M: Message> {
-  fn package(message: M) -> Self;
-}
-
-pub trait Unpackage<M: Message> {
-  fn unpackage(&self) -> Option<impl Deref<Target = M>>;
+  fn wrap<M: Message>(message: M) -> Self;
+  fn downcast<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>;
 }
 
 #[derive(Debug)]
@@ -69,18 +63,17 @@ where
   L: Handler<M> + 'static,
   M: Message,
   N: Network,
-  N::Envelope: Unpackage<M> + Package<L::Reply>,
 {
   Box::new(move |agent: &mut dyn Any, envelope: &N::Envelope| {
     let Some(typed_agent) = agent.downcast_mut::<L>() else {
       unreachable!("type mismatch: agent is not the expected Handler type");
     };
 
-    let Some(message) = envelope.unpackage() else {
-      tracing::error!(type_id = ?TypeId::of::<M>(), "failed to unpackage message");
+    let Some(message) = envelope.downcast::<M>() else {
+      tracing::error!(type_id = ?TypeId::of::<M>(), "failed to downcast message");
       return HandleResult::None;
     };
 
-    typed_agent.handle(&*message).into().map(Package::package)
+    typed_agent.handle(&*message).into().map(N::Envelope::wrap)
   })
 }
