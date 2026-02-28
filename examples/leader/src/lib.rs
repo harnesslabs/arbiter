@@ -1,7 +1,7 @@
-//! # Leader-Follower Agent Simulation with Arbiter-Core
+//! # Leader-Follower Agent Simulation with Arbiter
 //!
 //! A WebAssembly library that demonstrates a multi-agent system using our custom
-//! arbiter-core framework with dynamic agent lifecycle management.
+//! arbiter framework with dynamic agent lifecycle management.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -80,7 +80,7 @@ fn get_shared_agent_state() -> &'static Arc<Mutex<HashMap<String, (String, Posit
 #[wasm_bindgen(start)]
 pub fn main() {
   console_error_panic_hook::set_once();
-  console::log_1(&"Leader-Follower Simulation WASM module initialized with Arbiter-Core!".into());
+  console::log_1(&"Leader-Follower Simulation WASM module initialized with Arbiter!".into());
 }
 
 /// Get all agent positions for rendering (called from JavaScript)

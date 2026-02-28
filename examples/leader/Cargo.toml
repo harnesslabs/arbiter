@@ -18,7 +18,7 @@ path = "src/server.rs"
 [dependencies]
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-arbiter-core = { path = "../../arbiter-core" }
+arbiter = { path = "../../arbiter" }
 console_error_panic_hook = { version = "0.1" }
 getrandom = { version = "0.2", features = ["js"] }
 gloo-timers = { version = "0.2", features = ["futures"] }

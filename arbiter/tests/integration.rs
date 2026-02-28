@@ -1,4 +1,4 @@
-//! Integration tests for `arbiter-core` exercising the full actor lifecycle,
+//! Integration tests for `arbiter` exercising the full actor lifecycle,
 //! multi-actor communication, and snapshot streaming — all using the shared
 //! fixtures (`PingPlayer`, `PongPlayer`, `Counter`, `Ping`, `Pong`).
 
