@@ -10,7 +10,7 @@ pub mod runtime;
 pub mod prelude {
   pub use crate::{
     actor::LifeCycle,
-    handler::{HandleResult, Handler, Message},
+    handler::{Handler, Message},
     network::Network,
   };
 }
@@ -53,18 +53,20 @@ pub mod fixtures {
   impl Handler<Ping> for Counter {
     type Reply = ();
 
-    fn handle(&mut self, _message: &Ping) {
+    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> {
       self.count += 1;
       tracing::debug!(count = self.count, "Counter received Ping");
+      None
     }
   }
 
   impl Handler<Pong> for Counter {
     type Reply = ();
 
-    fn handle(&mut self, _message: &Pong) {
+    fn handle(&mut self, _message: &Pong) -> Option<Self::Reply> {
       self.count += 1;
       tracing::debug!(count = self.count, "Counter received Pong");
+      None
     }
   }
 
@@ -93,18 +95,17 @@ pub mod fixtures {
     fn snapshot(&self) -> Self::Snapshot {
       self.count
     }
+    fn should_stop(&self) -> bool {
+      self.count >= self.max_count
+    }
   }
 
   impl Handler<Pong> for PingPlayer {
     type Reply = Ping;
 
-    fn handle(&mut self, _message: &Pong) -> HandleResult<Self::Reply> {
-      if self.count == self.max_count {
-        HandleResult::Stop
-      } else {
-        self.count += 1;
-        HandleResult::Message(Ping)
-      }
+    fn handle(&mut self, _message: &Pong) -> Option<Self::Reply> {
+      self.count += 1;
+      Some(Ping)
     }
   }
 
@@ -129,8 +130,8 @@ pub mod fixtures {
   impl Handler<Ping> for PongPlayer {
     type Reply = Pong;
 
-    fn handle(&mut self, _message: &Ping) -> Self::Reply {
-      Pong
+    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> {
+      Some(Pong)
     }
   }
 }

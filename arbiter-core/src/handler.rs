@@ -19,44 +19,15 @@ pub trait Envelope: Clone + Send + Sync + Debug + 'static {
   fn downcast<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>;
 }
 
-#[derive(Debug)]
-pub enum HandleResult<M: Message> {
-  Message(M),
-  None,
-  Stop,
-}
-
-impl<M: Message> HandleResult<M> {
-  pub fn map<R: Message>(self, f: impl FnOnce(M) -> R) -> HandleResult<R> {
-    match self {
-      Self::Message(m) => HandleResult::Message(f(m)),
-      Self::None => HandleResult::None,
-      Self::Stop => HandleResult::Stop,
-    }
-  }
-}
-
-impl<M: Message> From<M> for HandleResult<M> {
-  fn from(message: M) -> Self {
-    Self::Message(message)
-  }
-}
-
-impl<M: Message> From<Option<M>> for HandleResult<M> {
-  fn from(message: Option<M>) -> Self {
-    message.map_or(Self::None, Self::Message)
-  }
-}
-
 pub trait Handler<M> {
   type Reply: Message;
 
-  fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply>>;
+  fn handle(&mut self, message: &M) -> Option<Self::Reply>;
 }
 
 #[allow(type_alias_bounds)]
 pub type MessageHandlerFn<N: Network> =
-  Box<dyn Fn(&mut dyn Any, &N::Envelope) -> HandleResult<N::Envelope> + Send + Sync>;
+  Box<dyn Fn(&mut dyn Any, &N::Envelope) -> Option<N::Envelope> + Send + Sync>;
 
 pub fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
@@ -71,9 +42,9 @@ where
 
     let Some(message) = envelope.downcast::<M>() else {
       tracing::error!(type_id = ?TypeId::of::<M>(), "failed to downcast message");
-      return HandleResult::None;
+      return None;
     };
 
-    typed_agent.handle(&*message).into().map(N::Envelope::wrap)
+    typed_agent.handle(&*message).map(N::Envelope::wrap)
   })
 }

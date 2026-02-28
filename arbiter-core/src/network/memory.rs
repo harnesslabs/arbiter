@@ -46,15 +46,11 @@ pub struct InMemory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct InMemoryAddress([u8; 32]);
+pub struct InMemoryAddress(u64);
 
-impl InMemoryAddress {
-  pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-    Self(bytes)
-  }
-
-  pub const fn as_bytes(&self) -> &[u8; 32] {
-    &self.0
+impl std::fmt::Display for InMemoryAddress {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "actor-{}", self.0)
   }
 }
 
@@ -62,17 +58,7 @@ impl Generateable for InMemoryAddress {
   fn generate() -> Self {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);
-    let mut bytes = [0u8; 32];
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    bytes[..8].copy_from_slice(&id.to_le_bytes());
-    Self(bytes)
-  }
-}
-
-impl std::fmt::Display for InMemoryAddress {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let short = &self.0[..4];
-    write!(f, "agent-{:02x}{:02x}{:02x}{:02x}", short[0], short[1], short[2], short[3])
+    Self(COUNTER.fetch_add(1, Ordering::Relaxed))
   }
 }
 

@@ -1,7 +1,7 @@
 use std::{any::TypeId, collections::HashMap, fmt::Debug};
 
 use crate::{
-  handler::{Envelope, HandleResult, Handler, Message, MessageHandlerFn, create_handler},
+  handler::{Envelope, Handler, Message, MessageHandlerFn, create_handler},
   network::{Connection, Generateable, Network},
   processor::{Controller, Processing, State},
 };
@@ -16,6 +16,9 @@ pub trait LifeCycle: Send + Sync + 'static {
   fn on_start(&mut self) -> Self::StartMessage;
   fn on_stop(&mut self) -> Self::StopMessage;
   fn snapshot(&self) -> Self::Snapshot;
+  fn should_stop(&self) -> bool {
+    false
+  }
 }
 
 // ── Actor ────────────────────────────────────────────────────────────
@@ -119,23 +122,20 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
           message = connection.network.receive() => {
             if let Some(message) = message
               && let Some(handler) = handlers.get(&message.type_id()) {
-                // Safe: `inner` and `handlers` are separate locals, no aliasing.
                 let reply = handler(&mut inner as &mut dyn std::any::Any, &message);
 
-                match reply {
-                  HandleResult::Stop => {
-                    state = State::Stopped;
-                    inner_controller.state_sender.send(State::Stopped).await.unwrap();
-                    let stop_message = inner.on_stop();
-                    connection.network.send(N::Envelope::wrap(stop_message)).await;
-                    break;
-                  },
-                  other => {
-                    if let HandleResult::Message(envelope) = other {
-                      connection.network.send(envelope).await;
-                    }
-                    let _ = inner_controller.snapshot_sender.send(inner.snapshot());
-                  },
+                if let Some(envelope) = reply {
+                  connection.network.send(envelope).await;
+                }
+
+                let _ = inner_controller.snapshot_sender.send(inner.snapshot());
+
+                if inner.should_stop() {
+                  state = State::Stopped;
+                  inner_controller.state_sender.send(State::Stopped).await.unwrap();
+                  let stop_message = inner.on_stop();
+                  connection.network.send(N::Envelope::wrap(stop_message)).await;
+                  break;
                 }
               }
           }
