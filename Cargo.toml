@@ -3,7 +3,7 @@ members  = ["arbiter", "examples/leader"]
 resolver = "2"
 
 [workspace.dependencies]
-arbiter = { path = "./arbiter" }
+arbiter = { path = "./arbiter", version = "=0.5.0" }
 
 [profile.release]
 codegen-units = 1
