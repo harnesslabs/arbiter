@@ -1,32 +1,12 @@
 [book]
-authors      = ["Arbiter Contributors"]
-language     = "en"
-multilingual = false
-src          = "docs"
-title        = "Arbiter Documentation"
+authors  = ["Arbiter Contributors"]
+language = "en"
+src      = "docs"
+title    = "Arbiter Documentation"
 
 
 [output.html]
-katex = true
-
-[preprocessor.katex]
-after = ["links"]
-# KaTeX options.
-error-color        = "#cc0000"
-fleqn              = false
-leqno              = false
-max-expand         = 1000
-max-size           = "Infinity"
-min-rule-thickness = -1.0
-output             = "html"
-throw-on-error     = true
-trust              = false
-# Extra options.
-block-delimiter  = { left = "$$", right = "$$" }
-include-src      = false
-inline-delimiter = { left = "$", right = "$" }
-no-css           = false
-
-[output.linkcheck]
-follow-web-links = false
-optional         = true
+default-theme        = "dark"
+git-repository-url   = "https://github.com/harnesslabs/arbiter"
+preferred-dark-theme = "ayu"
+site-url             = "https://arbiter.harnesslabs.dev"
