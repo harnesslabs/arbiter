@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: nightly
           components: rustfmt
 
       - name: Rust Cache
@@ -42,7 +42,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Install taplo
         uses: taiki-e/install-action@cargo-binstall
@@ -66,7 +66,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -85,7 +85,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
           components: clippy
 
       - name: Rust Cache
@@ -108,7 +108,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -116,7 +116,7 @@ jobs:
           key: rust/test
 
       - name: Run tests
-        run: cargo test --verbose --workspace
+        run: cargo test --verbose --workspace --all-features
 
   semver:
     name: semver
@@ -130,7 +130,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-02-24
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -154,7 +154,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: nightly
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -167,7 +167,7 @@ jobs:
           tool: cargo-udeps
 
       - name: Run cargo-udeps
-        run: cargo udeps --workspace
+        run: cargo udeps --workspace --all-features --all-targets
 
   doc:
     name: doc
@@ -178,7 +178,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2025-05-25
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2

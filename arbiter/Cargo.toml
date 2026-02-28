@@ -1,11 +1,36 @@
 [package]
+name = "arbiter"
+
 authors     = ["Harness Labs"]
-description = "A Rust-based multi-agent framework."
+description = "A framework for building distributed systems with actors."
 edition     = "2024"
-keywords    = ["multi-agent", "framework"]
+keywords    = ["actor", "agent", "framework", "distributed", "network"]
 license     = "AGPL-3.0"
-name        = "arbiter"
+readme      = "../README.md"
+repository  = "https://github.com/harnesslabs/arbiter"
 version     = "0.5.0"
 
 [dependencies]
-arbiter-core = { workspace = true }
+tokio-stream = { version = "0.1" }
+
+# Errors / Logging
+thiserror = { version = "2.0" }
+tracing   = { version = "0.1" }
+
+# Runtimes
+tokio = { version = "1.49", default-features = false, features = [
+  "rt",
+  "macros",
+] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio_with_wasm = { version = "0.9.0", default-features = false, features = [
+  "rt",
+  "macros",
+] }
+
+[features]
+default   = ["in-memory"]
+fixtures  = []
+in-memory = []
+tcp       = []

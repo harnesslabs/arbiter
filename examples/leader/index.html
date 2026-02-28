@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="utf-8">
-    <title>Leader-Follower Simulation | Arbiter-Core</title>
+    <title>Leader-Follower Simulation | Arbiter</title>
     <style>
         * {
             margin: 0;
@@ -179,8 +179,8 @@
         }
 
         .agent-list-container {
-            max-height: 320px;
-            min-height: 320px;
+            max-height: 200px;
+            min-height: 150px;
             overflow-y: auto;
             border: 1px solid #e2e8f0;
             border-radius: 8px;
@@ -258,6 +258,11 @@
             color: white;
         }
 
+        .agent-state.unprocessed {
+            background-color: #64748b;
+            color: white;
+        }
+
         .agent-controls {
             display: grid;
             grid-template-columns: 1fr 1fr 1fr 1fr;
@@ -283,6 +288,11 @@
 
         .agent-btn.pause {
             background-color: #f59e0b;
+            color: white;
+        }
+
+        .agent-btn.process {
+            background-color: #8b5cf6;
             color: white;
         }
 
@@ -337,7 +347,7 @@
         <div class="header">
             <div class="brand">Harness Labs</div>
             <h1>Leader-Follower Simulation</h1>
-            <p>Multi-agent system using Arbiter-Core in WebAssembly</p>
+            <p>Multi-agent system using Arbiter in WebAssembly</p>
         </div>
 
         <div class="demo-container">
@@ -365,9 +375,16 @@
                 </div>
 
                 <div class="control-group">
-                    <h3>Agent Controls</h3>
+                    <h3>Processing Agents</h3>
                     <div class="agent-list-container">
-                        <div id="agentList"></div>
+                        <div id="processingAgentList"></div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <h3>Unprocessed Agents</h3>
+                    <div class="agent-list-container">
+                        <div id="unprocessedAgentList"></div>
                     </div>
                 </div>
             </div>
@@ -376,14 +393,9 @@
 
     <script type="module">
         import init, {
-            Runtime,
-            create_leader_follower_simulation,
-            simulation_tick,
-            add_simulation_agent,
-            get_agent_positions,
-            clear_all_agents,
-            remove_single_agent
-        } from './pkg/leader.js';
+            Simulation,
+            get_agent_positions
+        } from './pkg/leader.js?bust=3';
 
         // Global state
         let wasmModule = null;
@@ -477,42 +489,69 @@
         function updateAgentList() {
             if (!runtime) return;
 
-            const agentListContainer = document.getElementById('agentList');
+            const processingListContainer = document.getElementById('processingAgentList');
+            const unprocessedListContainer = document.getElementById('unprocessedAgentList');
 
             try {
                 const agentNamesJson = runtime.agentNames();
                 const agentNames = JSON.parse(agentNamesJson);
 
                 if (agentNames.length === 0) {
-                    agentListContainer.innerHTML = '<div class="empty-state">No agents added yet</div>';
+                    processingListContainer.innerHTML = '<div class="empty-state">No processing agents</div>';
+                    unprocessedListContainer.innerHTML = '<div class="empty-state">No unprocessed agents</div>';
                     return;
                 }
 
-                let html = '';
+                let processingHtml = '';
+                let unprocessedHtml = '';
+
+                let processingCount = 0;
+                let unprocessedCount = 0;
+
                 agentNames.forEach(agentName => {
                     const state = runtime.agentState(agentName);
                     const stateClass = state.toLowerCase();
                     const isRunning = state === 'Running';
                     const isPaused = state === 'Paused';
                     const isStopped = state === 'Stopped';
+                    const isUnprocessed = state === 'Unprocessed';
 
-                    html += `
-                        <div class="agent-item">
-                            <div class="agent-header">
-                                <span class="agent-id">${agentName}</span>
-                                <span class="agent-state ${stateClass}">${state}</span>
+                    if (isUnprocessed) {
+                        unprocessedCount++;
+                        unprocessedHtml += `
+                            <div class="agent-item">
+                                <div class="agent-header">
+                                    <span class="agent-id">${agentName}</span>
+                                    <span class="agent-state ${stateClass}">${state}</span>
+                                </div>
+                                <div class="agent-controls" style="grid-template-columns: 1fr 1fr;">
+                                    <button class="agent-btn process" onclick="controlAgent('${agentName}', 'process')">Process</button>
+                                    <button class="agent-btn remove" onclick="controlAgent('${agentName}', 'remove')">Remove</button>
+                                </div>
                             </div>
-                            <div class="agent-controls">
-                                <button class="agent-btn start" onclick="controlAgent('${agentName}', 'start')" ${isRunning ? 'disabled' : ''}>Start</button>
-                                <button class="agent-btn pause" onclick="controlAgent('${agentName}', 'pause')" ${!isRunning ? 'disabled' : ''}>Pause</button>
-                                <button class="agent-btn stop" onclick="controlAgent('${agentName}', 'stop')" ${isStopped ? 'disabled' : ''}>Stop</button>
-                                <button class="agent-btn remove" onclick="controlAgent('${agentName}', 'remove')">Remove</button>
+                        `;
+                    } else {
+                        processingCount++;
+                        processingHtml += `
+                            <div class="agent-item">
+                                <div class="agent-header">
+                                    <span class="agent-id">${agentName}</span>
+                                    <span class="agent-state ${stateClass}">${state}</span>
+                                </div>
+                                <div class="agent-controls">
+                                    <button class="agent-btn start" onclick="controlAgent('${agentName}', 'start')" ${isRunning ? 'disabled' : ''}>Start</button>
+                                    <button class="agent-btn pause" onclick="controlAgent('${agentName}', 'pause')" ${!isRunning ? 'disabled' : ''}>Pause</button>
+                                    <button class="agent-btn stop" onclick="controlAgent('${agentName}', 'stop')" ${isStopped ? 'disabled' : ''}>Stop</button>
+                                    <button class="agent-btn remove" onclick="controlAgent('${agentName}', 'remove')">Remove</button>
+                                </div>
                             </div>
-                        </div>
-                    `;
+                        `;
+                    }
                 });
 
-                agentListContainer.innerHTML = html;
+                processingListContainer.innerHTML = processingCount > 0 ? processingHtml : '<div class="empty-state">No processing agents</div>';
+                unprocessedListContainer.innerHTML = unprocessedCount > 0 ? unprocessedHtml : '<div class="empty-state">No unprocessed agents</div>';
+
             } catch (error) {
                 console.error('Error updating agent list:', error);
             }
@@ -534,12 +573,11 @@
                     case 'stop':
                         success = runtime.stopAgent(agentId);
                         break;
+                    case 'process':
+                        success = runtime.processAgent(agentId);
+                        break;
                     case 'remove':
                         success = runtime.removeAgent(agentId);
-                        if (success) {
-                            // Also remove from shared state
-                            remove_single_agent(agentId);
-                        }
                         break;
                 }
 
@@ -549,16 +587,14 @@
             } catch (error) {
                 console.error(`Error ${action} agent ${agentId}:`, error);
             }
-        };
-
-        // Main simulation loop - separated simulation ticking from rendering
+        };        // Main simulation loop - separated simulation ticking from rendering
         function simulationLoop(currentTime) {
             if (!simulationRunning || !runtime) return;
 
             try {
                 // Only tick simulation at specified interval (20 FPS)
                 if (currentTime - lastTickTime >= TICK_INTERVAL) {
-                    simulation_tick(runtime);
+                    runtime.simulation_tick();
                     lastTickTime = currentTime;
                 }
 
@@ -586,7 +622,7 @@
                 console.log("WASM module loaded successfully");
 
                 // Create runtime
-                runtime = create_leader_follower_simulation(1000, 680);
+                runtime = new Simulation(1000, 680);
                 console.log("Runtime created");
 
                 // Set up event listeners
@@ -622,7 +658,7 @@
 
                 try {
                     const isLeader = placementMode === 'leader';
-                    const agentId = add_simulation_agent(runtime, x, y, isLeader);
+                    const agentId = runtime.add_agent(x, y, isLeader);
 
                     if (agentId) {
                         console.log(`Added ${isLeader ? 'leader' : 'follower'} "${agentId}" at (${x}, ${y})`);
@@ -654,13 +690,10 @@
                 if (!runtime) return;
 
                 try {
-                    // Remove all agents from runtime
-                    const removed = runtime.removeAllAgents();
-
                     // Clear shared state and reset counters  
-                    clear_all_agents();
+                    runtime.clear_all_agents();
 
-                    console.log(`Cleared ${removed} agents and reset state`);
+                    console.log(`Cleared agents and reset state`);
                     placementMode = null;
                     updateButtonStates();
                     updateAgentList();

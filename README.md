@@ -15,9 +15,6 @@
 
 ## NOTE
 Arbiter is under active development to enter into a new phase.
-We are currently working on the following:
-- [ ] `arbiter`: crate should be a lib to re-export our sub crates.
-- [ ] `arbiter-core` becomes `arbiter-ethereum` or `arbiter-evm`.
 
 ## Contributing
 
