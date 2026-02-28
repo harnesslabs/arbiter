@@ -9,13 +9,65 @@
 </p>
 
 ## Overview
-> **Arbiter** is a multi-agent framework that lets developers orchestrate event-driven simulations.
+
+> **Arbiter** is a Rust-based, event-driven multi-agent framework that lets developers orchestrate strongly-typed, high-performance simulations and networked systems.
+
+Arbiter provides the foundational types and traits for building actor-based systems with pluggable networking and lifecycle management. It is designed around a lightweight actor model tailored for discrete-event simulation, automated trading, and complex distributed systems.
 
 ---
 
-## NOTE
-Arbiter is under active development to enter into a new phase.
+## Core Concepts
+
+Arbiter's architecture is built around several key traits and structs that make agent development straightforward:
+
+- **`Actor`**: The core execution unit. Contains the agent's internal state and logic.
+- **`LifeCycle`**: A trait defining the start, stop, and snapshot behavior of an actor.
+- **`Handler<M>`**: A trait used to implement message-handling logic for specific message types.
+- **`Network`**: A generalized trait for instantiating and managing connections between parts of the system.
+- **`Runtime`**: Manages the execution context of the actors, mediating subscriptions and routing messages.
+
+## Quick Example
+
+Here is a glimpse of how you can build a simple actor with Arbiter that handles `Ping` messages:
+
+```rust
+use arbiter::prelude::*;
+
+#[derive(Debug, Clone)]
+pub struct Ping;
+
+#[derive(Debug, Clone)]
+pub struct Counter {
+    pub count: usize,
+}
+
+// Define the actor's lifecycle
+impl LifeCycle for Counter {
+    type Snapshot = usize;
+    type StartMessage = ();
+    type StopMessage = ();
+
+    fn on_start(&mut self) -> Self::StartMessage {}
+    fn on_stop(&mut self) -> Self::StopMessage {}
+    fn snapshot(&self) -> Self::Snapshot { self.count }
+}
+
+// Implement message passing logic
+impl Handler<Ping> for Counter {
+    type Reply = ();
+
+    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> {
+        self.count += 1;
+        println!("Counter received Ping. Total: {}", self.count);
+        None
+    }
+}
+```
+
+## Documentation
+
+For an in-depth dive into Arbiter's design, extensive examples, and API specifics, please check out our [MDBook Documentation](https://arbiter.harnesslabs.dev).
 
 ## Contributing
 
-See our [Contributing Guidelines](https://github.com/anthias-labs/arbiter/blob/main/.github/CONTRIBUTING.md)
+We welcome community contributions! Please see our [Contributing Guidelines](https://github.com/harnesslabs/arbiter/blob/main/.github/CONTRIBUTING.md) to get started.
