@@ -10,24 +10,23 @@ pub mod follower;
 pub mod leader;
 
 use std::{
+  cell::RefCell,
   collections::HashMap,
+  rc::Rc,
   sync::{Arc, Mutex, OnceLock},
 };
 
 use arbiter::{
-  actor::LifeCycle,
+  actor::{Actor, LifeCycle},
   handler::{Envelope, Handler},
   network::memory::{InMemory, InMemoryEnvelope},
+  processor::Processing,
   runtime::Runtime,
 };
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 
 use crate::{follower::Follower, leader::Leader};
-use arbiter::actor::Actor;
-use arbiter::processor::Processing;
-use std::cell::RefCell;
-use std::rc::Rc;
 
 pub enum AgentProcessing {
   Leader(Option<Processing<Actor<Leader, InMemory>, Leader, InMemory>>),
@@ -56,9 +55,7 @@ pub struct Position {
 }
 
 impl Position {
-  pub const fn new(x: f64, y: f64) -> Self {
-    Self { x, y }
-  }
+  pub const fn new(x: f64, y: f64) -> Self { Self { x, y } }
 
   pub fn distance_to(&self, other: &Self) -> f64 {
     let dx = self.x - other.x;
@@ -132,9 +129,9 @@ static mut CANVAS_WIDTH: f64 = 0.0;
 
 #[wasm_bindgen]
 pub struct Simulation {
-  runtime: Runtime<InMemory>,
+  runtime:          Runtime<InMemory>,
   #[wasm_bindgen(skip)]
-  pub agents: HashMap<String, Rc<RefCell<AgentProcessing>>>,
+  pub agents:       HashMap<String, Rc<RefCell<AgentProcessing>>>,
   #[wasm_bindgen(skip)]
   pub agent_states: Rc<RefCell<HashMap<String, String>>>,
 }
@@ -176,9 +173,7 @@ impl Simulation {
 
   /// Step the simulation forward by one tick
   #[wasm_bindgen]
-  pub fn simulation_tick(&mut self) {
-    self.runtime.network().send(InMemoryEnvelope::wrap(Tick));
-  }
+  pub fn simulation_tick(&mut self) { self.runtime.network().send(InMemoryEnvelope::wrap(Tick)); }
 
   /// Remove a single agent from shared state
   #[wasm_bindgen]
@@ -186,16 +181,14 @@ impl Simulation {
     if let Some(agent) = self.agents.remove(agent_id) {
       wasm_bindgen_futures::spawn_local(async move {
         match &mut *agent.borrow_mut() {
-          AgentProcessing::Leader(p) => {
+          AgentProcessing::Leader(p) =>
             if let Some(p) = p.take() {
               let _ = p.stop().await;
-            }
-          },
-          AgentProcessing::Follower(p) => {
+            },
+          AgentProcessing::Follower(p) =>
             if let Some(p) = p.take() {
               let _ = p.stop().await;
-            }
-          },
+            },
           AgentProcessing::UnprocessedLeader(_) | AgentProcessing::UnprocessedFollower(_) => {},
         }
       });
@@ -220,16 +213,14 @@ impl Simulation {
     for (_, agent) in self.agents.drain() {
       wasm_bindgen_futures::spawn_local(async move {
         match &mut *agent.borrow_mut() {
-          AgentProcessing::Leader(p) => {
+          AgentProcessing::Leader(p) =>
             if let Some(p) = p.take() {
               let _ = p.stop().await;
-            }
-          },
-          AgentProcessing::Follower(p) => {
+            },
+          AgentProcessing::Follower(p) =>
             if let Some(p) = p.take() {
               let _ = p.stop().await;
-            }
-          },
+            },
           AgentProcessing::UnprocessedLeader(_) | AgentProcessing::UnprocessedFollower(_) => {},
         }
       });
@@ -302,7 +293,8 @@ impl Simulation {
   #[wasm_bindgen(js_name = agentNames)]
   pub fn agent_names(&self) -> String {
     let names: Vec<String> = self.agents.keys().cloned().collect();
-    // Serialize manually or use serde_json if available. We can do it manually to avoid adding deps if we want.
+    // Serialize manually or use serde_json if available. We can do it manually to avoid adding deps
+    // if we want.
     let mut json = String::from("[");
     for (i, name) in names.iter().enumerate() {
       if i > 0 {
@@ -377,20 +369,18 @@ impl Simulation {
       wasm_bindgen_futures::spawn_local(async move {
         let mut unprocessed = None;
         match &mut *agent.borrow_mut() {
-          AgentProcessing::Leader(p) => {
+          AgentProcessing::Leader(p) =>
             if let Some(p) = p.take() {
               if let Ok(actor) = p.stop().await {
                 unprocessed = Some(AgentProcessing::UnprocessedLeader(Some(actor)));
               }
-            }
-          },
-          AgentProcessing::Follower(p) => {
+            },
+          AgentProcessing::Follower(p) =>
             if let Some(p) = p.take() {
               if let Ok(actor) = p.stop().await {
                 unprocessed = Some(AgentProcessing::UnprocessedFollower(Some(actor)));
               }
-            }
-          },
+            },
           _ => {},
         }
 
@@ -412,16 +402,14 @@ impl Simulation {
       let mut to_process_follower = None;
 
       match &mut *agent_rc.borrow_mut() {
-        AgentProcessing::UnprocessedLeader(actor_opt) => {
+        AgentProcessing::UnprocessedLeader(actor_opt) =>
           if let Some(actor) = actor_opt.take() {
             to_process_leader = Some(actor);
-          }
-        },
-        AgentProcessing::UnprocessedFollower(actor_opt) => {
+          },
+        AgentProcessing::UnprocessedFollower(actor_opt) =>
           if let Some(actor) = actor_opt.take() {
             to_process_follower = Some(actor);
-          }
-        },
+          },
         _ => return false,
       }
 

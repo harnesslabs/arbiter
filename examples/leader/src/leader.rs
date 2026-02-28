@@ -4,13 +4,13 @@ use crate::canvas::PositionUpdate;
 /// Simple leader agent that moves randomly
 #[derive(Clone)]
 pub struct Leader {
-  pub id: String,
-  pub position: Position,
-  pub canvas_width: f64,
-  pub canvas_height: f64,
-  pub speed: f64,
-  pub current_direction: f64,
-  pub direction_steps: u32,
+  pub id:                  String,
+  pub position:            Position,
+  pub canvas_width:        f64,
+  pub canvas_height:       f64,
+  pub speed:               f64,
+  pub current_direction:   f64,
+  pub direction_steps:     u32,
   pub max_direction_steps: u32,
 }
 
@@ -80,9 +80,7 @@ impl LifeCycle for Leader {
     console::log_1(&format!("🛑 {} stopped", self.id).into());
   }
 
-  fn snapshot(&self) -> Self::Snapshot {
-    self.position.clone()
-  }
+  fn snapshot(&self) -> Self::Snapshot { self.position.clone() }
 }
 
 impl Handler<Tick> for Leader {
@@ -92,9 +90,9 @@ impl Handler<Tick> for Leader {
     self.move_agent();
 
     Some(PositionUpdate {
-      id: self.id.clone(),
+      id:         self.id.clone(),
       agent_type: "leader".to_string(),
-      position: self.position.clone(),
+      position:   self.position.clone(),
     })
   }
 }

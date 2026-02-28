@@ -22,7 +22,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-02-25
+          toolchain: nightly
           components: rustfmt
 
       - name: Rust Cache
@@ -130,7 +130,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2026-02-24
+          toolchain: stable
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -154,7 +154,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: stable
+          toolchain: nightly
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2

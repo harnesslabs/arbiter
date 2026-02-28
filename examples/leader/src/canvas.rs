@@ -6,9 +6,9 @@ use crate::{get_shared_agent_state, Position};
 /// Message to update an agent's position in the shared canvas state
 #[derive(Clone, Debug)]
 pub struct PositionUpdate {
-  pub id: String,
+  pub id:         String,
   pub agent_type: String,
-  pub position: Position,
+  pub position:   Position,
 }
 
 /// Message to remove an agent from the shared canvas state
@@ -22,9 +22,7 @@ pub struct RemoveAgent {
 pub struct Canvas;
 
 impl Canvas {
-  pub fn new() -> Self {
-    Self
-  }
+  pub fn new() -> Self { Self }
 }
 
 impl LifeCycle for Canvas {

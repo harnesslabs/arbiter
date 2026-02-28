@@ -21,9 +21,7 @@ impl<N: Network> Runtime<N> {
   /// Creates a new `Runtime` wrapped around a fresh `Network`.
   #[must_use]
   #[allow(clippy::new_without_default)]
-  pub fn new() -> Self {
-    Self { network: N::new() }
-  }
+  pub fn new() -> Self { Self { network: N::new() } }
 
   /// Spawns a new actor into the runtime, connecting it to the network.
   ///
@@ -46,7 +44,5 @@ impl<N: Network> Runtime<N> {
 
   /// Returns a reference to the underlying network.
   #[must_use]
-  pub const fn network(&self) -> &N {
-    &self.network
-  }
+  pub const fn network(&self) -> &N { &self.network }
 }

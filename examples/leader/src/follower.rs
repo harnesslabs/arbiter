@@ -4,10 +4,10 @@ use crate::canvas::PositionUpdate;
 /// Simple follower agent that follows the closest leader
 #[derive(Clone)]
 pub struct Follower {
-  pub id: String,
-  pub position: Position,
-  pub speed: f64,
-  pub follow_distance: f64,
+  pub id:               String,
+  pub position:         Position,
+  pub speed:            f64,
+  pub follow_distance:  f64,
   pub target_leader_id: Option<String>,
   pub leader_positions: HashMap<String, Position>, // Store leader positions
 }
@@ -72,9 +72,7 @@ impl LifeCycle for Follower {
     console::log_1(&format!("🛑 {} stopped", self.id).into());
   }
 
-  fn snapshot(&self) -> Self::Snapshot {
-    self.position.clone()
-  }
+  fn snapshot(&self) -> Self::Snapshot { self.position.clone() }
 }
 
 impl Handler<Tick> for Follower {
@@ -96,9 +94,9 @@ impl Handler<Tick> for Follower {
     self.follow_target();
 
     Some(PositionUpdate {
-      id: self.id.clone(),
+      id:         self.id.clone(),
       agent_type: "follower".to_string(),
-      position: self.position.clone(),
+      position:   self.position.clone(),
     })
   }
 }

@@ -1,5 +1,4 @@
 use thiserror::Error;
-
 #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
 use tokio::task::JoinError as TaskJoinError;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]

@@ -19,24 +19,20 @@ use crate::{
 ///
 /// Provides methods to control the actor's execution state and stream its snapshots.
 pub struct Processing<T, L: LifeCycle, N: Network> {
-  pub name: Option<String>,
-  pub address: <N::Socket as Socket>::Address,
-  pub(crate) task: JoinHandle<T>,
+  pub name:                    Option<String>,
+  pub address:                 <N::Socket as Socket>::Address,
+  pub(crate) task:             JoinHandle<T>,
   pub(crate) outer_controller: OuterController<L>,
 }
 
 impl<T, N: Network, L: LifeCycle> Processing<T, L, N> {
   /// Returns the actor's configured name, if any.
   #[must_use]
-  pub fn name(&self) -> Option<&str> {
-    self.name.as_deref()
-  }
+  pub fn name(&self) -> Option<&str> { self.name.as_deref() }
 
   /// Returns the socket address assigned to this actor.
   #[must_use]
-  pub const fn address(&self) -> <N::Socket as Socket>::Address {
-    self.address
-  }
+  pub const fn address(&self) -> <N::Socket as Socket>::Address { self.address }
 
   /// Retrieves the current execution state of the actor.
   ///
@@ -139,15 +135,15 @@ pub enum ControlSignal {
 /// Internal half of the control channel, held by the actor task.
 pub struct InnerController<L: LifeCycle> {
   pub(crate) instruction_receiver: tokio::sync::mpsc::Receiver<ControlSignal>,
-  pub(crate) state_sender: tokio::sync::mpsc::Sender<State>,
-  pub(crate) snapshot_sender: tokio::sync::mpsc::UnboundedSender<L::Snapshot>,
+  pub(crate) state_sender:         tokio::sync::mpsc::Sender<State>,
+  pub(crate) snapshot_sender:      tokio::sync::mpsc::UnboundedSender<L::Snapshot>,
 }
 
 /// External half of the control channel, held by the `Processing` handle.
 pub struct OuterController<L: LifeCycle> {
   pub(crate) instruction_sender: tokio::sync::mpsc::Sender<ControlSignal>,
-  pub(crate) state_receiver: tokio::sync::mpsc::Receiver<State>,
-  pub(crate) snapshot_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<L::Snapshot>>,
+  pub(crate) state_receiver:     tokio::sync::mpsc::Receiver<State>,
+  pub(crate) snapshot_receiver:  Option<tokio::sync::mpsc::UnboundedReceiver<L::Snapshot>>,
 }
 
 /// A unified wrapper for both halves of the actor control channel.

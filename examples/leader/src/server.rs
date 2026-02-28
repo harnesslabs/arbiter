@@ -8,8 +8,7 @@
 //! ```
 //! Then open <http://localhost:3030>
 
-#[cfg(not(target_arch = "wasm32"))]
-use warp::Filter;
+#[cfg(not(target_arch = "wasm32"))] use warp::Filter;
 
 const HTML_CONTENT: &str = include_str!("../index.html");
 
