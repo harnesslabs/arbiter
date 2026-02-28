@@ -1,7 +1,7 @@
 use arbiter::{actor::LifeCycle, handler::Handler};
 use web_sys::console;
 
-use crate::{get_shared_agent_state, Position};
+use crate::{Position, get_shared_agent_state};
 
 /// Message to update an agent's position in the shared canvas state
 #[derive(Clone, Debug)]
