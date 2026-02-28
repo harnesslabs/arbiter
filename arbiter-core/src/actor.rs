@@ -1,3 +1,8 @@
+//! Actor and lifecycle abstractions for the Arbiter framework.
+//!
+//! This module defines the [`LifeCycle`] trait for defining actor behavior and
+//! the [`Actor`] struct for managing actor state and message routing.
+
 use std::{any::TypeId, collections::HashMap, fmt::Debug};
 
 use crate::{
@@ -6,28 +11,37 @@ use crate::{
   processor::{Controller, Processing, State},
 };
 
-// ── LifeCycle trait ──────────────────────────────────────────────────
-
+/// Defines the behavior and state transitions of an actor.
 pub trait LifeCycle: Send + Sync + 'static {
+  /// The message type sent when the actor starts.
   type StartMessage: Message + Debug;
+  /// The message type sent when the actor stops.
   type StopMessage: Message + Debug;
+  /// A snapshot of the actor's state, useful for testing and observation.
   type Snapshot: Send + Sync + Clone + Debug + 'static;
 
+  /// Hook called when the actor is started.
   fn on_start(&mut self) -> Self::StartMessage;
+
+  /// Hook called when the actor is stopped.
   fn on_stop(&mut self) -> Self::StopMessage;
+
+  /// Returns a snapshot of the current state.
   fn snapshot(&self) -> Self::Snapshot;
-  fn should_stop(&self) -> bool {
-    false
-  }
+
+  /// Returns `true` if the actor should self-terminate.
+  fn should_stop(&self) -> bool { false }
 }
 
-// ── Actor ────────────────────────────────────────────────────────────
-
+/// A fully configured actor, ready to be spawned into the runtime.
+///
+/// It encapsulates the user-defined `LifeCycle`, its addressable `Socket`,
+/// and a dynamic mapping of message `TypeId`s to their respective handlers.
 pub struct Actor<L: LifeCycle, N: Network> {
-  pub name: Option<String>,
-  pub(crate) state: State,
-  pub(crate) inner: L,
-  pub(crate) socket: N::Socket,
+  pub name:            Option<String>,
+  pub(crate) state:    State,
+  pub(crate) inner:    L,
+  pub(crate) socket:   N::Socket,
   pub(crate) handlers: HashMap<TypeId, MessageHandlerFn<N>>,
 }
 
@@ -36,28 +50,31 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
     Self { name: None, state: State::Stopped, inner, socket, handlers: HashMap::new() }
   }
 
+  /// Sets the actor's name for debugging purposes.
+  #[must_use]
   pub fn with_name(mut self, name: impl Into<String>) -> Self {
     self.name = Some(name.into());
     self
   }
 
-  pub fn set_name(&mut self, name: impl Into<String>) {
-    self.name = Some(name.into());
-  }
+  /// Mutates the actor's name in place.
+  pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
 
-  pub fn clear_name(&mut self) {
-    self.name = None;
-  }
+  /// Clears the actor's name.
+  pub fn clear_name(&mut self) { self.name = None; }
 
+  /// Registers a handler for the specified message type `M`.
+  #[must_use]
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
-    L: Handler<M>,
-  {
+    L: Handler<M>, {
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
   }
 
+  /// Transforms the actor into a running `Processing` task.
+  /// This will consume the `Actor` configuration and spawn it onto a Tokio task.
   pub(crate) fn into_processing(self) -> Processing<Self, L, N> {
     let processing_name = self.name.clone();
     let address = self.socket.address();
@@ -135,6 +152,8 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
 
 #[cfg(test)]
 mod tests {
+  use tokio_stream::StreamExt;
+
   use crate::{
     fixtures::*,
     handler::Envelope as _,
@@ -142,7 +161,6 @@ mod tests {
     processor::State,
     runtime::Runtime,
   };
-  use tokio_stream::StreamExt;
 
   #[tokio::test]
   async fn lifecycle_start_stop_join() {
