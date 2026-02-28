@@ -1,5 +1,7 @@
-pub mod agent;
-pub mod environment;
+#![allow(refining_impl_trait)]
+
+pub mod actor;
+pub mod error;
 pub mod handler;
 pub mod network;
 pub mod processor;
@@ -7,7 +9,7 @@ pub mod runtime;
 
 pub mod prelude {
   pub use crate::{
-    agent::LifeCycle,
+    actor::LifeCycle,
     handler::{HandleResult, Handler, Message},
     network::Network,
   };
@@ -68,30 +70,27 @@ pub mod fixtures {
   impl Handler<NumberMessage> for Counter {
     type Reply = ();
 
-    #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &NumberMessage) {
       self.total += message.value;
-      println!("CounterAgent total is now: {}", self.total);
+      tracing::debug!(total = self.total, "CounterAgent updated");
     }
   }
 
   impl Handler<TextMessage> for Logger {
     type Reply = ();
 
-    #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &TextMessage) {
       self.message_count += 1;
-      println!("LogAgent received: '{}' (count: {})", message.content, self.message_count);
+      tracing::debug!(content = %message.content, count = self.message_count, "LogAgent received");
     }
   }
 
   impl Handler<NumberMessage> for Logger {
     type Reply = ();
 
-    #[allow(refining_impl_trait)]
     fn handle(&mut self, message: &NumberMessage) {
       self.message_count += 1;
-      println!("LoggerAgent received: '{}' (count: {})", message.value, self.message_count);
+      tracing::debug!(value = message.value, count = self.message_count, "LoggerAgent received");
     }
   }
 }

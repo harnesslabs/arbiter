@@ -7,20 +7,13 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{environment::Environment, network::Network};
+use crate::network::Network;
 
 // The type that agents actually work with.
 pub trait Message: Any + Send + Sync + Debug + 'static {}
 
 // Blanket implementation for all types that meet the requirements
 impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
-
-// A version of th message that is sent "over the wire".
-pub trait Payload: Clone + Send + Sync + Debug + 'static {}
-
-impl Payload for Arc<dyn Message> {}
-
-impl Payload for Vec<u8> {}
 
 pub struct Envelope<N: Network> {
   pub payload: N::Payload,
@@ -34,23 +27,17 @@ impl<N: Network> Debug for Envelope<N> {
 }
 
 impl<N: Network> Clone for Envelope<N> {
-  fn clone(&self) -> Self {
-    Self { payload: self.payload.clone(), type_id: self.type_id }
-  }
+  fn clone(&self) -> Self { Self { payload: self.payload.clone(), type_id: self.type_id } }
 }
 
 impl<N: Network> Envelope<N> {
   pub fn package<M: Message>(message: M) -> Self
-  where
-    N::Payload: Package<M>,
-  {
+  where N::Payload: Package<M> {
     Self { payload: N::Payload::package(message), type_id: TypeId::of::<M>() }
   }
 
   pub fn unpackage<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>
-  where
-    N::Payload: Unpackage<M>,
-  {
+  where N::Payload: Unpackage<M> {
     self.payload.unpackage()
   }
 }
@@ -60,18 +47,13 @@ pub trait Package<M: Message> {
 }
 
 impl<M: Message> Package<M> for Arc<dyn Message> {
-  fn package(message: M) -> Self {
-    Arc::new(message)
-  }
+  fn package(message: M) -> Self { Arc::new(message) }
 }
 
 impl<M> Package<M> for Vec<u8>
-where
-  M: Message + Serialize,
+where M: Message + Serialize
 {
-  fn package(message: M) -> Self {
-    serde_json::to_vec(&message).unwrap()
-  }
+  fn package(message: M) -> Self { serde_json::to_vec(&message).unwrap() }
 }
 
 pub trait Unpackage<M: Message> {
@@ -85,8 +67,7 @@ impl<M: Message> Unpackage<M> for Arc<dyn Message> {
 }
 
 impl<M> Unpackage<M> for Vec<u8>
-where
-  M: Message + for<'de> Deserialize<'de>,
+where M: Message + for<'de> Deserialize<'de>
 {
   fn unpackage(&self) -> Option<impl Deref<Target = M>> {
     serde_json::from_slice(self).ok().map(Box::new)
@@ -101,21 +82,16 @@ pub enum HandleResult<M: Message> {
 }
 
 impl<M: Message> From<M> for HandleResult<M> {
-  fn from(message: M) -> Self {
-    Self::Message(message)
-  }
+  fn from(message: M) -> Self { Self::Message(message) }
 }
 
 impl<M: Message> From<Option<M>> for HandleResult<M> {
-  fn from(message: Option<M>) -> Self {
-    message.map_or(Self::None, Self::Message)
-  }
+  fn from(message: Option<M>) -> Self { message.map_or(Self::None, Self::Message) }
 }
 
 pub trait Handler<M> {
   type Reply: Message;
 
-  #[allow(refining_impl_trait)]
   fn handle(&mut self, message: &M) -> impl Into<HandleResult<Self::Reply>>;
 }
 
@@ -129,8 +105,7 @@ where
   L: Handler<M> + 'static,
   M: Message,
   N: Network,
-  N::Payload: Unpackage<M> + Package<L::Reply>,
-{
+  N::Payload: Unpackage<M> + Package<L::Reply>, {
   Box::new(move |agent: &mut dyn Any, message_payload: N::Payload| {
     agent.downcast_mut::<L>().map_or_else(
       || {
@@ -141,7 +116,10 @@ where
       |typed_agent| {
         let unpacked_message_option = message_payload.unpackage();
         unpacked_message_option.map_or_else(
-          || panic!("Failed to unpackage message of type {:?}", std::any::TypeId::of::<M>()),
+          || {
+            tracing::error!(type_id = ?std::any::TypeId::of::<M>(), "failed to unpackage message");
+            HandleResult::None
+          },
           |unpacked_message| {
             let reply = typed_agent.handle(&*unpacked_message).into();
             match reply {

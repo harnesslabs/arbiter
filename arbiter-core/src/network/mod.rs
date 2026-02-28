@@ -16,18 +16,6 @@ pub struct Connection<N: Network> {
   pub network: N,
 }
 
-impl<N: Network> Connection<N> {
-  pub fn new(address: N::Address) -> Self {
-    let channel = N::new();
-    Self { address, network: channel }
-  }
-
-  pub fn join(&self) -> Self {
-    let channel = self.network.join();
-    Self { address: self.address, network: channel }
-  }
-}
-
 pub trait Network: Send + Sync + Sized + 'static {
   type Address: Generateable
     + Copy

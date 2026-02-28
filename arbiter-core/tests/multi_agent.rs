@@ -1,7 +1,4 @@
-use arbiter_core::{
-  environment::Environment, network::memory::InMemory, prelude::*, processor::CreateProcessor,
-  runtime::Runtime,
-};
+use arbiter_core::{network::memory::InMemory, prelude::*, runtime::Runtime};
 use tokio_stream::StreamExt;
 
 #[derive(Debug)]
@@ -16,7 +13,7 @@ struct StopMessage;
 #[derive(Debug, Clone)]
 struct Ping {
   pub max_count: usize,
-  pub count: usize,
+  pub count:     usize,
 }
 
 impl LifeCycle for Ping {
@@ -29,19 +26,14 @@ impl LifeCycle for Ping {
     PingMessage
   }
 
-  fn on_stop(&mut self) -> Self::StopMessage {
-    StopMessage
-  }
+  fn on_stop(&mut self) -> Self::StopMessage { StopMessage }
 
-  fn snapshot(&self) -> Self::Snapshot {
-    self.count
-  }
+  fn snapshot(&self) -> Self::Snapshot { self.count }
 }
 
 impl Handler<PongMessage> for Ping {
   type Reply = PingMessage;
 
-  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &PongMessage) -> HandleResult<Self::Reply> {
     println!("Ping received PongMessage, count: {}", self.count);
     if self.count == self.max_count {
@@ -71,7 +63,6 @@ impl LifeCycle for Pong {
 impl Handler<PingMessage> for Pong {
   type Reply = PongMessage;
 
-  #[allow(refining_impl_trait)]
   fn handle(&mut self, _message: &PingMessage) -> Self::Reply {
     println!("Pong received PingMessage");
     PongMessage
@@ -87,16 +78,15 @@ async fn test_multi_agent() {
 
   let mut pong = runtime.spawn(Pong).with_handler::<PingMessage>();
   pong.set_name("pong");
-  pong.address();
 
   let mut ping = ping.process();
-  let mut ping_stream = ping.stream().await;
-  ping.start().await;
+  let mut ping_stream = ping.stream().unwrap();
+  ping.start().await.unwrap();
 
   let mut pong = pong.process();
-  pong.start().await;
+  pong.start().await.unwrap();
 
-  let agent = ping.join().await;
+  let agent = ping.join().await.unwrap();
   assert_eq!(agent.inner().count, 10);
 
   for i in 0..=10 {
@@ -117,35 +107,21 @@ pub struct BulletinBoard {
 pub struct Write(String);
 
 impl LifeCycle for BulletinBoard {
-  type StartMessage = ();
-
-  type StopMessage = ();
-
   type Snapshot = Vec<String>;
+  type StartMessage = ();
+  type StopMessage = ();
 
   fn on_start(&mut self) -> Self::StartMessage {}
 
   fn on_stop(&mut self) -> Self::StopMessage {}
 
-  fn snapshot(&self) -> Self::Snapshot {
-    self.messages.clone()
-  }
+  fn snapshot(&self) -> Self::Snapshot { self.messages.clone() }
 }
 
 impl Handler<Write> for BulletinBoard {
   type Reply = ();
 
-  fn handle(&mut self, message: &Write) {
-    self.messages.push(message.0.clone())
-  }
-}
-
-impl Environment for BulletinBoard {
-  type Instruction = Write;
-
-  fn new() -> Self {
-    Self { messages: vec![] }
-  }
+  fn handle(&mut self, message: &Write) { self.messages.push(message.0.clone()) }
 }
 
 #[derive(Debug)]
@@ -168,7 +144,6 @@ impl LifeCycle for WatchDog {
 impl Handler<PingMessage> for WatchDog {
   type Reply = Write;
 
-  #[allow(refining_impl_trait)]
   fn handle(&mut self, message: &PingMessage) -> HandleResult<Self::Reply> {
     self.message_count += 1;
     HandleResult::Message(Write(format!(
@@ -181,7 +156,6 @@ impl Handler<PingMessage> for WatchDog {
 impl Handler<PongMessage> for WatchDog {
   type Reply = Write;
 
-  #[allow(refining_impl_trait)]
   fn handle(&mut self, message: &PongMessage) -> HandleResult<Self::Reply> {
     self.message_count += 1;
     HandleResult::Message(Write(format!(
@@ -192,8 +166,8 @@ impl Handler<PongMessage> for WatchDog {
 }
 
 #[tokio::test]
-async fn test_multi_agent_with_environment() {
-  let runtime = Runtime::<InMemory, BulletinBoard>::new();
+async fn test_multi_agent_with_coordinator() {
+  let runtime = Runtime::<InMemory>::new();
 
   let mut ping = runtime.spawn(Ping { max_count: 10, count: 0 }).with_handler::<PongMessage>();
   ping.set_name("ping");
@@ -207,22 +181,28 @@ async fn test_multi_agent_with_environment() {
     .with_handler::<PongMessage>();
   watchdog.set_name("watchdog");
 
+  // BulletinBoard is just a regular agent — no Environment trait needed
+  let mut board = runtime
+    .spawn(BulletinBoard { messages: vec![] })
+    .with_handler::<Write>();
+  board.set_name("bulletin_board");
+
   let mut ping = ping.process();
   let mut pong = pong.process();
   let mut watchdog = watchdog.process();
-  let mut runtime = runtime.process();
+  let mut board = board.process();
 
-  ping.start().await;
-  pong.start().await;
-  watchdog.start().await;
-  runtime.start().await;
+  ping.start().await.unwrap();
+  pong.start().await.unwrap();
+  watchdog.start().await.unwrap();
+  board.start().await.unwrap();
 
-  let ping_agent = ping.join().await;
+  let ping_agent = ping.join().await.unwrap();
   assert_eq!(ping_agent.inner().count, 10);
 
-  runtime.stop().await;
-  let environment = runtime.join().await.environment;
-  let messages = environment.snapshot();
+  board.stop().await.unwrap();
+  let board_core = board.join().await.unwrap();
+  let messages = board_core.inner().snapshot();
   println!("BulletinBoard messages: {:?}", messages);
   assert_eq!(messages.len(), 22); // 11 PingMessages and 11 PongMessages
 }

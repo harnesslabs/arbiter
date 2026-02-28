@@ -1,11 +1,8 @@
-use std::iter::Cycle;
-
 use arbiter_core::{
-  agent::LifeCycle,
-  environment::Environment,
+  actor::LifeCycle,
   network::memory::InMemory,
   prelude::{HandleResult, Handler},
-  processor::CreateProcessor,
+  runtime::Runtime,
 };
 
 pub struct Clock {
@@ -57,14 +54,6 @@ impl Handler<Proceed> for Clock {
   }
 }
 
-impl Environment for Clock {
-  type Instruction = Proceed;
-
-  fn new() -> Self {
-    Self { count: 0, max_count: 10 }
-  }
-}
-
 pub struct Chronos {
   pub message: String,
   pub total_ticks: usize,
@@ -86,7 +75,6 @@ impl LifeCycle for Chronos {
 impl Handler<TickOrTock> for Chronos {
   type Reply = Proceed;
 
-  #[allow(refining_impl_trait)]
   fn handle(&mut self, message: &TickOrTock) -> HandleResult<Self::Reply> {
     match message {
       TickOrTock::Tick => {
@@ -111,22 +99,28 @@ impl Handler<Stop> for Chronos {
 }
 
 #[tokio::test]
-async fn test_environment_process() {
-  let runtime = arbiter_core::runtime::Runtime::<InMemory, Clock>::new();
+async fn test_coordinator_agent() {
+  let runtime = Runtime::<InMemory>::new();
+
+  // Clock is just a regular agent now — no Environment trait needed
+  let mut clock = runtime.spawn(Clock { count: 0, max_count: 10 }).with_handler::<Proceed>();
+  clock.set_name("Clock");
+
   let mut chronos = runtime
     .spawn(Chronos { message: String::new(), total_ticks: 0, total_tocks: 0 })
     .with_handler::<TickOrTock>()
     .with_handler::<Stop>();
   chronos.set_name("Chronos");
+
+  let mut clock = clock.process();
   let mut chronos = chronos.process();
-  let mut runtime = runtime.process();
-  chronos.start().await;
-  runtime.start().await;
+
+  chronos.start().await.unwrap();
+  clock.start().await.unwrap();
 
   tokio::time::sleep(std::time::Duration::from_millis(10)).await;
 
-  let chronos = chronos.join().await.into_inner();
-  let runtime = runtime.join().await;
+  let chronos = chronos.join().await.unwrap().inner();
 
   assert_eq!(chronos.total_ticks, 5);
   assert_eq!(chronos.total_tocks, 5);
