@@ -364,26 +364,16 @@
                     <button id="clearAllBtn" class="btn danger">Clear All</button>
                 </div>
 
-                <div class="control-group">
-                    <h3>Agent Controls</h3>
-                    <div class="agent-list-container">
-                        <div id="agentList"></div>
-                    </div>
-                </div>
+
             </div>
         </div>
     </div>
 
     <script type="module">
         import init, {
-            Runtime,
-            create_leader_follower_simulation,
-            simulation_tick,
-            add_simulation_agent,
-            get_agent_positions,
-            clear_all_agents,
-            remove_single_agent
-        } from './pkg/leader.js';
+            Simulation,
+            get_agent_positions
+        } from './pkg/leader.js?bust=3';
 
         // Global state
         let wasmModule = null;
@@ -473,83 +463,9 @@
             }
         }
 
-        // Update agent list in UI
-        function updateAgentList() {
-            if (!runtime) return;
+        // Agent list removed since it requires unsupported Runtime methods
 
-            const agentListContainer = document.getElementById('agentList');
 
-            try {
-                const agentNamesJson = runtime.agentNames();
-                const agentNames = JSON.parse(agentNamesJson);
-
-                if (agentNames.length === 0) {
-                    agentListContainer.innerHTML = '<div class="empty-state">No agents added yet</div>';
-                    return;
-                }
-
-                let html = '';
-                agentNames.forEach(agentName => {
-                    const state = runtime.agentState(agentName);
-                    const stateClass = state.toLowerCase();
-                    const isRunning = state === 'Running';
-                    const isPaused = state === 'Paused';
-                    const isStopped = state === 'Stopped';
-
-                    html += `
-                        <div class="agent-item">
-                            <div class="agent-header">
-                                <span class="agent-id">${agentName}</span>
-                                <span class="agent-state ${stateClass}">${state}</span>
-                            </div>
-                            <div class="agent-controls">
-                                <button class="agent-btn start" onclick="controlAgent('${agentName}', 'start')" ${isRunning ? 'disabled' : ''}>Start</button>
-                                <button class="agent-btn pause" onclick="controlAgent('${agentName}', 'pause')" ${!isRunning ? 'disabled' : ''}>Pause</button>
-                                <button class="agent-btn stop" onclick="controlAgent('${agentName}', 'stop')" ${isStopped ? 'disabled' : ''}>Stop</button>
-                                <button class="agent-btn remove" onclick="controlAgent('${agentName}', 'remove')">Remove</button>
-                            </div>
-                        </div>
-                    `;
-                });
-
-                agentListContainer.innerHTML = html;
-            } catch (error) {
-                console.error('Error updating agent list:', error);
-            }
-        }
-
-        // Agent control function (global for HTML onclick)
-        window.controlAgent = function (agentId, action) {
-            if (!runtime) return;
-
-            try {
-                let success = false;
-                switch (action) {
-                    case 'start':
-                        success = runtime.startAgent(agentId);
-                        break;
-                    case 'pause':
-                        success = runtime.pauseAgent(agentId);
-                        break;
-                    case 'stop':
-                        success = runtime.stopAgent(agentId);
-                        break;
-                    case 'remove':
-                        success = runtime.removeAgent(agentId);
-                        if (success) {
-                            // Also remove from shared state
-                            remove_single_agent(agentId);
-                        }
-                        break;
-                }
-
-                if (success) {
-                    updateAgentList();
-                }
-            } catch (error) {
-                console.error(`Error ${action} agent ${agentId}:`, error);
-            }
-        };
 
         // Main simulation loop - separated simulation ticking from rendering
         function simulationLoop(currentTime) {
@@ -558,17 +474,12 @@
             try {
                 // Only tick simulation at specified interval (20 FPS)
                 if (currentTime - lastTickTime >= TICK_INTERVAL) {
-                    simulation_tick(runtime);
+                    runtime.simulation_tick();
                     lastTickTime = currentTime;
                 }
 
                 // Always render at 60 FPS for smooth visuals
                 renderAgents();
-
-                // Update agent list less frequently
-                if (Math.random() < 0.02) { // 2% chance each frame ≈ once per second
-                    updateAgentList();
-                }
 
             } catch (error) {
                 console.error('Simulation loop error:', error.message);
@@ -586,7 +497,7 @@
                 console.log("WASM module loaded successfully");
 
                 // Create runtime
-                runtime = create_leader_follower_simulation(1000, 680);
+                runtime = new Simulation(1000, 680);
                 console.log("Runtime created");
 
                 // Set up event listeners
@@ -622,13 +533,12 @@
 
                 try {
                     const isLeader = placementMode === 'leader';
-                    const agentId = add_simulation_agent(runtime, x, y, isLeader);
+                    const agentId = runtime.add_agent(x, y, isLeader);
 
                     if (agentId) {
                         console.log(`Added ${isLeader ? 'leader' : 'follower'} "${agentId}" at (${x}, ${y})`);
                         placementMode = null;
                         updateButtonStates();
-                        updateAgentList();
                     } else {
                         console.log(`Failed to add ${isLeader ? 'leader' : 'follower'} at (${x}, ${y})`);
                     }
@@ -654,16 +564,12 @@
                 if (!runtime) return;
 
                 try {
-                    // Remove all agents from runtime
-                    const removed = runtime.removeAllAgents();
-
                     // Clear shared state and reset counters  
-                    clear_all_agents();
+                    runtime.clear_all_agents();
 
-                    console.log(`Cleared ${removed} agents and reset state`);
+                    console.log(`Cleared agents and reset state`);
                     placementMode = null;
                     updateButtonStates();
-                    updateAgentList();
                 } catch (error) {
                     console.error('Error clearing agents:', error.message);
                 }

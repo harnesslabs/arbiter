@@ -121,7 +121,13 @@ impl Network for InMemory {
 
   fn new() -> Self {
     let (router_tx, router_rx) = mpsc::unbounded_channel();
+
+    #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
     tokio::spawn(router(router_rx));
+
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    tokio_with_wasm::spawn(router(router_rx));
+
     Self { router_tx }
   }
 
