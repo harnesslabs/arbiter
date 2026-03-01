@@ -91,12 +91,10 @@ async fn main() {
     info!("Connecting to peer at {}", peer);
     // We use block_on/await to ensure the connection establishes
     if let Err(e) = runtime.network().connect_to(peer).await {
-      tracing::error!("Failed to connect to {}: {}", peer, e);
+      tracing::error!("Failed to resolve or initiate connection to {}: {}", peer, e);
       process::exit(1);
     }
-    // Give connection a moment to establish
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    info!("Successfully connected to {}", peer);
+    info!("Connection attempt initiated to {}. Awaiting network handshake...", peer);
   }
 
   let local_addr = runtime.network().local_addr();
