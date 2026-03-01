@@ -33,7 +33,7 @@ struct Args {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct ChatMessage {
-  sender:  String,
+  sender: String,
   content: String,
 }
 
@@ -57,7 +57,9 @@ impl LifeCycle for ChatActor {
     ChatStart
   }
 
-  fn on_stop(&mut self) -> Self::StopMessage { ChatStop }
+  fn on_stop(&mut self) -> Self::StopMessage {
+    ChatStop
+  }
 
   fn snapshot(&self) -> Self::Snapshot {}
 }
@@ -98,13 +100,7 @@ async fn main() {
   }
 
   let local_addr = runtime.network().local_addr();
-  let display_addr = if local_addr.ip().is_unspecified() {
-    // If bound to 0.0.0.0, the "local_addr" will show 0.0.0.0.
-    // In a real app we'd resolve the primary LAN IP, but here we'll just hint it.
-    format!("<YOUR_LAN_IP>:{}", local_addr.port())
-  } else {
-    local_addr.to_string()
-  };
+  let display_addr = local_addr.to_string();
 
   println!("========================================");
   println!(" Welcome to Arbiter Chat, {}!", args.name);
