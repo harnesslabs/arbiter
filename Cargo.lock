@@ -56,7 +56,6 @@ dependencies = [
 name = "arbiter"
 version = "0.5.0"
 dependencies = [
- "arbiter",
  "bincode",
  "serde",
  "thiserror 2.0.18",
