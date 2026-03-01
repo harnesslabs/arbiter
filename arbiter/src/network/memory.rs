@@ -57,7 +57,7 @@ async fn router(mut rx: mpsc::UnboundedReceiver<RouterMessage>) {
 #[derive(Clone)]
 pub struct InMemoryEnvelope {
   type_id: TypeId,
-  payload: Arc<dyn Message>,
+  payload: Arc<dyn Any + Send + Sync>,
 }
 
 impl Debug for InMemoryEnvelope {

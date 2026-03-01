@@ -9,9 +9,20 @@ use crate::network::{Network, Socket};
 /// The base trait for all messages processed by actors.
 ///
 /// This trait is automatically implemented for any type that satisfies
-/// its bounds (`Any + Send + Sync + Debug + 'static`).
+/// its bounds. When the `tcp` feature is enabled, messages must also be
+/// serializable via `serde`.
+#[cfg(feature = "tcp")]
+pub trait Message:
+  Any + Send + Sync + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static {
+}
+
+#[cfg(not(feature = "tcp"))]
 pub trait Message: Any + Send + Sync + Debug + 'static {}
 
+#[cfg(feature = "tcp")]
+impl<T> Message for T where T: Send + Sync + Any + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static {}
+
+#[cfg(not(feature = "tcp"))]
 impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
 
 /// The envelope trait — each [`Network`] defines its own concrete envelope type
@@ -23,6 +34,8 @@ pub trait Envelope: Send + Sync + Debug + 'static {
   fn wrap<M: Message>(message: M) -> Self;
   /// Attempts to downcast the envelope payload back to a specific [`Message`] type.
   fn downcast<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>;
+  /// Registers the type internally if the network backend requires it.
+  fn register_type<M: Message>() {}
 }
 
 /// Defines how an actor processes a specific type of [`Message`].

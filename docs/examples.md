@@ -47,4 +47,27 @@ The example demonstrates:
 - `Follower` actors that track and chase the leader.
 - An overarching `Canvas` actor the manages rendering by interpreting the `PositionUpdate` messages emitted by agents.
 
+### Running the Leader Example
+
 To run the example locally, navigate to `examples/leader` and follow the `README.md` instructions there, or run the build directly using your preferred WASM server.
+
+## The TCP Chat CLI Example
+
+Arbiter's `TcpStream` network allows actors to communicate over a local network. The `examples/chat/` directory contains a decentralized chat application that demonstrates:
+
+- **Distributed Actors**: Actors on different nodes connecting and exchanging messages.
+- **Dynamic Registration**: Automatic type registration for complex serializable types across nodes.
+- **Socket Injection**: Using `Runtime::socket()` to bridge external input (keyboard/stdin) into the actor network.
+
+### Running the Chat Example
+
+1. Open a terminal and start the first node (Alice):
+   ```bash
+   cargo run --example chat -- --name Alice
+   ```
+2. Open another terminal and start the second node (Bob), connecting to Alice's address (shown in Alice's terminal):
+   ```bash
+   cargo run --example chat -- --name Bob --connect 127.0.0.1:<PORT>
+   ```
+3. Type messages in either terminal to see them delivered in real-time across processes!
+

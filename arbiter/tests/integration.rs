@@ -124,3 +124,55 @@ async fn dual_snapshot_streams() {
 
   observer.stop().await.unwrap();
 }
+
+#[cfg(feature = "tcp")]
+#[tokio::test]
+async fn tcp_ping_pong_exchange() {
+  use std::time::Duration;
+
+  use arbiter::network::tcp::TcpStream;
+
+  let mut runtime_a = Runtime::<TcpStream>::new();
+  let mut runtime_b = Runtime::<TcpStream>::new();
+
+  // Connect node A to node B
+  runtime_a.network().connect_to(runtime_b.network().local_addr()).await.unwrap();
+
+  // Give connection time to establish
+  tokio::time::sleep(Duration::from_millis(50)).await;
+
+  // Node A plays Ping, ends at 5
+  let ping =
+    runtime_a.spawn(PingPlayer { count: 0, max_count: 5 }).with_handler::<Pong>().with_name("ping");
+  // Node B plays Pong
+  let pong = runtime_b.spawn(PongPlayer).with_handler::<Ping>().with_name("pong");
+
+  let mut ping = runtime_a.process(ping);
+  let mut pong = runtime_b.process(pong);
+
+  let mut snapshots = ping.stream().unwrap();
+
+  ping.start().await.unwrap();
+  pong.start().await.unwrap();
+
+  for expected in 0..=5 {
+    let snapshot = snapshots.next().await.unwrap();
+    assert_eq!(snapshot, expected);
+  }
+}
+
+#[cfg(feature = "tcp")]
+#[tokio::test]
+async fn tcp_connect_invalid_port_does_not_panic() {
+  use std::time::Duration;
+
+  use arbiter::network::tcp::TcpStream;
+
+  let runtime = Runtime::<TcpStream>::new();
+
+  // Resolving localhost:0 should succeed, but connecting in the background task will fail
+  let _ = runtime.network().connect_to("127.0.0.1:0").await;
+
+  // Let the background connection task run and fail, ensuring it doesn't bring down the system
+  tokio::time::sleep(Duration::from_millis(50)).await;
+}

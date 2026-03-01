@@ -73,12 +73,12 @@ setup: install-cargo-tools install-rust-nightly install-mdbook-tools
 # Check the with local OS target
 check:
     @just header "Building workspace"
-    cargo build --workspace --all-targets
+    cargo build --workspace --all-targets --all-features
 
 # Build with local OS target
 build:
     @just header "Building workspace"
-    cargo build --workspace --all-targets
+    cargo build --workspace --all-targets --all-features
 
 # Build with local OS target
 build-wasm:

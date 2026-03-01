@@ -28,16 +28,19 @@ pub mod fixtures {
 
   /// A simple ping message.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct Ping;
 
   /// A simple pong message.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct Pong;
 
   /// A simple actor that counts every message it receives.
   /// Handles both [`Ping`] and [`Pong`], incrementing `count` for each.
   /// Snapshot is the current count.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct Counter {
     pub count: usize,
   }
@@ -80,6 +83,7 @@ pub mod fixtures {
   ///
   /// Snapshot is the current count — ideal for stream-based testing.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct PingPlayer {
     pub count:     usize,
     pub max_count: usize,
@@ -111,6 +115,7 @@ pub mod fixtures {
   /// Simple responder: replies [`Pong`] to every [`Ping`].
   /// No meaningful state — just an echo partner.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct PongPlayer;
 
   impl LifeCycle for PongPlayer {
