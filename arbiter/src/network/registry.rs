@@ -17,6 +17,10 @@ pub struct TypeRegistry {
 
 impl TypeRegistry {
   /// Registers a message type `M` in the registry.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the internal `RwLock` is poisoned.
   pub fn register<M: 'static>(&self) {
     let name = type_name::<M>().to_string();
     let id = TypeId::of::<M>();
@@ -25,6 +29,11 @@ impl TypeRegistry {
   }
 
   /// Retrieves the `TypeId` associated with a type name.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the internal `RwLock` is poisoned.
+  #[must_use]
   pub fn get_id(&self, name: &str) -> Option<TypeId> {
     let map = self.name_to_id.read().unwrap();
     map.get(name).copied()

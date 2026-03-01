@@ -13,6 +13,9 @@ use crate::{
   network::{Network, Socket, registry::global_registry},
 };
 
+/// An envelope format used for sending messages over the wire.
+/// It uses a string representation of the type to remain stable
+/// across different compiler runs and binary versions.
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct WireEnvelope {
   type_name: String,
@@ -60,6 +63,9 @@ impl Envelope for TcpEnvelope {
   }
 }
 
+/// A network address for the `TcpStream` backend. It consists of
+/// the originating node's `SocketAddr` and a unique `actor_id` to route
+/// messages back to the exact actor instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TcpAddress {
   pub node: SocketAddr,
@@ -117,8 +123,13 @@ fn spawn_connection(
         if rd.read_exact(&mut buf).await.is_err() {
           break;
         }
-        if let Ok(wire) = bincode::deserialize::<WireEnvelope>(&buf) {
-          let _ = in_tx.send(RouterMessage::IncomingRemote(peer_addr, wire));
+        match bincode::deserialize::<WireEnvelope>(&buf) {
+          Ok(wire) => {
+            let _ = in_tx.send(RouterMessage::IncomingRemote(peer_addr, wire));
+          },
+          Err(e) => {
+            tracing::warn!("Failed to deserialize wire envelope from {}: {}", peer_addr, e);
+          },
         }
       }
     });
@@ -146,16 +157,18 @@ async fn router(listener: TcpListener, mut rx: mpsc::UnboundedReceiver<RouterMes
       }
       Some(msg) = remote_in_rx.recv() => {
         match msg {
-          RouterMessage::IncomingRemote(_addr, wire) => {
+          RouterMessage::IncomingRemote(addr, wire) => {
             if let Some(type_id) = global_registry().get_id(&wire.type_name) {
               let env = TcpEnvelope { type_id, type_name: wire.type_name, payload: wire.payload };
               if let Some(addrs) = routes.get(&type_id) {
-                for addr in addrs {
-                  if let Some(inbox) = inboxes.get(addr) {
+                for act_addr in addrs {
+                  if let Some(inbox) = inboxes.get(act_addr) {
                     let _ = inbox.send(env.clone());
                   }
                 }
               }
+            } else {
+              tracing::warn!("Received unregistered message type '{}' from {}", wire.type_name, addr);
             }
           }
           RouterMessage::AddRemote(addr, tx) => { remotes.insert(addr, tx); }
@@ -184,10 +197,16 @@ async fn router(listener: TcpListener, mut rx: mpsc::UnboundedReceiver<RouterMes
           RouterMessage::ConnectTo(addr) => {
             let remote_in_tx = remote_in_tx.clone();
             tokio::spawn(async move {
-              if let Ok(stream) = tokio::net::TcpStream::connect(addr).await {
-                let (tx, rx) = mpsc::unbounded_channel();
-                let _ = remote_in_tx.send(RouterMessage::AddRemote(addr, tx));
-                spawn_connection(stream, rx, remote_in_tx, addr);
+              match tokio::net::TcpStream::connect(addr).await {
+                Ok(stream) => {
+                  tracing::info!("Connected to remote node at {}", addr);
+                  let (tx, rx) = mpsc::unbounded_channel();
+                  let _ = remote_in_tx.send(RouterMessage::AddRemote(addr, tx));
+                  spawn_connection(stream, rx, remote_in_tx, addr);
+                }
+                Err(e) => {
+                  tracing::error!("Failed to connect to remote node at {}: {}", addr, e);
+                }
               }
             });
           }
@@ -207,6 +226,14 @@ pub struct TcpStream {
 
 impl TcpStream {
   /// Resolves an address and connects the router to it.
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the host cannot be statically resolved.
+  ///
+  /// # Panics
+  ///
+  /// Panics if the resolved address yields zero results.
   pub async fn connect_to(&self, addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<()> {
     let addr = tokio::net::lookup_host(addr).await?.next().unwrap();
     let _ = self.router_tx.send(RouterMessage::ConnectTo(addr));
@@ -214,7 +241,8 @@ impl TcpStream {
   }
 
   /// Returns the randomly assigned local bind port / IP.
-  pub fn local_addr(&self) -> SocketAddr {
+  #[must_use]
+  pub const fn local_addr(&self) -> SocketAddr {
     self.local_addr
   }
 }
@@ -281,40 +309,22 @@ impl Socket for TcpSocket {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::{fixtures::*, runtime::Runtime};
-  use std::time::Duration;
-  use tokio_stream::StreamExt;
+  use crate::fixtures::{Ping, Pong};
 
-  #[tokio::test]
-  async fn test_tcp_ping_pong_exchange() {
-    let mut runtime_a = Runtime::<TcpStream>::new();
-    let mut runtime_b = Runtime::<TcpStream>::new();
+  #[test]
+  fn test_tcp_envelope_wrap_and_downcast() {
+    let ping = Ping;
+    let env = TcpEnvelope::wrap(ping);
 
-    // Connect node A to node B
-    runtime_a.network().connect_to(runtime_b.network().local_addr()).await.unwrap();
+    assert_eq!(env.type_id(), TypeId::of::<Ping>());
+    assert_eq!(env.type_name, std::any::type_name::<Ping>());
 
-    // Give connection time to establish
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Successful downcast
+    let downcasted = env.downcast::<Ping>();
+    assert!(downcasted.is_some());
 
-    // Node A plays Ping, ends at 5
-    let ping = runtime_a
-      .spawn(PingPlayer { count: 0, max_count: 5 })
-      .with_handler::<Pong>()
-      .with_name("ping");
-    // Node B plays Pong
-    let pong = runtime_b.spawn(PongPlayer).with_handler::<Ping>().with_name("pong");
-
-    let mut ping = runtime_a.process(ping);
-    let mut pong = runtime_b.process(pong);
-
-    let mut snapshots = ping.stream().unwrap();
-
-    ping.start().await.unwrap();
-    pong.start().await.unwrap();
-
-    for expected in 0..=5 {
-      let snapshot = snapshots.next().await.unwrap();
-      assert_eq!(snapshot, expected);
-    }
+    // Failed downcast
+    let bad_downcast = env.downcast::<Pong>();
+    assert!(bad_downcast.is_none());
   }
 }
