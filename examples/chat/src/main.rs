@@ -1,11 +1,16 @@
-use arbiter::actor::LifeCycle;
-use arbiter::handler::{Envelope, Handler};
-use arbiter::network::Socket;
-use arbiter::network::tcp::{TcpEnvelope, TcpStream};
-use arbiter::runtime::Runtime;
+use std::process;
+
+use arbiter::{
+  actor::LifeCycle,
+  handler::{Envelope, Handler},
+  network::{
+    Socket,
+    tcp::{TcpEnvelope, TcpStream},
+  },
+  runtime::Runtime,
+};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use std::process;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{Level, info};
 
@@ -28,7 +33,7 @@ struct Args {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 struct ChatMessage {
-  sender: String,
+  sender:  String,
   content: String,
 }
 
@@ -43,22 +48,18 @@ struct ChatActor {
 }
 
 impl LifeCycle for ChatActor {
+  type Snapshot = ();
   type StartMessage = ChatStart;
   type StopMessage = ChatStop;
-  type Snapshot = ();
 
   fn on_start(&mut self) -> Self::StartMessage {
     info!("ChatActor started for user {}", self.name);
     ChatStart
   }
 
-  fn on_stop(&mut self) -> Self::StopMessage {
-    ChatStop
-  }
+  fn on_stop(&mut self) -> Self::StopMessage { ChatStop }
 
-  fn snapshot(&self) -> Self::Snapshot {
-    ()
-  }
+  fn snapshot(&self) -> Self::Snapshot {}
 }
 
 impl Handler<ChatMessage> for ChatActor {

@@ -13,18 +13,14 @@ use crate::network::{Network, Socket};
 /// serializable via `serde`.
 #[cfg(feature = "tcp")]
 pub trait Message:
-  Any + Send + Sync + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static
-{
+  Any + Send + Sync + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static {
 }
 
 #[cfg(not(feature = "tcp"))]
 pub trait Message: Any + Send + Sync + Debug + 'static {}
 
 #[cfg(feature = "tcp")]
-impl<T> Message for T where
-  T: Send + Sync + Any + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static
-{
-}
+impl<T> Message for T where T: Send + Sync + Any + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static {}
 
 #[cfg(not(feature = "tcp"))]
 impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
@@ -67,8 +63,7 @@ pub(crate) fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
   L: Handler<M> + 'static,
   M: Message,
-  N: Network,
-{
+  N: Network, {
   Box::new(move |agent: &mut dyn Any, envelope: &<N::Socket as Socket>::Envelope| {
     let Some(typed_agent) = agent.downcast_mut::<L>() else {
       unreachable!("type mismatch: agent is not the expected Handler type");

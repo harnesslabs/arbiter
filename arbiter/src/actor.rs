@@ -30,9 +30,7 @@ pub trait LifeCycle: Send + Sync + 'static {
   fn snapshot(&self) -> Self::Snapshot;
 
   /// Returns `true` if the actor should self-terminate.
-  fn should_stop(&self) -> bool {
-    false
-  }
+  fn should_stop(&self) -> bool { false }
 }
 
 /// A fully configured actor, ready to be spawned into the runtime.
@@ -40,10 +38,10 @@ pub trait LifeCycle: Send + Sync + 'static {
 /// It encapsulates the user-defined `LifeCycle`, its addressable `Socket`,
 /// and a dynamic mapping of message `TypeId`s to their respective handlers.
 pub struct Actor<L: LifeCycle, N: Network> {
-  pub name: Option<String>,
-  pub(crate) state: State,
-  pub(crate) inner: L,
-  pub(crate) socket: N::Socket,
+  pub name:            Option<String>,
+  pub(crate) state:    State,
+  pub(crate) inner:    L,
+  pub(crate) socket:   N::Socket,
   pub(crate) handlers: HashMap<TypeId, MessageHandlerFn<N>>,
 }
 
@@ -60,22 +58,17 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
   }
 
   /// Mutates the actor's name in place.
-  pub fn set_name(&mut self, name: impl Into<String>) {
-    self.name = Some(name.into());
-  }
+  pub fn set_name(&mut self, name: impl Into<String>) { self.name = Some(name.into()); }
 
   /// Clears the actor's name.
-  pub fn clear_name(&mut self) {
-    self.name = None;
-  }
+  pub fn clear_name(&mut self) { self.name = None; }
 
   /// Registers a handler for the specified message type `M`.
   #[must_use]
   pub fn with_handler<M>(mut self) -> Self
   where
     M: Message,
-    L: Handler<M>,
-  {
+    L: Handler<M>, {
     <<N as Network>::Socket as Socket>::Envelope::register_type::<M>();
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self

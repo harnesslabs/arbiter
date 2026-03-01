@@ -19,15 +19,15 @@ use crate::{
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct WireEnvelope {
   type_name: String,
-  payload: Vec<u8>,
+  payload:   Vec<u8>,
 }
 
 /// An envelope containing a message for the `TcpStream` network.
 #[derive(Clone)]
 pub struct TcpEnvelope {
-  pub type_id: TypeId,
+  pub type_id:   TypeId,
   pub type_name: String,
-  pub payload: Vec<u8>,
+  pub payload:   Vec<u8>,
 }
 
 impl Debug for TcpEnvelope {
@@ -37,13 +37,9 @@ impl Debug for TcpEnvelope {
 }
 
 impl Envelope for TcpEnvelope {
-  fn type_id(&self) -> TypeId {
-    self.type_id
-  }
+  fn type_id(&self) -> TypeId { self.type_id }
 
-  fn register_type<M: Message>() {
-    global_registry().register::<M>();
-  }
+  fn register_type<M: Message>() { global_registry().register::<M>(); }
 
   fn wrap<M: Message>(message: M) -> Self {
     global_registry().register::<M>();
@@ -72,7 +68,7 @@ impl Envelope for TcpEnvelope {
 /// messages back to the exact actor instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TcpAddress {
-  pub node: SocketAddr,
+  pub node:     SocketAddr,
   pub actor_id: u64,
 }
 
@@ -224,7 +220,7 @@ async fn router(listener: TcpListener, mut rx: mpsc::UnboundedReceiver<RouterMes
 /// A network implementation that communicates via TCP streams.
 #[derive(Debug)]
 pub struct TcpStream {
-  router_tx: mpsc::UnboundedSender<RouterMessage>,
+  router_tx:  mpsc::UnboundedSender<RouterMessage>,
   local_addr: SocketAddr,
 }
 
@@ -246,9 +242,7 @@ impl TcpStream {
 
   /// Returns the randomly assigned local bind port / IP.
   #[must_use]
-  pub const fn local_addr(&self) -> SocketAddr {
-    self.local_addr
-  }
+  pub const fn local_addr(&self) -> SocketAddr { self.local_addr }
 }
 
 impl Network for TcpStream {
@@ -282,9 +276,9 @@ impl Network for TcpStream {
 
 /// The socket endpoint assigned to an actor on the `TcpStream` network.
 pub struct TcpSocket {
-  address: TcpAddress,
+  address:   TcpAddress,
   router_tx: mpsc::UnboundedSender<RouterMessage>,
-  inbox_rx: mpsc::UnboundedReceiver<TcpEnvelope>,
+  inbox_rx:  mpsc::UnboundedReceiver<TcpEnvelope>,
 }
 
 impl Debug for TcpSocket {
@@ -297,17 +291,13 @@ impl Socket for TcpSocket {
   type Address = TcpAddress;
   type Envelope = TcpEnvelope;
 
-  fn address(&self) -> Self::Address {
-    self.address
-  }
+  fn address(&self) -> Self::Address { self.address }
 
   async fn send(&self, envelope: Self::Envelope) {
     let _ = self.router_tx.send(RouterMessage::DispatchLocal(envelope));
   }
 
-  async fn receive(&mut self) -> Option<Self::Envelope> {
-    self.inbox_rx.recv().await
-  }
+  async fn receive(&mut self) -> Option<Self::Envelope> { self.inbox_rx.recv().await }
 }
 
 #[cfg(test)]

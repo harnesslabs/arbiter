@@ -7,14 +7,11 @@ use std::{any::TypeId, fmt::Debug, future::Future, hash::Hash};
 
 use crate::handler::Envelope;
 
-#[cfg(feature = "in-memory")]
-pub mod memory;
+#[cfg(feature = "in-memory")] pub mod memory;
 
-#[cfg(feature = "tcp")]
-pub mod tcp;
+#[cfg(feature = "tcp")] pub mod tcp;
 
-#[cfg(feature = "tcp")]
-pub mod registry;
+#[cfg(feature = "tcp")] pub mod registry;
 
 /// Defines a network backend capable of spawning and routing to [`Socket`]s.
 pub trait Network: Sized + 'static {

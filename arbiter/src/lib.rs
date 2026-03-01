@@ -54,9 +54,7 @@ pub mod fixtures {
 
     fn on_stop(&mut self) -> Self::StopMessage {}
 
-    fn snapshot(&self) -> Self::Snapshot {
-      self.count
-    }
+    fn snapshot(&self) -> Self::Snapshot { self.count }
   }
 
   impl Handler<Ping> for Counter {
@@ -87,7 +85,7 @@ pub mod fixtures {
   #[derive(Debug, Clone)]
   #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct PingPlayer {
-    pub count: usize,
+    pub count:     usize,
     pub max_count: usize,
   }
 
@@ -96,19 +94,13 @@ pub mod fixtures {
     type StartMessage = Ping;
     type StopMessage = ();
 
-    fn on_start(&mut self) -> Self::StartMessage {
-      Ping
-    }
+    fn on_start(&mut self) -> Self::StartMessage { Ping }
 
     fn on_stop(&mut self) -> Self::StopMessage {}
 
-    fn snapshot(&self) -> Self::Snapshot {
-      self.count
-    }
+    fn snapshot(&self) -> Self::Snapshot { self.count }
 
-    fn should_stop(&self) -> bool {
-      self.count >= self.max_count
-    }
+    fn should_stop(&self) -> bool { self.count >= self.max_count }
   }
 
   impl Handler<Pong> for PingPlayer {
@@ -141,8 +133,6 @@ pub mod fixtures {
   impl Handler<Ping> for PongPlayer {
     type Reply = Pong;
 
-    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> {
-      Some(Pong)
-    }
+    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> { Some(Pong) }
   }
 }

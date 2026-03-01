@@ -128,8 +128,9 @@ async fn dual_snapshot_streams() {
 #[cfg(feature = "tcp")]
 #[tokio::test]
 async fn tcp_ping_pong_exchange() {
-  use arbiter::network::tcp::TcpStream;
   use std::time::Duration;
+
+  use arbiter::network::tcp::TcpStream;
 
   let mut runtime_a = Runtime::<TcpStream>::new();
   let mut runtime_b = Runtime::<TcpStream>::new();
@@ -163,8 +164,9 @@ async fn tcp_ping_pong_exchange() {
 #[cfg(feature = "tcp")]
 #[tokio::test]
 async fn tcp_connect_invalid_port_does_not_panic() {
-  use arbiter::network::tcp::TcpStream;
   use std::time::Duration;
+
+  use arbiter::network::tcp::TcpStream;
 
   let runtime = Runtime::<TcpStream>::new();
 
