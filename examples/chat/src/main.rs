@@ -111,8 +111,10 @@ async fn main() {
     .with_handler::<ChatMessage>()
     .with_name("chat_client");
 
+  // Create a processing handle for the actor and start it.
+  // This triggers the on_start() hook and opens the actor's inbox for messages.
   let mut process = runtime.process(chat_actor);
-  process.start().await.unwrap();
+  process.start().await.expect("Failed to start chat actor");
 
   // Spawn a background task to read from stdin and broadcast
   let socket = runtime.socket();

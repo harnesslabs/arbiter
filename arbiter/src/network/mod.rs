@@ -14,6 +14,9 @@ use crate::handler::Envelope;
 #[cfg(feature = "tcp")] pub mod registry;
 
 /// Defines a network backend capable of spawning and routing to [`Socket`]s.
+///
+/// Implementations of this trait provide the underlying transport mechanism
+/// (e.g., cross-thread channels, TCP, WebSockets) that actors use to communicate.
 pub trait Network: Sized + 'static {
   /// The type of socket created by this network.
   type Socket: Socket;
@@ -22,13 +25,22 @@ pub trait Network: Sized + 'static {
   fn new() -> Self;
 
   /// Creates a new socket connected to this network.
+  ///
+  /// This typically involves generating a unique address for the endpoint
+  /// and setting up internal routing state.
   fn connect(&mut self) -> Self::Socket;
 
   /// Subscribes the given socket address to messages of the specified `TypeId`.
+  ///
+  /// The network will ensure that messages of this type sent to the network
+  /// are delivered to the inbox associated with the provided address.
   fn subscribe(&self, address: <Self::Socket as Socket>::Address, type_id: TypeId);
 }
 
 /// An endpoint for sending and receiving messages over a [`Network`].
+///
+/// A `Socket` is a lightweight handle that represents an actor's presence on the network.
+/// It is usually obtained via [`Network::connect`] or [`crate::runtime::Runtime::spawn`].
 pub trait Socket: Send + 'static {
   /// The envelope type used by this socket to carry messages.
   type Envelope: Envelope;

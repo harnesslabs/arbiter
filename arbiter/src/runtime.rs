@@ -40,6 +40,10 @@ impl<N: Network> Runtime<N> {
 
   /// Subscribes the actor's handlers to the network, then starts processing.
   ///
+  /// This method performs the final wiring between the actor and the network.
+  /// It automatically inspects the actor's registered handlers and calls
+  /// [`Network::subscribe`] for each message type.
+  ///
   /// Returns a [`Processing`] handle to observe and control the actor.
   pub fn process<L: LifeCycle>(&self, actor: Actor<L, N>) -> Processing<Actor<L, N>, L, N> {
     for &type_id in actor.handlers.keys() {

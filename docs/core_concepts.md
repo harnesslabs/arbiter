@@ -32,9 +32,13 @@ impl Handler<Tick> for MyActor {
 }
 ```
 
-## Network
+The `Network` manages connections between actors and the broader system. It handles the low-level details of broadcasting messages and establishing direct communication channels (Sockets). 
 
-The `Network` manages connections between actors and the broader system. It handles the low-level details of broadcasting messages and establishing direct communication channels (Sockets). This abstraction allows Arbiter systems to scale from local in-memory runners to distributed processing nodes.
+Arbiter provides two main implementations:
+- **`InMemory`**: High-performance, same-process communication using standard Rust channels.
+- **`TcpStream`**: Distributed communication using TCP, enabling actors to span multiple processes and nodes.
+
+This abstraction allows Arbiter systems to scale from local in-memory runners to distributed processing nodes.
 
 ## Runtime
 

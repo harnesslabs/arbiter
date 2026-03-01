@@ -23,10 +23,17 @@ struct WireEnvelope {
 }
 
 /// An envelope containing a message for the `TcpStream` network.
+///
+/// Unlike the in-memory envelope, `TcpEnvelope` stores the message as a serialized
+/// byte buffer alongside its type name, allowing it to be transmitted across
+/// process boundaries.
 #[derive(Clone)]
 pub struct TcpEnvelope {
+  /// The `TypeId` of the message, used for local routing.
   pub type_id:   TypeId,
+  /// The string name of the type, used for remote routing.
   pub type_name: String,
+  /// The serialized message payload.
   pub payload:   Vec<u8>,
 }
 
@@ -63,12 +70,15 @@ impl Envelope for TcpEnvelope {
   }
 }
 
-/// A network address for the `TcpStream` backend. It consists of
-/// the originating node's `SocketAddr` and a unique `actor_id` to route
-/// messages back to the exact actor instance.
+/// A network address for the `TcpStream` backend.
+///
+/// Identification consists of the originating node's public `SocketAddr`
+/// and a unique `actor_id` assigned by that node's local runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TcpAddress {
+  /// The IP and port of the physical node.
   pub node:     SocketAddr,
+  /// The unique identifier for the actor on that node.
   pub actor_id: u64,
 }
 
@@ -218,6 +228,10 @@ async fn router(listener: TcpListener, mut rx: mpsc::UnboundedReceiver<RouterMes
 }
 
 /// A network implementation that communicates via TCP streams.
+///
+/// `TcpStream` enables actors to communicate across a LAN or the internet.
+/// It maintains a background router task that manages persistent connections
+/// to other nodes and handles message serialization/deserialization.
 #[derive(Debug)]
 pub struct TcpStream {
   router_tx:  mpsc::UnboundedSender<RouterMessage>,
