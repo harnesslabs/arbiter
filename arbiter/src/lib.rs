@@ -28,16 +28,19 @@ pub mod fixtures {
 
   /// A simple ping message.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct Ping;
 
   /// A simple pong message.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct Pong;
 
   /// A simple actor that counts every message it receives.
   /// Handles both [`Ping`] and [`Pong`], incrementing `count` for each.
   /// Snapshot is the current count.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct Counter {
     pub count: usize,
   }
@@ -51,7 +54,9 @@ pub mod fixtures {
 
     fn on_stop(&mut self) -> Self::StopMessage {}
 
-    fn snapshot(&self) -> Self::Snapshot { self.count }
+    fn snapshot(&self) -> Self::Snapshot {
+      self.count
+    }
   }
 
   impl Handler<Ping> for Counter {
@@ -80,8 +85,9 @@ pub mod fixtures {
   ///
   /// Snapshot is the current count — ideal for stream-based testing.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct PingPlayer {
-    pub count:     usize,
+    pub count: usize,
     pub max_count: usize,
   }
 
@@ -90,13 +96,19 @@ pub mod fixtures {
     type StartMessage = Ping;
     type StopMessage = ();
 
-    fn on_start(&mut self) -> Self::StartMessage { Ping }
+    fn on_start(&mut self) -> Self::StartMessage {
+      Ping
+    }
 
     fn on_stop(&mut self) -> Self::StopMessage {}
 
-    fn snapshot(&self) -> Self::Snapshot { self.count }
+    fn snapshot(&self) -> Self::Snapshot {
+      self.count
+    }
 
-    fn should_stop(&self) -> bool { self.count >= self.max_count }
+    fn should_stop(&self) -> bool {
+      self.count >= self.max_count
+    }
   }
 
   impl Handler<Pong> for PingPlayer {
@@ -111,6 +123,7 @@ pub mod fixtures {
   /// Simple responder: replies [`Pong`] to every [`Ping`].
   /// No meaningful state — just an echo partner.
   #[derive(Debug, Clone)]
+  #[cfg_attr(feature = "tcp", derive(serde::Serialize, serde::Deserialize))]
   pub struct PongPlayer;
 
   impl LifeCycle for PongPlayer {
@@ -128,6 +141,8 @@ pub mod fixtures {
   impl Handler<Ping> for PongPlayer {
     type Reply = Pong;
 
-    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> { Some(Pong) }
+    fn handle(&mut self, _message: &Ping) -> Option<Self::Reply> {
+      Some(Pong)
+    }
   }
 }

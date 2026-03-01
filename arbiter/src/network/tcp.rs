@@ -1,52 +1,320 @@
 //! TCP network implementation for distributed actor communication.
-//!
-//! (Currently a skeleton/stub).
 
-use std::any::TypeId;
+use std::{any::TypeId, collections::HashMap, fmt::Debug, net::SocketAddr};
+
+use tokio::{
+  io::{AsyncReadExt, AsyncWriteExt},
+  net::{TcpListener, TcpStream as TokioTcpStream},
+  sync::mpsc,
+};
 
 use crate::{
   handler::{Envelope, Message},
-  network::{Network, Socket},
+  network::{Network, Socket, registry::global_registry},
 };
 
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
+struct WireEnvelope {
+  type_name: String,
+  payload: Vec<u8>,
+}
+
 /// An envelope containing a message for the `TcpStream` network.
-#[derive(Debug)]
-pub struct TcpEnvelope;
+#[derive(Clone)]
+pub struct TcpEnvelope {
+  pub type_id: TypeId,
+  pub type_name: String,
+  pub payload: Vec<u8>,
+}
+
+impl Debug for TcpEnvelope {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "TcpEnvelope {{ type_name: {} }}", self.type_name)
+  }
+}
 
 impl Envelope for TcpEnvelope {
-  fn type_id(&self) -> TypeId { todo!() }
+  fn type_id(&self) -> TypeId {
+    self.type_id
+  }
 
-  fn wrap<M: Message>(_message: M) -> Self { todo!() }
+  fn wrap<M: Message>(message: M) -> Self {
+    global_registry().register::<M>();
+    let type_name = std::any::type_name::<M>().to_string();
+    let payload = bincode::serialize(&message).expect("Failed to serialize message");
+    Self { type_id: TypeId::of::<M>(), type_name, payload }
+  }
 
   fn downcast<M: Message>(&self) -> Option<impl std::ops::Deref<Target = M> + '_> {
-    let opt: Option<&M> = None;
-    opt
+    if self.type_id == TypeId::of::<M>() {
+      match bincode::deserialize::<M>(&self.payload) {
+        Ok(msg) => Some(Box::new(msg)),
+        Err(e) => {
+          tracing::error!("Failed to deserialize message: {}", e);
+          None
+        },
+      }
+    } else {
+      None
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TcpAddress {
+  pub node: SocketAddr,
+  pub actor_id: u64,
+}
+
+impl std::fmt::Display for TcpAddress {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "{}#{}", self.node, self.actor_id)
+  }
+}
+
+impl TcpAddress {
+  fn generate(node: SocketAddr) -> Self {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    Self { node, actor_id: COUNTER.fetch_add(1, Ordering::Relaxed) }
+  }
+}
+
+enum RouterMessage {
+  Register(TcpAddress, mpsc::UnboundedSender<TcpEnvelope>),
+  Subscribe(TcpAddress, TypeId),
+  DispatchLocal(TcpEnvelope),
+  ConnectTo(SocketAddr),
+  IncomingRemote(SocketAddr, WireEnvelope),
+  AddRemote(SocketAddr, mpsc::UnboundedSender<WireEnvelope>),
+}
+
+fn spawn_connection(
+  stream: TokioTcpStream,
+  mut out_rx: mpsc::UnboundedReceiver<WireEnvelope>,
+  in_tx: mpsc::UnboundedSender<RouterMessage>,
+  peer_addr: SocketAddr,
+) {
+  tokio::spawn(async move {
+    let (mut rd, mut wr) = stream.into_split();
+
+    let mut write_task = tokio::spawn(async move {
+      while let Some(wire) = out_rx.recv().await {
+        if let Ok(bytes) = bincode::serialize(&wire) {
+          if wr.write_u32(bytes.len() as u32).await.is_err() {
+            break;
+          }
+          if wr.write_all(&bytes).await.is_err() {
+            break;
+          }
+        }
+      }
+    });
+
+    let mut read_task = tokio::spawn(async move {
+      while let Ok(len) = rd.read_u32().await {
+        let mut buf = vec![0; len as usize];
+        if rd.read_exact(&mut buf).await.is_err() {
+          break;
+        }
+        if let Ok(wire) = bincode::deserialize::<WireEnvelope>(&buf) {
+          let _ = in_tx.send(RouterMessage::IncomingRemote(peer_addr, wire));
+        }
+      }
+    });
+
+    tokio::select! {
+      _ = &mut write_task => read_task.abort(),
+      _ = &mut read_task => write_task.abort(),
+    }
+  });
+}
+
+async fn router(listener: TcpListener, mut rx: mpsc::UnboundedReceiver<RouterMessage>) {
+  let mut inboxes: HashMap<TcpAddress, mpsc::UnboundedSender<TcpEnvelope>> = HashMap::new();
+  let mut routes: HashMap<TypeId, Vec<TcpAddress>> = HashMap::new();
+  let mut remotes: HashMap<SocketAddr, mpsc::UnboundedSender<WireEnvelope>> = HashMap::new();
+
+  let (remote_in_tx, mut remote_in_rx) = mpsc::unbounded_channel::<RouterMessage>();
+
+  loop {
+    tokio::select! {
+      Ok((stream, peer_addr)) = listener.accept() => {
+        let (tx, rx) = mpsc::unbounded_channel();
+        remotes.insert(peer_addr, tx);
+        spawn_connection(stream, rx, remote_in_tx.clone(), peer_addr);
+      }
+      Some(msg) = remote_in_rx.recv() => {
+        match msg {
+          RouterMessage::IncomingRemote(_addr, wire) => {
+            if let Some(type_id) = global_registry().get_id(&wire.type_name) {
+              let env = TcpEnvelope { type_id, type_name: wire.type_name, payload: wire.payload };
+              if let Some(addrs) = routes.get(&type_id) {
+                for addr in addrs {
+                  if let Some(inbox) = inboxes.get(addr) {
+                    let _ = inbox.send(env.clone());
+                  }
+                }
+              }
+            }
+          }
+          RouterMessage::AddRemote(addr, tx) => { remotes.insert(addr, tx); }
+          _ => {}
+        }
+      }
+      Some(msg) = rx.recv() => {
+        match msg {
+          RouterMessage::Register(addr, tx) => { inboxes.insert(addr, tx); },
+          RouterMessage::Subscribe(addr, tid) => { routes.entry(tid).or_default().push(addr); },
+          RouterMessage::DispatchLocal(env) => {
+            // Local dispatch
+            if let Some(addrs) = routes.get(&env.type_id) {
+              for addr in addrs {
+                if let Some(inbox) = inboxes.get(addr) {
+                  let _ = inbox.send(env.clone());
+                }
+              }
+            }
+            // Broadcast
+            let wire = WireEnvelope { type_name: env.type_name.clone(), payload: env.payload.clone() };
+            for rx_tx in remotes.values() {
+              let _ = rx_tx.send(wire.clone());
+            }
+          }
+          RouterMessage::ConnectTo(addr) => {
+            let remote_in_tx = remote_in_tx.clone();
+            tokio::spawn(async move {
+              if let Ok(stream) = tokio::net::TcpStream::connect(addr).await {
+                let (tx, rx) = mpsc::unbounded_channel();
+                let _ = remote_in_tx.send(RouterMessage::AddRemote(addr, tx));
+                spawn_connection(stream, rx, remote_in_tx, addr);
+              }
+            });
+          }
+          _ => {}
+        }
+      }
+    }
   }
 }
 
 /// A network implementation that communicates via TCP streams.
-pub struct TcpStream;
+#[derive(Debug)]
+pub struct TcpStream {
+  router_tx: mpsc::UnboundedSender<RouterMessage>,
+  local_addr: SocketAddr,
+}
+
+impl TcpStream {
+  /// Resolves an address and connects the router to it.
+  pub async fn connect_to(&self, addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<()> {
+    let addr = tokio::net::lookup_host(addr).await?.next().unwrap();
+    let _ = self.router_tx.send(RouterMessage::ConnectTo(addr));
+    Ok(())
+  }
+
+  /// Returns the randomly assigned local bind port / IP.
+  pub fn local_addr(&self) -> SocketAddr {
+    self.local_addr
+  }
+}
 
 impl Network for TcpStream {
   type Socket = TcpSocket;
 
-  fn new() -> Self { todo!() }
+  fn new() -> Self {
+    let std_listener =
+      std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind TCP listener");
+    std_listener.set_nonblocking(true).unwrap();
+    let listener = TcpListener::from_std(std_listener).unwrap();
+    let local_addr = listener.local_addr().unwrap();
 
-  fn connect(&mut self) -> Self::Socket { todo!() }
+    let (router_tx, router_rx) = mpsc::unbounded_channel();
 
-  fn subscribe(&self, _address: <Self::Socket as Socket>::Address, _type_id: TypeId) { todo!() }
+    tokio::spawn(router(listener, router_rx));
+
+    Self { router_tx, local_addr }
+  }
+
+  fn connect(&mut self) -> Self::Socket {
+    let address = TcpAddress::generate(self.local_addr);
+    let (inbox_tx, inbox_rx) = mpsc::unbounded_channel();
+    let _ = self.router_tx.send(RouterMessage::Register(address, inbox_tx));
+    TcpSocket { address, router_tx: self.router_tx.clone(), inbox_rx }
+  }
+
+  fn subscribe(&self, address: <Self::Socket as Socket>::Address, type_id: TypeId) {
+    let _ = self.router_tx.send(RouterMessage::Subscribe(address, type_id));
+  }
 }
 
 /// The socket endpoint assigned to an actor on the `TcpStream` network.
-pub struct TcpSocket;
+pub struct TcpSocket {
+  address: TcpAddress,
+  router_tx: mpsc::UnboundedSender<RouterMessage>,
+  inbox_rx: mpsc::UnboundedReceiver<TcpEnvelope>,
+}
+
+impl Debug for TcpSocket {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "TcpSocket {{ address: {} }}", self.address)
+  }
+}
 
 impl Socket for TcpSocket {
-  type Address = std::net::SocketAddr;
+  type Address = TcpAddress;
   type Envelope = TcpEnvelope;
 
-  fn address(&self) -> Self::Address { todo!() }
+  fn address(&self) -> Self::Address {
+    self.address
+  }
 
-  async fn send(&self, _envelope: Self::Envelope) { todo!() }
+  async fn send(&self, envelope: Self::Envelope) {
+    let _ = self.router_tx.send(RouterMessage::DispatchLocal(envelope));
+  }
 
-  async fn receive(&mut self) -> Option<Self::Envelope> { todo!() }
+  async fn receive(&mut self) -> Option<Self::Envelope> {
+    self.inbox_rx.recv().await
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::{fixtures::*, runtime::Runtime};
+  use std::time::Duration;
+  use tokio_stream::StreamExt;
+
+  #[tokio::test]
+  async fn test_tcp_ping_pong_exchange() {
+    let mut runtime_a = Runtime::<TcpStream>::new();
+    let mut runtime_b = Runtime::<TcpStream>::new();
+
+    // Connect node A to node B
+    runtime_a.network().connect_to(runtime_b.network().local_addr()).await.unwrap();
+
+    // Give connection time to establish
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Node A plays Ping, ends at 5
+    let ping = runtime_a
+      .spawn(PingPlayer { count: 0, max_count: 5 })
+      .with_handler::<Pong>()
+      .with_name("ping");
+    // Node B plays Pong
+    let pong = runtime_b.spawn(PongPlayer).with_handler::<Ping>().with_name("pong");
+
+    let mut ping = runtime_a.process(ping);
+    let mut pong = runtime_b.process(pong);
+
+    let mut snapshots = ping.stream().unwrap();
+
+    ping.start().await.unwrap();
+    pong.start().await.unwrap();
+
+    for expected in 0..=5 {
+      let snapshot = snapshots.next().await.unwrap();
+      assert_eq!(snapshot, expected);
+    }
+  }
 }

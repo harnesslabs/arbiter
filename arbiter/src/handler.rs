@@ -9,9 +9,24 @@ use crate::network::{Network, Socket};
 /// The base trait for all messages processed by actors.
 ///
 /// This trait is automatically implemented for any type that satisfies
-/// its bounds (`Any + Send + Sync + Debug + 'static`).
+/// its bounds. When the `tcp` feature is enabled, messages must also be
+/// serializable via `serde`.
+#[cfg(feature = "tcp")]
+pub trait Message:
+  Any + Send + Sync + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static
+{
+}
+
+#[cfg(not(feature = "tcp"))]
 pub trait Message: Any + Send + Sync + Debug + 'static {}
 
+#[cfg(feature = "tcp")]
+impl<T> Message for T where
+  T: Send + Sync + Any + Debug + serde::Serialize + serde::de::DeserializeOwned + 'static
+{
+}
+
+#[cfg(not(feature = "tcp"))]
 impl<T> Message for T where T: Send + Sync + Any + Debug + 'static {}
 
 /// The envelope trait — each [`Network`] defines its own concrete envelope type
@@ -50,7 +65,8 @@ pub(crate) fn create_handler<M, L, N>() -> MessageHandlerFn<N>
 where
   L: Handler<M> + 'static,
   M: Message,
-  N: Network, {
+  N: Network,
+{
   Box::new(move |agent: &mut dyn Any, envelope: &<N::Socket as Socket>::Envelope| {
     let Some(typed_agent) = agent.downcast_mut::<L>() else {
       unreachable!("type mismatch: agent is not the expected Handler type");
