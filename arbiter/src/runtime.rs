@@ -34,6 +34,14 @@ impl<N: Network> Runtime<N> {
     Actor::new(lifecycle, socket)
   }
 
+  /// Creates a raw socket connected to the network without spawning an actor.
+  ///
+  /// This is useful for injecting messages from external sources (e.g., stdin, external APIs)
+  /// directly into the network.
+  pub fn socket(&mut self) -> N::Socket {
+    self.network.connect()
+  }
+
   /// Subscribes the actor's handlers to the network, then starts processing.
   ///
   /// Returns a [`Processing`] handle to observe and control the actor.

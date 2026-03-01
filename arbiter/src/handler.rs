@@ -38,6 +38,8 @@ pub trait Envelope: Send + Sync + Debug + 'static {
   fn wrap<M: Message>(message: M) -> Self;
   /// Attempts to downcast the envelope payload back to a specific [`Message`] type.
   fn downcast<M: Message>(&self) -> Option<impl Deref<Target = M> + '_>;
+  /// Registers the type internally if the network backend requires it.
+  fn register_type<M: Message>() {}
 }
 
 /// Defines how an actor processes a specific type of [`Message`].

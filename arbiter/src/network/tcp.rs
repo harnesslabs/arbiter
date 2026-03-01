@@ -41,6 +41,10 @@ impl Envelope for TcpEnvelope {
     self.type_id
   }
 
+  fn register_type<M: Message>() {
+    global_registry().register::<M>();
+  }
+
   fn wrap<M: Message>(message: M) -> Self {
     global_registry().register::<M>();
     let type_name = std::any::type_name::<M>().to_string();

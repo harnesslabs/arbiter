@@ -76,6 +76,7 @@ impl<L: LifeCycle, N: Network> Actor<L, N> {
     M: Message,
     L: Handler<M>,
   {
+    <<N as Network>::Socket as Socket>::Envelope::register_type::<M>();
     self.handlers.insert(TypeId::of::<M>(), create_handler::<M, L, N>());
     self
   }
