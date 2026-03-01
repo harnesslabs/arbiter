@@ -35,9 +35,10 @@ pub trait LifeCycle: Send + Sync + 'static {
 
 /// A fully configured actor, ready to be spawned into the runtime.
 ///
-/// It encapsulates the user-defined `LifeCycle`, its addressable `Socket`,
+/// It encapsulates the user-defined [`LifeCycle`], its addressable `Socket`,
 /// and a dynamic mapping of message `TypeId`s to their respective handlers.
 pub struct Actor<L: LifeCycle, N: Network> {
+  /// Optional human-readable name for the actor (useful for tracing/debugging).
   pub name:            Option<String>,
   pub(crate) state:    State,
   pub(crate) inner:    L,

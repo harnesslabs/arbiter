@@ -19,7 +19,7 @@ use crate::{
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct WireEnvelope {
   type_name: String,
-  payload: Vec<u8>,
+  payload:   Vec<u8>,
 }
 
 /// An envelope containing a message for the `TcpStream` network.
@@ -30,11 +30,11 @@ struct WireEnvelope {
 #[derive(Clone)]
 pub struct TcpEnvelope {
   /// The `TypeId` of the message, used for local routing.
-  pub type_id: TypeId,
+  pub type_id:   TypeId,
   /// The string name of the type, used for remote routing.
   pub type_name: String,
   /// The serialized message payload.
-  pub payload: Vec<u8>,
+  pub payload:   Vec<u8>,
 }
 
 impl Debug for TcpEnvelope {
@@ -44,13 +44,9 @@ impl Debug for TcpEnvelope {
 }
 
 impl Envelope for TcpEnvelope {
-  fn type_id(&self) -> TypeId {
-    self.type_id
-  }
+  fn type_id(&self) -> TypeId { self.type_id }
 
-  fn register_type<M: Message>() {
-    global_registry().register::<M>();
-  }
+  fn register_type<M: Message>() { global_registry().register::<M>(); }
 
   fn wrap<M: Message>(message: M) -> Self {
     global_registry().register::<M>();
@@ -81,7 +77,7 @@ impl Envelope for TcpEnvelope {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TcpAddress {
   /// The IP and port of the physical node.
-  pub node: SocketAddr,
+  pub node:     SocketAddr,
   /// The unique identifier for the actor on that node.
   pub actor_id: u64,
 }
@@ -93,6 +89,7 @@ impl std::fmt::Display for TcpAddress {
 }
 
 impl TcpAddress {
+  /// Generates a unique address for a new actor on the local node.
   fn generate(node: SocketAddr) -> Self {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -100,16 +97,25 @@ impl TcpAddress {
   }
 }
 
+/// Internal messages for the TCP router.
 enum RouterMessage {
+  /// Registers a local actor inbox.
   Register(TcpAddress, mpsc::UnboundedSender<TcpEnvelope>),
+  /// Subscribes an actor to a message type.
   Subscribe(TcpAddress, TypeId),
+  /// Dispatches a message to local actors and broadcasts to known remotes.
   DispatchLocal(TcpEnvelope),
+  /// Initiates a connection to a remote node.
   ConnectTo(SocketAddr),
+  /// Handles an incoming wire envelope from a remote node.
   IncomingRemote(SocketAddr, WireEnvelope),
+  /// Notifies the router that a connection to a remote node has been established.
   ConnectionEstablished(SocketAddr, mpsc::UnboundedSender<WireEnvelope>),
+  /// Notifies the router that a connection attempt failed.
   ConnectionFailed(SocketAddr),
 }
 
+/// Spawns a background task to handle reading from and writing to a TCP stream.
 fn spawn_connection(
   stream: TokioTcpStream,
   mut out_rx: mpsc::UnboundedReceiver<WireEnvelope>,
@@ -120,7 +126,6 @@ fn spawn_connection(
     let (mut rd, mut wr) = stream.into_split();
 
     let mut write_task = tokio::spawn(async move {
-      tracing::debug!("Started write_task for {}", peer_addr);
       while let Some(wire) = out_rx.recv().await {
         if let Ok(bytes) = bincode::serialize(&wire) {
           if let Err(e) = wr.write_u32(bytes.len() as u32).await {
@@ -131,45 +136,28 @@ fn spawn_connection(
             tracing::error!("Failed to write payload to {}: {}", peer_addr, e);
             break;
           }
-          tracing::debug!("Successfully wrote envelope '{}' to {}", wire.type_name, peer_addr);
         } else {
           tracing::error!("Failed to serialize wire envelope");
         }
       }
-      tracing::debug!("write_task ended for {}", peer_addr);
     });
 
     let mut read_task = tokio::spawn(async move {
-      tracing::debug!("Started read_task for {}", peer_addr);
-      loop {
-        match rd.read_u32().await {
-          Ok(len) => {
-            let mut buf = vec![0; len as usize];
-            if let Err(e) = rd.read_exact(&mut buf).await {
-              tracing::error!("Failed to read exact buf from {}: {}", peer_addr, e);
-              break;
-            }
-            match bincode::deserialize::<WireEnvelope>(&buf) {
-              Ok(wire) => {
-                tracing::debug!(
-                  "Successfully read envelope '{}' from {}",
-                  wire.type_name,
-                  peer_addr
-                );
-                let _ = in_tx.send(RouterMessage::IncomingRemote(peer_addr, wire));
-              },
-              Err(e) => {
-                tracing::warn!("Failed to deserialize wire envelope from {}: {}", peer_addr, e);
-              },
-            }
+      while let Ok(len) = rd.read_u32().await {
+        let mut buf = vec![0; len as usize];
+        if let Err(e) = rd.read_exact(&mut buf).await {
+          tracing::error!("Failed to read exact buf from {}: {}", peer_addr, e);
+          break;
+        }
+        match bincode::deserialize::<WireEnvelope>(&buf) {
+          Ok(wire) => {
+            let _ = in_tx.send(RouterMessage::IncomingRemote(peer_addr, wire));
           },
           Err(e) => {
-            tracing::debug!("read_u32 failed/closed for {}: {}", peer_addr, e);
-            break;
+            tracing::warn!("Failed to deserialize wire envelope from {}: {}", peer_addr, e);
           },
         }
       }
-      tracing::debug!("read_task ended for {}", peer_addr);
     });
 
     tokio::select! {
@@ -179,6 +167,10 @@ fn spawn_connection(
   });
 }
 
+/// The main router loop for the TCP network.
+///
+/// It handles local registrations, message dispatching, and maintains
+/// the mesh network by gossiping peer lists and handling handshakes.
 async fn router(
   listener: TcpListener,
   mut rx: mpsc::UnboundedReceiver<RouterMessage>,
@@ -207,7 +199,6 @@ async fn router(
   loop {
     tokio::select! {
       Ok((stream, peer_addr)) = listener.accept() => {
-        tracing::info!("Accepted incoming connection from {}", peer_addr);
         let (tx, rx) = mpsc::unbounded_channel();
         unverified_remotes.insert(peer_addr, tx);
         spawn_connection(stream, rx, remote_in_tx.clone(), peer_addr);
@@ -217,39 +208,24 @@ async fn router(
           RouterMessage::IncomingRemote(addr, wire) => {
             if wire.type_name == "$arbiter::Handshake" {
               if let Ok(remote_listener_addr) = bincode::deserialize::<SocketAddr>(&wire.payload) {
-                // Determine if we should keep this connection
+                // Tie-breaker: If we already have a connection to them, standardise on the one
+                // where the local address is higher.
                 let should_keep = if remotes.contains_key(&remote_listener_addr) {
-                  // Wait, actually, let's simplify.
-                  // If we already have a connection to them in `remotes`, it must be an outgoing connection we initiated,
-                  // or another completed incoming connection.
-                  // Let's standardise: Higher `SocketAddr` wins tie-breaker and its connection is kept.
-                  if local_addr > remote_listener_addr {
-                    tracing::info!("Tie-break: local {} > remote {}. Keeping existing connection, rejecting new incoming.", local_addr, remote_listener_addr);
-                    false
-                  } else {
-                    tracing::info!("Tie-break: local {} <= remote {}. Replacing existing with new incoming.", local_addr, remote_listener_addr);
-                    true
-                  }
+                  local_addr <= remote_listener_addr
                 } else {
-                  tracing::info!("Incoming handshake from new peer: {}", remote_listener_addr);
                   true
                 };
 
-                if should_keep {
-                  if let Some(tx) = unverified_remotes.remove(&addr) {
-                    remotes.insert(remote_listener_addr, tx.clone());
-                    mesh_peers.insert(remote_listener_addr);
-
-                    // Reply with our MeshPeers
-                    let peers: Vec<SocketAddr> = mesh_peers.iter().copied().collect();
-                    let reply = WireEnvelope {
-                      type_name: "$arbiter::MeshPeers".to_string(),
-                      payload: bincode::serialize(&peers).unwrap(),
-                    };
-                    let _ = tx.send(reply);
-
-                    tracing::info!("Handshake complete. Client {} verified as listener {}", addr, remote_listener_addr);
-                  }
+                if should_keep && let Some(tx) = unverified_remotes.remove(&addr) {
+                  remotes.insert(remote_listener_addr, tx.clone());
+                  mesh_peers.insert(remote_listener_addr);
+                  // Reply with our MeshPeers
+                  let peers: Vec<SocketAddr> = mesh_peers.iter().copied().collect();
+                  let reply = WireEnvelope {
+                    type_name: "$arbiter::MeshPeers".to_string(),
+                    payload: bincode::serialize(&peers).unwrap(),
+                  };
+                  let _ = tx.send(reply);
                 }
               }
             } else if wire.type_name == "$arbiter::MeshPeers" {
@@ -257,7 +233,6 @@ async fn router(
                 let mut new_peers = false;
                 for peer in peers {
                   if mesh_peers.insert(peer) {
-                    tracing::info!("Discovered new mesh peer: {}", peer);
                     new_peers = true;
                     // Connect to new peer
                     let _ = remote_in_tx.send(RouterMessage::ConnectTo(peer));
@@ -284,8 +259,6 @@ async fn router(
                   }
                 }
               }
-            } else {
-              tracing::warn!("Received unregistered message type '{}' from {}", wire.type_name, addr);
             }
           }
           RouterMessage::ConnectionEstablished(remote_listener_addr, tx) => {
@@ -312,18 +285,14 @@ async fn router(
             pending_connections.remove(&addr);
           }
           RouterMessage::ConnectTo(addr) => {
-            // Check if we are already connected, attempting to connect, or if it is ourself
             if addr == local_addr || remotes.contains_key(&addr) || pending_connections.contains(&addr) {
-              tracing::debug!("Skipping ConnectTo({}): already connected, pending, or self", addr);
               continue;
             }
             pending_connections.insert(addr);
-            tracing::info!("Initiating ConnectTo: {}", addr);
             let remote_in_tx_clone = remote_in_tx.clone();
             tokio::spawn(async move {
               match tokio::net::TcpStream::connect(addr).await {
                 Ok(stream) => {
-                  tracing::info!("Connected to remote node at {}", addr);
                   let (tx, rx) = mpsc::unbounded_channel();
                   let _ = remote_in_tx_clone.send(RouterMessage::ConnectionEstablished(addr, tx));
                   spawn_connection(stream, rx, remote_in_tx_clone, addr);
@@ -374,7 +343,7 @@ async fn router(
 /// to other nodes and handles message serialization/deserialization.
 #[derive(Debug)]
 pub struct TcpStream {
-  router_tx: mpsc::UnboundedSender<RouterMessage>,
+  router_tx:  mpsc::UnboundedSender<RouterMessage>,
   local_addr: SocketAddr,
 }
 
@@ -400,9 +369,7 @@ impl TcpStream {
 
   /// Returns the randomly assigned local bind port / IP.
   #[must_use]
-  pub const fn local_addr(&self) -> SocketAddr {
-    self.local_addr
-  }
+  pub const fn local_addr(&self) -> SocketAddr { self.local_addr }
 }
 
 impl Network for TcpStream {
@@ -445,9 +412,9 @@ impl Network for TcpStream {
 
 /// The socket endpoint assigned to an actor on the `TcpStream` network.
 pub struct TcpSocket {
-  address: TcpAddress,
+  address:   TcpAddress,
   router_tx: mpsc::UnboundedSender<RouterMessage>,
-  inbox_rx: mpsc::UnboundedReceiver<TcpEnvelope>,
+  inbox_rx:  mpsc::UnboundedReceiver<TcpEnvelope>,
 }
 
 impl Debug for TcpSocket {
@@ -460,17 +427,13 @@ impl Socket for TcpSocket {
   type Address = TcpAddress;
   type Envelope = TcpEnvelope;
 
-  fn address(&self) -> Self::Address {
-    self.address
-  }
+  fn address(&self) -> Self::Address { self.address }
 
   async fn send(&self, envelope: Self::Envelope) {
     let _ = self.router_tx.send(RouterMessage::DispatchLocal(envelope));
   }
 
-  async fn receive(&mut self) -> Option<Self::Envelope> {
-    self.inbox_rx.recv().await
-  }
+  async fn receive(&mut self) -> Option<Self::Envelope> { self.inbox_rx.recv().await }
 }
 
 #[cfg(test)]
