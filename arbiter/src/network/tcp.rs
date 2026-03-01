@@ -161,6 +161,7 @@ async fn router(listener: TcpListener, mut rx: mpsc::UnboundedReceiver<RouterMes
   loop {
     tokio::select! {
       Ok((stream, peer_addr)) = listener.accept() => {
+        tracing::info!("Accepted incoming connection from {}", peer_addr);
         let (tx, rx) = mpsc::unbounded_channel();
         remotes.insert(peer_addr, tx);
         spawn_connection(stream, rx, remote_in_tx.clone(), peer_addr);
@@ -249,9 +250,13 @@ impl TcpStream {
   ///
   /// Panics if the resolved address yields zero results.
   pub async fn connect_to(&self, addr: impl tokio::net::ToSocketAddrs) -> std::io::Result<()> {
-    let addr = tokio::net::lookup_host(addr).await?.next().unwrap();
-    let _ = self.router_tx.send(RouterMessage::ConnectTo(addr));
-    Ok(())
+    let addrs = tokio::net::lookup_host(addr).await?;
+    if let Some(resolved) = addrs.into_iter().next() {
+      let _ = self.router_tx.send(RouterMessage::ConnectTo(resolved));
+      Ok(())
+    } else {
+      Err(std::io::Error::new(std::io::ErrorKind::AddrNotAvailable, "Failed to resolve address"))
+    }
   }
 
   /// Returns the randomly assigned local bind port / IP.
@@ -264,7 +269,7 @@ impl Network for TcpStream {
 
   fn new() -> Self {
     let std_listener =
-      std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind TCP listener");
+      std::net::TcpListener::bind("0.0.0.0:0").expect("Failed to bind TCP listener");
     std_listener.set_nonblocking(true).unwrap();
     let listener = TcpListener::from_std(std_listener).unwrap();
     let local_addr = listener.local_addr().unwrap();

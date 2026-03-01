@@ -91,17 +91,24 @@ async fn main() {
     info!("Connecting to peer at {}", peer);
     // We use block_on/await to ensure the connection establishes
     if let Err(e) = runtime.network().connect_to(peer).await {
-      tracing::error!("Failed to connect to {}: {}", peer, e);
+      tracing::error!("Failed to resolve or initiate connection to {}: {}", peer, e);
       process::exit(1);
     }
-    // Give connection a moment to establish
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    info!("Successfully connected to {}", peer);
+    info!("Connection attempt initiated to {}. Awaiting network handshake...", peer);
   }
+
+  let local_addr = runtime.network().local_addr();
+  let display_addr = if local_addr.ip().is_unspecified() {
+    // If bound to 0.0.0.0, the "local_addr" will show 0.0.0.0.
+    // In a real app we'd resolve the primary LAN IP, but here we'll just hint it.
+    format!("<YOUR_LAN_IP>:{}", local_addr.port())
+  } else {
+    local_addr.to_string()
+  };
 
   println!("========================================");
   println!(" Welcome to Arbiter Chat, {}!", args.name);
-  println!(" Your node is listening on: {}", runtime.network().local_addr());
+  println!(" Your node is listening on: {}", display_addr);
   println!(" Type your messages below. /quit to exit.");
   println!("========================================");
 
