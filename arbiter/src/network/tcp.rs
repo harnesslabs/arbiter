@@ -264,7 +264,7 @@ impl Network for TcpStream {
 
   fn new() -> Self {
     let std_listener =
-      std::net::TcpListener::bind("127.0.0.1:0").expect("Failed to bind TCP listener");
+      std::net::TcpListener::bind("0.0.0.0:0").expect("Failed to bind TCP listener");
     std_listener.set_nonblocking(true).unwrap();
     let listener = TcpListener::from_std(std_listener).unwrap();
     let local_addr = listener.local_addr().unwrap();
