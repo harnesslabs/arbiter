@@ -154,13 +154,13 @@ info:
 ci:
     @printf "{{bold}}Starting CI checks{{reset}}\n\n"
     @ERROR=0; \
-    just run-single-check "Rust formatting" "cargo fmt --all -- --check" || ERROR=1; \
+    just run-single-check "Rust formatting" "cargo +nightly fmt --all -- --check" || ERROR=1; \
     just run-single-check "TOML formatting" "taplo fmt --check" || ERROR=1; \
-    just run-single-check "Check" "cargo check --workspace" || ERROR=1; \
+    just run-single-check "Check" "cargo check --workspace --all-targets --all-features" || ERROR=1; \
     just run-single-check "Clippy" "cargo clippy --workspace --all-targets --all-features -- --deny warnings" || ERROR=1; \
-    just run-single-check "Test suite" "cargo test --verbose --workspace" || ERROR=1; \
+    just run-single-check "Test suite" "cargo test --verbose --workspace --all-targets --all-features" || ERROR=1; \
     just run-single-check "Doc check" "RUSTDOCFLAGS=\"-D warnings\" cargo doc --no-deps --all-features" || ERROR=1; \
-    just run-single-check "Unused dependencies" "cargo +nightly udeps --workspace" || ERROR=1; \
+    just run-single-check "Unused dependencies" "cargo +nightly udeps --workspace --all-targets --all-features" || ERROR=1; \
     just run-single-check "Semver compatibility" "cargo semver-checks check-release --workspace" || ERROR=1; \
     printf "\n{{bold}}CI Summary:{{reset}}\n"; \
     if [ $ERROR -eq 0 ]; then \

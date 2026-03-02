@@ -36,7 +36,7 @@ The `Network` manages connections between actors and the broader system. It hand
 
 Arbiter provides two main implementations:
 - **`InMemory`**: High-performance, same-process communication using standard Rust channels.
-- **`TcpStream`**: Distributed communication using TCP, enabling actors to span multiple processes and nodes.
+- **`TcpStream`**: Distributed communication using TCP, enabling actors to span multiple processes and nodes. It features automatic mesh formation via a gossip protocol, ensuring all nodes in the network discover and connect to each other for seamless broadcasting and point-to-point communication. It also automatically resolves the local LAN IP for easy peer discovery.
 
 This abstraction allows Arbiter systems to scale from local in-memory runners to distributed processing nodes.
 

@@ -1,5 +1,5 @@
-# .toml file formatting settings for `taplo`
-# https://taplo.tamasfe.dev/configuration/formatter-options.html
+exclude = ["**/target/**"]
+include = ["**/*.toml"]
 
 [formatting]
 # align entries vertically
@@ -9,4 +9,5 @@ allowed_blank_line = 1
 # collapse arrays into one line if they fit
 array_auto_collapse = true
 # alphabetically sort entries not separated by line breaks
+exclude      = ["**/target/**"]
 reorder_keys = true

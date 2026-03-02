@@ -56,6 +56,7 @@ To run the example locally, navigate to `examples/leader` and follow the `README
 Arbiter's `TcpStream` network allows actors to communicate over a local network. The `examples/chat/` directory contains a decentralized chat application that demonstrates:
 
 - **Distributed Actors**: Actors on different nodes connecting and exchanging messages.
+- **Mesh Networking**: Automatic peer discovery and connection via a gossip protocol.
 - **Dynamic Registration**: Automatic type registration for complex serializable types across nodes.
 - **Socket Injection**: Using `Runtime::socket()` to bridge external input (keyboard/stdin) into the actor network.
 
@@ -65,9 +66,11 @@ Arbiter's `TcpStream` network allows actors to communicate over a local network.
    ```bash
    cargo run --example chat -- --name Alice
    ```
-2. Open another terminal and start the second node (Bob), connecting to Alice's address (shown in Alice's terminal):
+2. Alice will display her listening address (e.g., `192.168.1.10:51234`).
+3. Open another terminal and start the second node (Bob), connecting to Alice:
    ```bash
-   cargo run --example chat -- --name Bob --connect 127.0.0.1:<PORT>
+   cargo run --example chat -- --name Bob --connect <ALICE_IP>:<PORT>
    ```
-3. Type messages in either terminal to see them delivered in real-time across processes!
+4. Start a third node (Charlie) and connect it to *either* Alice or Bob. Thanks to the mesh gossip protocol, Charlie will automatically discover and connect to the other node, forming a complete three-way chat!
+5. Type messages in any terminal to see them delivered in real-time across the entire mesh!
 

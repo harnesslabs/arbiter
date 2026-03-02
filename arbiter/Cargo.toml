@@ -19,6 +19,9 @@ tokio-stream = { version = "0.1" }
 thiserror = { version = "2.0" }
 tracing   = { version = "0.1" }
 
+# Networking
+local-ip-address = { version = "0.6.10", optional = true }
+
 # Runtimes
 tokio = { version = "1.49", default-features = false, features = [
   "rt",
@@ -37,4 +40,4 @@ tokio_with_wasm = { version = "0.9.0", default-features = false, features = [
 default   = ["in-memory"]
 fixtures  = []
 in-memory = []
-tcp       = ["dep:serde", "dep:bincode"]
+tcp       = ["dep:serde", "dep:bincode", "dep:local-ip-address"]

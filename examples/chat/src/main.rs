@@ -81,34 +81,23 @@ async fn main() {
   let args = Args::parse();
 
   // Start runtime
-  // Note: The generic TcpStream in arbiter hardcodes `127.0.0.1:0`.
-  // For a production CLI we would pass args.listen down to N::new(),
-  // but the default randomly assigned port works great for local testing!
   let mut runtime = Runtime::<TcpStream>::new();
 
   // Attempt connections
   if let Some(ref peer) = args.connect {
-    info!("Connecting to peer at {}", peer);
+    info!("Connecting to peer at {peer}");
     // We use block_on/await to ensure the connection establishes
     if let Err(e) = runtime.network().connect_to(peer).await {
-      tracing::error!("Failed to resolve or initiate connection to {}: {}", peer, e);
+      tracing::error!("Failed to resolve or initiate connection to {peer}: {e}");
       process::exit(1);
     }
-    info!("Connection attempt initiated to {}. Awaiting network handshake...", peer);
   }
 
   let local_addr = runtime.network().local_addr();
-  let display_addr = if local_addr.ip().is_unspecified() {
-    // If bound to 0.0.0.0, the "local_addr" will show 0.0.0.0.
-    // In a real app we'd resolve the primary LAN IP, but here we'll just hint it.
-    format!("<YOUR_LAN_IP>:{}", local_addr.port())
-  } else {
-    local_addr.to_string()
-  };
 
   println!("========================================");
   println!(" Welcome to Arbiter Chat, {}!", args.name);
-  println!(" Your node is listening on: {}", display_addr);
+  println!(" Your node is listening on: {local_addr}");
   println!(" Type your messages below. /quit to exit.");
   println!("========================================");
 
@@ -152,7 +141,7 @@ async fn main() {
           socket.send(TcpEnvelope::wrap(msg)).await;
         },
         Err(e) => {
-          tracing::error!("Error reading stdin: {}", e);
+          tracing::error!("Error reading stdin: {e}");
           break;
         },
       }
@@ -160,6 +149,8 @@ async fn main() {
   });
 
   // Run until ctrl-c
-  tokio::signal::ctrl_c().await.unwrap();
+  if let Err(e) = tokio::signal::ctrl_c().await {
+    tracing::error!("Failed to listen for ctrl-c: {e}");
+  }
   println!("Exiting chat...");
 }
