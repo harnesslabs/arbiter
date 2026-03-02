@@ -126,7 +126,6 @@ version = "0.1.0"
 dependencies = [
  "arbiter",
  "clap",
- "local-ip-address",
  "serde",
  "tokio",
  "tracing",
